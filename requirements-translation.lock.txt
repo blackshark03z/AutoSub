@@ -1,0 +1,6 @@
+argostranslate==1.9.6
+ctranslate2==4.8.1
+sacremoses==0.0.53
+sentencepiece==0.2.0
+stanza==1.1.1
+torch==2.13.0

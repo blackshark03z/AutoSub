@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tool Auto Sub Operator</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/operator/styles.css?v=cp09c" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="rail">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <div>
+            <strong>Tool Auto Sub</strong>
+            <small>Guided operator review</small>
+          </div>
+        </div>
+        <div class="picker-shell" id="projectPicker" data-open="false">
+          <label class="field-label" for="projectPickerToggle">Project</label>
+          <button id="projectPickerToggle" class="project-picker-toggle" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="projectPickerPanel">
+            <span id="projectPickerCurrent" class="project-picker-current">Loading project...</span>
+            <small id="projectPickerMeta" class="project-picker-meta">Reading local project list</small>
+          </button>
+          <div id="projectPickerPanel" class="project-picker-panel" hidden>
+            <div class="project-picker-search-region">
+              <label class="sr-only" for="projectSearch">Search projects</label>
+              <input id="projectSearch" class="project-search" type="search" placeholder="Search projects by name or ID" autocomplete="off" />
+              <small class="project-picker-help">Search projects by name or ID. Stage names are not searched here.</small>
+              <span id="projectSearchResultCount" class="sr-only" aria-live="polite"></span>
+            </div>
+            <div class="project-picker-results-region">
+              <div id="projectPickerList" class="project-picker-list" role="listbox" aria-label="Projects" tabindex="0"></div>
+              <div id="projectPickerEmpty" class="project-picker-empty" hidden>No projects match the search.</div>
+            </div>
+          </div>
+        </div>
+        <button id="newProjectBtn" class="new-project-button">New Project</button>
+        <nav id="stageRail" class="stage-rail" aria-label="Workflow stages"></nav>
+        <details class="technical">
+          <summary>Technical Details</summary>
+          <pre id="technicalDetails"></pre>
+        </details>
+        <small id="runtimeBuildId" class="runtime-build">Build: loading</small>
+      </aside>
+
+      <main class="workspace">
+        <header class="hero">
+          <div>
+            <p class="eyebrow">CP08 operator checkpoint</p>
+            <h1 id="projectTitle">Loading project...</h1>
+            <p id="projectSubtitle" class="muted">Reading accepted local state. No providers are called.</p>
+          </div>
+          <div class="hero-card">
+            <span id="overallStatus" class="status-pill">Loading</span>
+            <small>CP09 remains separate</small>
+          </div>
+        </header>
+
+        <section class="issue-panel" aria-labelledby="issueTitle">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Issue-first review</p>
+              <h2 id="issueTitle">Review queue</h2>
+            </div>
+            <div id="issueStats" class="stats"></div>
+          </div>
+          <div class="filters" role="group" aria-label="Issue filters">
+            <button data-filter="all" class="filter active">All</button>
+            <button data-filter="blocker" class="filter">Blockers</button>
+            <button data-filter="warning" class="filter">Warnings</button>
+            <button data-filter="needs-review" class="filter">Needs review</button>
+            <button data-filter="reviewed" class="filter">Reviewed</button>
+            <button data-filter="clean" class="filter">Clean</button>
+          </div>
+          <div class="issue-actions">
+            <button id="prevIssue" class="secondary">Previous issue</button>
+            <button id="nextIssue" class="secondary">Next issue</button>
+            <button id="markReviewed" class="primary small">Mark reviewed</button>
+          </div>
+          <div id="issueList" class="issue-list"></div>
+        </section>
+
+        <section id="stagePanel" class="stage-panel" aria-live="polite"></section>
+
+        <footer class="nav-bar">
+          <button id="backBtn" class="secondary">Back</button>
+          <span id="nextReason" class="muted"></span>
+          <button id="nextBtn" class="primary">Next</button>
+        </footer>
+      </main>
+    </div>
+    <script src="/operator/app.js?v=cp09c"></script>
+  </body>
+</html>

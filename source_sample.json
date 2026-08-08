@@ -1,0 +1,27 @@
+{
+  "baseline_date": "2026-07-13",
+  "filename": "SaveTik.io_7655988576311594240_hd.mp4",
+  "sha256": "34a304fb44f5e4c27d1a34989a69f939888ef90c89bbae0142434f43cf4db068",
+  "size_bytes": 95374240,
+  "duration_seconds": 666.435918,
+  "streams": [
+    {
+      "index": 0,
+      "codec_type": "audio",
+      "codec_name": "aac",
+      "sample_rate": 44100,
+      "channels": 2
+    },
+    {
+      "index": 1,
+      "codec_type": "video",
+      "codec_name": "h264",
+      "width": 1920,
+      "height": 1080,
+      "fps": 30
+    }
+  ],
+  "subtitle_stream_count": 0,
+  "source_subtitle_type": "burned_in",
+  "commit_policy": "Do not commit this media file."
+}

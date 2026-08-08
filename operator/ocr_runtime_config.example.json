@@ -1,0 +1,22 @@
+{
+  "runtime_root": "D:\\tool_auto_sub_ocr_runtime",
+  "venv_path": "D:\\tool_auto_sub_ocr_runtime\\.venv",
+  "python_path": "D:\\tool_auto_sub_ocr_runtime\\.venv\\Scripts\\python.exe",
+  "model_root": "D:\\tool_auto_sub_ocr_runtime\\models",
+  "pip_cache": "D:\\tool_auto_sub_ocr_runtime\\pip-cache",
+  "temp_root": "D:\\tool_auto_sub_ocr_runtime\\tmp",
+  "log_root": "D:\\tool_auto_sub_ocr_runtime\\logs",
+  "timeout_seconds": 60,
+  "evidence_root": "D:\\tool_auto_sub_ocr_runtime\\evidence",
+  "python_version": "3.11",
+  "cpu_only": true,
+  "paddleocr": {
+    "package": "paddleocr",
+    "version": "2.10.0",
+    "language": "ch",
+    "use_angle_cls": true,
+    "use_gpu": false,
+    "det_model": "Chinese text detection model, minimum required for subtitle regions",
+    "rec_model": "Chinese text recognition model, minimum required for CJK recognition"
+  }
+}

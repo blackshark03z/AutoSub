@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "project_id": "prj_example",
+  "source_duration_ms": 90000,
+  "source_language": "zh",
+  "target_language": "en",
+  "target_locale": "en-US",
+  "market_profile_id": "roblox_en_us",
+  "transformation_mode": "transformative_edit",
+  "active_revision_id": "tlrev_0001",
+  "chapters": [
+    {
+      "id": "ch_001",
+      "title": "Vertical Slice",
+      "start_ms": 0,
+      "end_ms": 90000
+    }
+  ],
+  "segments": [
+    {
+      "id": "seg_0001",
+      "ordinal": 1,
+      "chapter_id": "ch_001",
+      "start_ms": 1200,
+      "end_ms": 6400,
+      "source_text": "原始转录文本",
+      "translated_text": "Full English translation.",
+      "spoken_text": "A natural English narration written for the target audience.",
+      "subtitle_text": "Natural English narration.",
+      "enabled": true,
+      "speaker_id": "narrator",
+      "voice_profile_id": "roblox_us_narrator_01",
+      "timing_policy": "fit_slot",
+      "status": "draft",
+      "active_tts_generation_id": null,
+      "issues": [],
+      "locks": {
+        "timing": false,
+        "spoken_text": false,
+        "subtitle_text": false,
+        "voice": false
+      },
+      "qa": {
+        "transcript_approved": false,
+        "content_approved": false,
+        "voice_approved": false,
+        "timing_approved": false
+      }
+    }
+  ],
+  "masks": [
+    {
+      "id": "mask_bottom",
+      "x_norm": 0.05,
+      "y_norm": 0.82,
+      "width_norm": 0.9,
+      "height_norm": 0.16,
+      "style": "blur_dark",
+      "mode": "always",
+      "opacity": 0.82,
+      "intervals": []
+    }
+  ]
+}

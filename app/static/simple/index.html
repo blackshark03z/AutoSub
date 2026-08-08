@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tool Auto Sub Beta</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/styles.css?v=task36b" />
+  </head>
+  <body data-flow-state="setup">
+    <!-- Legacy packaging contract: 5-minute beta guide; Gemini, ElevenLabs; không cần API key; Open Advanced Operator UI. -->
+    <main class="app-shell">
+      <section id="setupView" class="flow-view" data-flow-view="setup" aria-labelledby="setupTitle">
+        <header class="state-header">
+          <p class="eyebrow">Tool Auto Sub Beta</p>
+          <h1 id="setupTitle">Tạo video có phụ đề</h1>
+          <p class="lead">Chọn video, kiểm tra thiết lập và bấm tạo. Mọi xử lý diễn ra trên máy.</p>
+        </header>
+
+        <section class="surface setup-surface">
+          <div class="section-heading">
+            <div>
+              <h2>Chọn video</h2>
+              <p>Video gốc được giữ nguyên. Bạn có thể kéo thả hoặc chọn từ máy tính.</p>
+            </div>
+            <span id="validationPill" class="pill">Chưa chọn video</span>
+          </div>
+
+          <div id="dropArea" class="drop-area" tabindex="0" role="button" aria-label="Chọn hoặc kéo thả video">
+            <input id="videoPicker" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" hidden />
+            <span class="drop-icon" aria-hidden="true">+</span>
+            <strong>Kéo thả video vào đây</strong>
+            <span>hoặc chọn tệp từ máy tính</span>
+            <button id="chooseVideo" type="button">Chọn video</button>
+          </div>
+
+          <div id="sourceSummary" class="summary-grid" aria-live="polite"></div>
+          <p id="userMessage" class="message" role="status"></p>
+        </section>
+
+        <section class="surface settings-surface" aria-labelledby="settingsTitle">
+          <div class="section-heading">
+            <div>
+              <h2 id="settingsTitle">Thiết lập</h2>
+              <p>Các giá trị mặc định phù hợp cho hầu hết video.</p>
+            </div>
+          </div>
+
+          <div class="essential-settings">
+            <label class="field">
+              <span>Kiểu phụ đề</span>
+              <select id="subtitleStyle">
+                <option value="Compact readable plate">Nền gọn, dễ đọc</option>
+              </select>
+              <small>Chữ trắng trên nền gọn để dễ đọc mà không che quá nhiều hình ảnh.</small>
+            </label>
+
+            <label class="field">
+              <span>Chế độ phụ đề</span>
+              <select id="cleanupMode">
+                <option value="source_caption_ocr_translation">Dịch phụ đề có sẵn (OCR)</option>
+              </select>
+              <small>Phụ đề được đọc từ video bằng OCR và dịch tự động. Video không được tải lên.</small>
+            </label>
+
+            <label class="check-field">
+              <input id="includeAss" type="checkbox" checked />
+              <span>
+                <strong>Lưu thêm tệp phụ đề ASS</strong>
+                <small>Dùng khi bạn muốn chỉnh phụ đề bằng phần mềm khác.</small>
+              </span>
+            </label>
+          </div>
+
+          <details id="advancedOptions" class="advanced-disclosure">
+            <summary>Tùy chọn nâng cao</summary>
+            <div class="advanced-content">
+              <label class="field path-field">
+                <span>Đường dẫn video trên máy</span>
+                <input id="sourcePath" type="text" placeholder="Dán đường dẫn hoặc dùng nút Chọn video" autocomplete="off" />
+                <small>Dùng khi bạn muốn tham chiếu trực tiếp tới một tệp local thay vì sao chép.</small>
+              </label>
+              <div class="advanced-grid">
+                <label class="field">
+                  <span>Tên tệp kết quả</span>
+                  <input id="outputName" value="final_video.mp4" />
+                </label>
+                <label class="field">
+                  <span>Thư mục lưu bản sao</span>
+                  <input id="outputDestination" placeholder="Có thể để trống" />
+                </label>
+                <label class="check-field">
+                  <input id="copySource" type="checkbox" />
+                  <span>
+                    <strong>Sao chép video nguồn vào dự án</strong>
+                    <small>Chỉ bật khi bạn cần một bản nguồn riêng trong thư mục làm việc.</small>
+                  </span>
+                </label>
+              </div>
+              <p id="resourceInfo" class="message">Dung lượng cần thiết sẽ được kiểm tra sau khi chọn video.</p>
+
+              <details id="creativePanel" class="nested-disclosure">
+                <summary>Nhập hoặc chỉnh nội dung phụ đề</summary>
+                <p class="message">Tùy chọn này không bắt buộc. Ứng dụng sẽ chuẩn bị lượt chạy khi bạn dùng một công cụ bên dưới.</p>
+                <span id="trackPill" class="pill">Chưa có bản nội dung</span>
+                <div class="button-row">
+                  <button id="exportTxtTemplateBtn" type="button">Xuất mẫu TXT</button>
+                  <button id="exportJsonTemplateBtn" type="button">Xuất mẫu JSON</button>
+                  <button id="previewCreativeBtn" type="button">Xem trước thay đổi</button>
+                  <button id="applyCreativeBtn" type="button">Áp dụng bản sáng tạo</button>
+                  <button id="applyImportedBtn" type="button">Áp dụng bản đã nhập</button>
+                  <button id="undoImportBtn" type="button">Hoàn tác lần nhập gần nhất</button>
+                </div>
+                <label class="field">
+                  <span>Nội dung TXT hoặc JSON</span>
+                  <textarea id="creativeImportText" placeholder="Dán nội dung đã hoàn thành"></textarea>
+                </label>
+                <div class="advanced-grid">
+                  <label class="field">
+                    <span>Định dạng nhập</span>
+                    <select id="creativeImportFormat">
+                      <option value="txt">TXT theo mã câu</option>
+                      <option value="json">JSON creative_script_v1</option>
+                      <option value="txt-line">TXT theo từng dòng</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Bản nội dung</span>
+                    <select id="contentTrackSelect"><option value="">Chưa có</option></select>
+                  </label>
+                  <label class="field">
+                    <span>Khi thiếu câu</span>
+                    <select id="fallbackPolicy">
+                      <option value="fallback_to_translation">Dùng bản phiên âm</option>
+                      <option value="block_render">Dừng xuất video</option>
+                      <option value="render_blank">Để trống</option>
+                    </select>
+                  </label>
+                </div>
+                <pre id="creativePreview" class="safe-output"></pre>
+                <div id="creativeCueEditor" class="recent-runs"></div>
+              </details>
+
+              <details class="nested-disclosure">
+                <summary>Kiểm tra ứng dụng</summary>
+                <div class="inline-heading">
+                  <span id="readinessPill" class="pill">Đang kiểm tra</span>
+                </div>
+                <div id="readinessSummary" class="summary-grid"></div>
+                <pre id="readinessDetails" class="safe-output"></pre>
+              </details>
+
+              <a class="advanced-link" href="/operator/">Mở Advanced Operator UI</a>
+            </div>
+          </details>
+        </section>
+
+        <section class="action-zone">
+          <button id="startBtn" class="primary action-primary" type="button" disabled>Tạo video có phụ đề</button>
+          <p id="startReason" class="action-reason">Hãy chọn một video để tiếp tục.</p>
+          <button id="latestResultBtn" class="text-action" type="button" aria-label="Xem kết quả" hidden>Xem video gần nhất</button>
+        </section>
+
+        <details id="recentVideosDetails" class="history-disclosure">
+          <summary>Video gần đây</summary>
+          <div id="recentRuns" class="recent-runs"></div>
+        </details>
+      </section>
+
+      <section id="processingView" class="flow-view centered-view" data-flow-view="processing" aria-labelledby="processingTitle" hidden>
+        <header class="state-header">
+          <p class="eyebrow">Đang xử lý trên máy</p>
+          <h1 id="processingTitle">Đang tạo video có phụ đề</h1>
+          <p id="processingFilename" class="lead"></p>
+        </header>
+        <section class="surface processing-surface">
+          <div class="activity-bar" aria-hidden="true"><span></span></div>
+          <p id="processingCurrent" class="processing-current">Đang bắt đầu xử lý...</p>
+          <p id="processingDescription" class="message">Bạn có thể giữ cửa sổ này mở để theo dõi trạng thái thực.</p>
+          <ol id="processingStages" class="stage-list" aria-label="Trạng thái ban đầu: Chưa bắt đầu"></ol>
+          <details id="processingDetails" class="advanced-disclosure">
+            <summary>Xem chi tiết</summary>
+            <pre id="processingTechnicalOutput" class="safe-output"></pre>
+          </details>
+        </section>
+      </section>
+
+      <section id="completedView" class="flow-view centered-view" data-flow-view="completed" aria-labelledby="completedTitle" hidden>
+        <header class="state-header">
+          <p class="eyebrow">Kết quả đã sẵn sàng</p>
+          <h1 id="completedTitle">Video đã hoàn tất</h1>
+          <p class="lead">Hãy xem lại video trước khi sử dụng chính thức.</p>
+        </header>
+        <section class="surface result-surface">
+          <video id="previewVideo" controls preload="metadata"></video>
+          <div id="outputSummary" class="summary-grid"></div>
+          <p class="quality-note">Phụ đề được tạo tự động. Hãy xem lại nội dung trước khi sử dụng chính thức.</p>
+          <div class="result-actions">
+            <button id="openFolderBtn" class="primary" type="button">Mở thư mục kết quả</button>
+            <button id="newVideoBtn" type="button">Tạo video mới</button>
+            <button id="adjustBtn" type="button">Cần chỉnh sửa</button>
+          </div>
+          <p id="resultMessage" class="message" role="status"></p>
+
+          <details class="advanced-disclosure">
+            <summary>Tùy chọn kết quả</summary>
+            <div class="button-row">
+              <button id="approveBtn" type="button">Duyệt kết quả</button>
+              <button id="reloadPreviewBtn" type="button">Tải lại bản xem trước</button>
+              <button id="viewOutputBtn" type="button">Mở video trong cửa sổ mới</button>
+              <button id="copyPathBtn" type="button">Sao chép đường dẫn</button>
+            </div>
+            <label class="field">
+              <span>Lưu một bản sao vào thư mục</span>
+              <input id="saveDestination" type="text" placeholder="Dán đường dẫn thư mục đích" />
+            </label>
+            <button id="saveCopyBtn" type="button">Lưu một bản sao</button>
+            <pre id="saveResult" class="safe-output"></pre>
+          </details>
+        </section>
+      </section>
+
+      <section id="errorView" class="flow-view centered-view" data-flow-view="error" aria-labelledby="errorTitle" hidden>
+        <header class="state-header">
+          <p class="eyebrow error-copy">Quá trình đã dừng an toàn</p>
+          <h1 id="errorTitle">Chưa thể tạo video</h1>
+          <p id="errorMessage" class="lead"></p>
+        </header>
+        <section class="surface error-surface">
+          <button id="backToSetupBtn" class="primary" type="button">Quay lại thiết lập</button>
+          <details id="errorDetails" class="advanced-disclosure">
+            <summary>Chi tiết xử lý lỗi</summary>
+            <pre id="technicalOutput" class="safe-output"></pre>
+          </details>
+        </section>
+      </section>
+    </main>
+    <script src="/app.js?v=task36b" defer></script>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+# CP08D1 pinned OCR runtime plan.
+# Install only inside the CP08D OCR virtual environment; do not install globally.
+# Planned runtime root: D:\tool_auto_sub_ocr_runtime
+
+paddlepaddle==2.6.2
+paddleocr==2.10.0
+opencv-python==4.8.1.78
+numpy==1.26.4
+Pillow==10.4.0

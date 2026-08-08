@@ -1,0 +1,32 @@
+{
+  "profile_id": "roblox_en_us",
+  "platform": "youtube_longform",
+  "source_platform": "douyin",
+  "source_language": "zh",
+  "target_language": "en",
+  "target_locale": "en-US",
+  "audience_profile": "older_teen_young_adult",
+  "default_transformation_mode": "transformative_edit",
+  "voice": {
+    "structure": "single_narrator",
+    "tone": "energetic_but_not_childish",
+    "pace": "medium_fast",
+    "model_presets": {
+      "quality_stable": "eleven_multilingual_v2",
+      "fast_economy": "eleven_flash_v2_5",
+      "expressive_experimental": "eleven_v3"
+    }
+  },
+  "subtitle": {
+    "style": "youtube_en_clean",
+    "max_lines": 2,
+    "alignment": "bottom_center",
+    "emphasis": "limited"
+  },
+  "content": {
+    "rewrite_hook": true,
+    "remove_repetition": true,
+    "add_commentary": true,
+    "preserve_glossary": true
+  }
+}

@@ -1,0 +1,347 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.tool-auto-sub/schemas/timeline.schema.json",
+  "title": "Tool Auto Sub Timeline",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "source_duration_ms",
+    "source_language",
+    "target_language",
+    "target_locale",
+    "market_profile_id",
+    "transformation_mode",
+    "segments",
+    "masks"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_duration_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_language": {
+      "type": "string",
+      "minLength": 2
+    },
+    "target_language": {
+      "type": "string",
+      "minLength": 2
+    },
+    "target_locale": {
+      "type": "string",
+      "minLength": 2
+    },
+    "market_profile_id": {
+      "type": "string"
+    },
+    "transformation_mode": {
+      "enum": [
+        "faithful_translation",
+        "natural_localization",
+        "transformative_edit",
+        "external_timeline"
+      ]
+    },
+    "active_revision_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "chapters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "start_ms",
+          "end_ms"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "start_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end_ms": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "ordinal",
+          "start_ms",
+          "end_ms",
+          "source_text",
+          "translated_text",
+          "spoken_text",
+          "subtitle_text",
+          "enabled",
+          "status",
+          "qa"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "chapter_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end_ms": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_text": {
+            "type": "string"
+          },
+          "translated_text": {
+            "type": "string"
+          },
+          "spoken_text": {
+            "type": "string"
+          },
+          "subtitle_text": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "speaker_id": {
+            "type": "string",
+            "default": "narrator"
+          },
+          "voice_profile_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timing_policy": {
+            "enum": [
+              "fit_slot",
+              "allow_small_overlap",
+              "free_narration"
+            ]
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "review_needed",
+              "approved",
+              "rejected",
+              "superseded"
+            ]
+          },
+          "active_tts_generation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "locks": {
+            "type": "object",
+            "properties": {
+              "timing": {
+                "type": "boolean"
+              },
+              "spoken_text": {
+                "type": "boolean"
+              },
+              "subtitle_text": {
+                "type": "boolean"
+              },
+              "voice": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "qa": {
+            "type": "object",
+            "required": [
+              "transcript_approved",
+              "content_approved",
+              "voice_approved",
+              "timing_approved"
+            ],
+            "properties": {
+              "transcript_approved": {
+                "type": "boolean"
+              },
+              "content_approved": {
+                "type": "boolean"
+              },
+              "voice_approved": {
+                "type": "boolean"
+              },
+              "timing_approved": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "tts_units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "ordinal",
+          "start_ms",
+          "end_ms",
+          "segment_ids",
+          "spoken_text",
+          "speaker_id",
+          "timing_policy",
+          "active_tts_generation_id"
+        ],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "ordinal": {"type": "integer", "minimum": 1},
+          "chapter_id": {"type": ["string", "null"]},
+          "start_ms": {"type": "integer", "minimum": 0},
+          "end_ms": {"type": "integer", "minimum": 1},
+          "segment_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "spoken_text": {"type": "string", "minLength": 1},
+          "speaker_id": {"type": "string"},
+          "voice_profile_id": {"type": ["string", "null"]},
+          "timing_policy": {
+            "enum": ["fit_slot", "allow_small_overlap", "free_narration"]
+          },
+          "active_tts_generation_id": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "masks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "x_norm",
+          "y_norm",
+          "width_norm",
+          "height_norm",
+          "style",
+          "mode"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "x_norm": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "y_norm": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "width_norm": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1
+          },
+          "height_norm": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1
+          },
+          "style": {
+            "enum": [
+              "solid",
+              "dark_transparent",
+              "blur_dark",
+              "gradient_dark"
+            ]
+          },
+          "mode": {
+            "enum": [
+              "always",
+              "manual_intervals",
+              "speech_derived_experimental"
+            ]
+          },
+          "opacity": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "intervals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "start_ms",
+                "end_ms"
+              ],
+              "properties": {
+                "start_ms": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "end_ms": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Source Provenance",
+  "type": "object",
+  "required": [
+    "source_platform",
+    "source_sha256",
+    "rights_status",
+    "imported_at"
+  ],
+  "properties": {
+    "source_platform": {
+      "enum": [
+        "douyin",
+        "local",
+        "other"
+      ]
+    },
+    "source_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_post_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_author": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_caption": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "original_filename": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "downloaded_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "imported_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rights_status": {
+      "enum": [
+        "unknown",
+        "owned",
+        "licensed",
+        "authorized",
+        "public_domain"
+      ]
+    },
+    "operator_note": {
+      "type": "string"
+    },
+    "operator_acknowledged_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

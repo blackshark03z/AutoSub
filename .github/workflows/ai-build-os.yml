@@ -1,0 +1,62 @@
+name: AI Build OS + Product CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node when needed
+        if: ${{ hashFiles('package.json') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
+
+      - name: Install Node dependencies (npm lockfile)
+        if: ${{ hashFiles('package-lock.json') != '' }}
+        run: npm ci
+
+      - name: Install Python dependencies (requirements)
+        if: ${{ hashFiles('requirements.txt') != '' }}
+        run: pip install -r requirements.txt
+
+      - name: Install Python project
+        if: ${{ hashFiles('pyproject.toml') != '' && hashFiles('requirements.txt') == '' }}
+        run: pip install -e .
+
+      - name: Validate AI Build OS commit provenance
+        run: python scripts/validate_ai_os.py --ci
+
+      - name: Detect AI Build OS core changes
+        id: ai_os_core
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
+            BASE_SHA="$(git rev-parse HEAD^)"
+          fi
+          if git diff --quiet "$BASE_SHA" HEAD -- scripts/*.py templates/*.yml templates/*.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run AI Build OS regression suite
+        if: ${{ steps.ai_os_core.outputs.changed == 'true' }}
+        run: python scripts/self_test.py
+
+      - name: Run detected product checks
+        run: python scripts/project_ci.py --ci

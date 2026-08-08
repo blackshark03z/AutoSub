@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "credentials": [
+    {
+      "credential_id": "elcred_001",
+      "label": "Primary authorized ElevenLabs key",
+      "workspace_group": "workspace_a",
+      "api_key": "PASTE_KEY_HERE",
+      "enabled": true,
+      "priority": 100,
+      "soft_character_cap": 80000,
+      "hard_character_cap": 100000,
+      "allowed_models": [],
+      "allowed_voice_ids": []
+    },
+    {
+      "credential_id": "elcred_002",
+      "label": "Secondary authorized ElevenLabs key",
+      "workspace_group": "workspace_b",
+      "api_key": "PASTE_KEY_HERE",
+      "enabled": false,
+      "priority": 50,
+      "soft_character_cap": 80000,
+      "hard_character_cap": 100000,
+      "allowed_models": [],
+      "allowed_voice_ids": []
+    }
+  ],
+  "routing": {
+    "sticky_project_assignment": true,
+    "same_workspace_group_failover": true,
+    "cross_workspace_group_failover": false,
+    "blind_round_robin": false
+  }
+}

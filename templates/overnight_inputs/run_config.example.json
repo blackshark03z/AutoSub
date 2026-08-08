@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "source": {
+    "path": "input\\source.mp4",
+    "expected_sha256": "34a304fb44f5e4c27d1a34989a69f939888ef90c89bbae0142434f43cf4db068"
+  },
+  "market_profile_id": "roblox_en_us",
+  "source_language": "zh",
+  "target_language": "en",
+  "target_locale": "en-US",
+  "content_mode": "transformative_edit",
+  "audio_policy": "replace_all_audio",
+  "preview": "720p",
+  "final": "1080p_or_source",
+  "auto_upload": false,
+  "push": false,
+  "stop_before": "CP08",
+  "translation": {
+    "provider": "gemini_openai_compatible",
+    "config_path": "operator\\translation_config.env",
+    "key_file": "secrets\\gemini_api.txt",
+    "credential_name": "tool_auto_sub_worker_handoff_v0_2_gemini_api"
+  },
+  "tts": {
+    "provider": "elevenlabs",
+    "key_file": "secrets\\elevenlabs_api.txt",
+    "preset": "quality_stable",
+    "preferred_voice_id": null,
+    "key_selection_policy": "sticky_failover",
+    "elevenlabs_hard_character_cap": 100000,
+    "allow_real_paid_calls": true
+  },
+  "hardware": {
+    "gpu": "auto",
+    "whisper_device": "auto",
+    "whisper_compute_type": "auto",
+    "free_disk_required_gb": 20
+  },
+  "subtitle": {
+    "font_path": "C:\\Windows\\Fonts\\arial.ttf"
+  }
+}

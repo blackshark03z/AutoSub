@@ -1,0 +1,11 @@
+Offline Chinese-to-English translation uses Argos Translate 1.9.6 with the
+OPUS-MT Chinese-English package translate-zh_en-1_9.
+
+The OPUS model is derived from the OPUS-MT work by Jorg Tiedemann and
+Santhosh Thottingal and is distributed under CC-BY 4.0. The model is obtained
+from the official Argos package index and is bundled before the user workflow.
+
+Official package index:
+https://github.com/argosopentech/argospm-index/blob/main/index.json
+Model source:
+https://argos-net.com/v1/translate-zh_en-1_9.argosmodel

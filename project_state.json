@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "repository": {
+    "source_baseline_commit": "e7e1a89",
+    "maintenance_reset": "MAINT-001_CANONICAL_BASELINE_AND_DOCUMENTATION_COLLAPSE"
+  },
+  "canonical_release": {
+    "name": "CP12B Full Portable",
+    "release_id": "CP12B_WINDOWS_FULL_PORTABLE_CREATIVE_IMPORT_BETA",
+    "package_path": "release\\CP12B\\tool_auto_sub_windows_full_portable_cp12b.zip",
+    "package_sha256": "9a1c3b03a18049aca4f63fd43df2092eec35d5c36e9ec176dbaae7bc4d4a51d0",
+    "distribution": "Unified Full Portable",
+    "manifest_path": "release\\CP12B\\cp12b_windows_full_portable_creative_import_manifest.json",
+    "checksums_path": "release\\CP12B\\SHA256SUMS.txt"
+  },
+  "runtime": {
+    "backend_version": "0.2.0",
+    "primary_ui": "Simple UI",
+    "primary_ui_path": "/",
+    "simple_ui_asset_version": "cp13a",
+    "advanced_ui": "Operator UI",
+    "advanced_ui_path": "/operator/",
+    "operator_ui_asset_version": "cp09c",
+    "default_local_url": "http://127.0.0.1:8173/"
+  },
+  "database": {
+    "engine": "SQLite",
+    "path": "data\\app.db",
+    "schema": "0009_subtitle_tracks"
+  },
+  "distribution": {
+    "ocr_strategy": "bundled_release_local_ocr_runtime",
+    "normal_launcher": "Tool Auto Sub Beta Start Menu shortcut from CP13A1 installer",
+    "portable_launcher": "START_TOOL.cmd in extracted CP12B portable package",
+    "development_launcher": "run_app.ps1",
+    "one_click_beta_candidate": {
+      "name": "CP13A1 Complete Payload Hotfix",
+      "release_id": "CP13A1_WINDOWS_COMPLETE_PAYLOAD_HOTFIX",
+      "installer_path": "release\\CP13A1\\ToolAutoSubBetaSetup_CP13A1.exe",
+      "installer_sha256": "9ca6f54c9d3caa440ea410f40aba819c75f7240954a316841d5da7ca4f9e317a",
+      "distribution": "Per-user Windows EXE installer with complete installed-root payload wrapping CP12B",
+      "default_install_path": "%LOCALAPPDATA%\\Programs\\ToolAutoSubBeta",
+      "default_user_data_path": "%LOCALAPPDATA%\\ToolAutoSubBeta\\data",
+      "machine_validation": "CP13A1_COMPLETE_INSTALL_PAYLOAD_AND_UNINSTALL_SHORTCUT_MACHINE_PASS",
+      "machine_evidence_state": "RERUN_PASS_PENDING_ACCEPTANCE",
+      "machine_evidence_root": "evidence\\CP13A1\\20260722-044207-shortcut-product-fix-rerun",
+      "external_machine_beta": "pending"
+    }
+  },
+  "subtitle_tracks": {
+    "canonical_timing_owner": "translation_cue_timing",
+    "track_types": [
+      "translation",
+      "creative",
+      "imported"
+    ],
+    "default_active_track": "translation",
+    "default_missing_cue_policy": "fallback_to_translation",
+    "creative_import_controls_timing": false
+  },
+  "scope": {
+    "localization": "dialogue_subtitles_only",
+    "publication": "manual_handoff_only",
+    "provider_calls_default": {
+      "gemini": 0,
+      "elevenlabs": 0,
+      "youtube": 0
+    }
+  },
+  "beta": {
+    "external_machine": "pending",
+    "cp11b_external_beta": "blocked_not_claimed",
+    "cp13a_one_click_external_beta": "machine_pass_external_machine_pending",
+    "cp13a1_complete_payload_hotfix": "rerun_pass_pending_machine_evidence_acceptance"
+  },
+  "storage": {
+    "gate": "tiered_operation_storage_gate",
+    "last_maintenance_result": "MAINT_007_TIERED_STORAGE_GATE_POLICY_PASS",
+    "fixed_15_gib_gate": "retired",
+    "fixed_15_gib_retirement_reason": "MAINT-006 measured 15 GiB as conservative for package-build/extraction safety, but unsupported as a global run-only requirement.",
+    "current_free_bytes": 5352738816,
+    "current_free_gib": 4.984,
+    "drive_path_checked": "D:\\tool_auto_sub_worker_handoff_v0.2",
+    "measurement_timestamp": "2026-07-22T04:42:28.220157+00:00",
+    "required_operator_action": "run_operation_specific_storage_preflight_immediately_before_execution",
+    "retention_rule": "one_canonical_full_portable_package_locally_no_historical_release_binaries_on_working_drive",
+    "retained_development_project_ids": [
+      "vertical_slice_cp07"
+    ],
+    "remaining_project_data_ids": [
+      "vertical_slice_cp07"
+    ],
+    "tiered_thresholds": {
+      "run": 1073741824,
+      "media": 2147483648,
+      "package": 4294967296
+    },
+    "operation_status": {
+      "run": {
+        "status": "allowed",
+        "margin_bytes": 4278996992
+      },
+      "media": {
+        "status": "allowed",
+        "margin_bytes": 3205255168
+      },
+      "package": {
+        "status": "allowed",
+        "margin_bytes": 1057771520
+      }
+    },
+    "dynamic_package_gate": {
+      "minimum_bytes": 4294967296,
+      "rule": "require the greater of 4 GiB and projected temporary workspace plus configured safety reserve"
+    }
+  },
+  "process": {
+    "bug_fix": "issue -> code -> focused tests -> commit",
+    "feature": "issue -> optional ADR -> code -> tests -> commit",
+    "release": "full tests -> package -> validation -> manifest/checksum -> release notes -> cleanup staging/extraction",
+    "numbered_checkpoint_required_for_routine_changes": false
+  },
+  "living_documents": [
+    "README.md",
+    "docs\\CURRENT_STATE.md",
+    "docs\\ARCHITECTURE.md",
+    "docs\\OPERATIONS.md",
+    "docs\\DECISIONS\\",
+    "CHANGELOG.md",
+    "docs\\MAINTENANCE_RESET_2026.md"
+  ]
+}

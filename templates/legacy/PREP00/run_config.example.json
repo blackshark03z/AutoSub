@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "source": {
+    "path": "D:\\tool_auto_sub_worker_handoff_v0.2\\input\\source.mp4",
+    "expected_sha256": "34a304fb44f5e4c27d1a34989a69f939888ef90c89bbae0142434f43cf4db068"
+  },
+  "market_profile_id": "roblox_en_us",
+  "source_language": "zh",
+  "target_language": "en",
+  "target_locale": "en-US",
+  "content_mode": "transformative_edit",
+  "translation": {
+    "provider_config_path": "D:\\tool_auto_sub_worker_handoff_v0.2\\secrets\\translation_provider.env",
+    "rewrite_hook": true,
+    "remove_repetition": true,
+    "add_commentary": true,
+    "preserve_glossary": true
+  },
+  "tts": {
+    "provider": "elevenlabs",
+    "credential_pool_path": "D:\\tool_auto_sub_worker_handoff_v0.2\\secrets\\elevenlabs_keys.json",
+    "preset": "quality_stable",
+    "preferred_voice_id": null,
+    "voice_selection_policy": "choose_accessible_en_us_narrator_if_missing",
+    "elevenlabs_hard_character_cap": 100000,
+    "allow_real_paid_calls": true
+  },
+  "asr": {
+    "provider": "faster_whisper",
+    "model": "large-v3",
+    "device": "auto",
+    "compute_type": "auto",
+    "allow_model_download": true
+  },
+  "audio": {
+    "policy": "replace_all_audio"
+  },
+  "subtitle": {
+    "format": [
+      "ass",
+      "srt"
+    ],
+    "font_path": "C:\\Windows\\Fonts\\arial.ttf",
+    "max_lines": 2
+  },
+  "mask": {
+    "default_mode": "always",
+    "require_full_mask_audit": true
+  },
+  "render": {
+    "preview_height": 720,
+    "final_mode": "1080p_or_source",
+    "auto_upload": false
+  },
+  "hardware": {
+    "gpu": "auto",
+    "free_disk_required_gb": 20
+  },
+  "overnight": {
+    "continue_through_checkpoint": "CP07",
+    "stop_before": "CP08",
+    "local_commits": true,
+    "push": false
+  }
+}
