@@ -1,4 +1,0 @@
-# One ElevenLabs API key per line
-# Blank lines and lines beginning with # are ignored
-PASTE_ELEVENLABS_KEY_1_HERE
-PASTE_ELEVENLABS_KEY_2_HERE

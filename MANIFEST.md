@@ -42,5 +42,7 @@
 - LEAN / STANDARD / DEEP task templates
 - Evidence/review/incident/release/cost templates
 - GitHub Actions commit-provenance + OS regression + product CI template (auto-installed by `init`)
-- Root quickstarts and docs 01–15
-- Upgrade guides through v1.8
+- `AGENTS.md` and `00_START_HERE.md` are concise entrypoints; Build OS state and commands remain authoritative.
+- `OWNER_QUICKSTART.md` is an owner-facing v1.8 usage guide.
+- Docs 01–15 describe the current Build OS operating model; product docs remain under `README.md` and `docs/`.
+- Historical upgrade, superseded orchestration, and task-report material is archived outside the canonical repository and is not operational guidance.

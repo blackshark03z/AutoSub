@@ -1,4 +1,0 @@
-# One Gemini API key per line
-# Blank lines and lines beginning with # are ignored
-PASTE_GEMINI_KEY_1_HERE
-PASTE_GEMINI_KEY_2_HERE
