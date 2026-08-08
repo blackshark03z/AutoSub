@@ -67,7 +67,10 @@ def test_task34_user_run_blocks_without_real_subtitle_source(monkeypatch, tmp_pa
             "/api/simple/runs",
             json={
                 "source_path": str(source),
-                "settings": {"TOOL_AUTO_SUB_ALLOW_TEST_SUBTITLE_FIXTURES": True},
+                "settings": {
+                    "TOOL_AUTO_SUB_ALLOW_TEST_SUBTITLE_FIXTURES": True,
+                    "caption_mode": "local_audio_transcription",
+                },
             },
         )
         assert created.status_code == 200

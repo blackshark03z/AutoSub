@@ -17,7 +17,7 @@ class FakeLocalASRProvider:
         self.last_metadata = {
             "language": "zh",
             "language_probability": 0.99,
-            "task": "translate",
+            "task": "transcribe",
         }
         self.calls = []
 
@@ -30,9 +30,9 @@ class FakeLocalASRProvider:
 
 def _fake_segments():
     return [
-        ASRSegment(start=0.05, end=0.28, text="A real opening line."),
-        ASRSegment(start=0.31, end=0.62, text="The player keeps moving."),
-        ASRSegment(start=0.68, end=0.94, text="The final route is clear."),
+        ASRSegment(start=0.05, end=0.28, text="\u4e2d\u6587\u5f00\u573a\u767d\u3002"),
+        ASRSegment(start=0.31, end=0.62, text="\u73a9\u5bb6\u7ee7\u7eed\u79fb\u52a8\u3002"),
+        ASRSegment(start=0.68, end=0.94, text="\u6700\u540e\u7684\u8def\u7ebf\u5f88\u6e05\u695a\u3002"),
     ]
 
 
@@ -57,7 +57,13 @@ def test_task35_simple_workflow_calls_local_asr_and_persists_provenance(monkeypa
     _make_tiny_video(source)
 
     async def run(client):
-        created = (await client.post("/api/simple/runs", json={"source_path": str(source)})).json()["run"]
+        created = (await client.post(
+            "/api/simple/runs",
+            json={
+                "source_path": str(source),
+                "settings": {"caption_mode": "local_audio_transcription", "target_language": "English"},
+            },
+        )).json()["run"]
         started = await client.post(f"/api/simple/runs/{created['run_id']}/start")
         assert started.status_code == 200
         assert started.json()["run"]["internal_state"] == "processing"
@@ -68,23 +74,63 @@ def test_task35_simple_workflow_calls_local_asr_and_persists_provenance(monkeypa
         resolved = json.loads(resolved_path.read_text(encoding="utf-8"))
         assert resolved["subtitle_provenance"] == "local_transcription"
         assert [cue["resolved_text"] for cue in resolved["cues"]] == [segment.text for segment in _fake_segments()]
+        assert [cue["source_text"] for cue in resolved["cues"]] == [segment.text for segment in _fake_segments()]
+        assert [cue["translation_text"] for cue in resolved["cues"]] == [""] * len(_fake_segments())
         assert [(cue["start_ms"], cue["end_ms"]) for cue in resolved["cues"]] == [(50, 280), (310, 620), (680, 940)]
         metadata = resolved["active_track"]["metadata"]
         assert metadata["asr_provider"] == "faster_whisper"
         assert metadata["asr_model"] == local_transcription.MODEL_ID
         assert metadata["source_language"] == "zh"
-        assert metadata["subtitle_language"] == "English"
+        assert metadata["subtitle_language"] == "zh"
+        assert metadata["requested_target_language"] == "English"
         assert metadata["asr_device"] == "cpu"
         assert metadata["asr_compute_type"] == "int8"
+        assert resolved["active_track"]["track_type"] == "source"
         assert provider.calls == [
             {
                 "audio_path": str(Path(completed["run_directory"]) / "work" / "source_asr_16khz_mono.wav"),
                 "language": None,
-                "task": "translate",
+                "task": "transcribe",
             }
         ]
 
     asyncio.run(_with_client(run))
+
+
+@pytest.mark.parametrize("target_language", ["English", "Spanish", "zh"])
+def test_task35_source_asr_task_is_independent_of_translation_target(monkeypatch, tmp_path, target_language):
+    provider = FakeLocalASRProvider(_fake_segments())
+    captured = {}
+    monkeypatch.setattr(local_transcription, "active_track_provenance", lambda _run_id: None)
+    monkeypatch.setattr(local_transcription, "resolve_local_model_path", lambda *_args: tmp_path / "model")
+    monkeypatch.setattr(
+        local_transcription,
+        "extract_asr_audio",
+        lambda _source, output, **_kwargs: output.parent.mkdir(parents=True, exist_ok=True) or output.write_bytes(b"wav") or output,
+    )
+    monkeypatch.setattr(
+        local_transcription,
+        "create_local_transcription_track",
+        lambda _run_id, *, cues, metadata: captured.update(cues=cues, metadata=metadata) or {"track_id": "track_source"},
+    )
+
+    result = local_transcription.ensure_local_transcription_track(
+        "run_source_semantics",
+        source_path=tmp_path / "source.mp4",
+        run_directory=tmp_path / "run",
+        source_duration_seconds=10,
+        target_language=target_language,
+        source_language="auto",
+        model_path=tmp_path / "model",
+        provider_factory=lambda _model_path: provider,
+    )
+
+    assert provider.calls[0]["language"] is None
+    assert provider.calls[0]["task"] == "transcribe"
+    assert [cue["text"] for cue in result["cues"]] == [segment.text for segment in _fake_segments()]
+    assert captured["metadata"]["source_language"] == "zh"
+    assert captured["metadata"]["subtitle_language"] == "zh"
+    assert captured["metadata"]["requested_target_language"] == target_language
 
 
 def test_task35_user_import_skips_local_asr(monkeypatch, tmp_path):
@@ -200,7 +246,10 @@ def test_task35_render_failure_marks_run_failed(monkeypatch, tmp_path):
     _make_tiny_video(source)
 
     async def run(client):
-        created = (await client.post("/api/simple/runs", json={"source_path": str(source)})).json()["run"]
+        created = (await client.post(
+            "/api/simple/runs",
+            json={"source_path": str(source), "settings": {"caption_mode": "local_audio_transcription"}},
+        )).json()["run"]
         started = await client.post(f"/api/simple/runs/{created['run_id']}/start")
         assert started.status_code == 200
         assert started.json()["run"]["internal_state"] == "processing"

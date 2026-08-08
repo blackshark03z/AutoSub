@@ -123,7 +123,10 @@ def ensure_local_transcription_track(
             raise SubtitleContentUnavailableError(MODEL_MISSING_MESSAGE) from exc
         model_load_seconds = time.perf_counter() - model_load_started
         _assert_loaded_model(provider, model_path)
-        task = "translate" if target_language.strip().lower() == "english" else "transcribe"
+        # The local-transcription track is the source track.  Its semantic
+        # operation must not depend on the requested display/translation
+        # target: Whisper translation belongs to a distinct translation track.
+        task = "transcribe"
         normalized_language = source_language
         if not normalized_language or str(normalized_language).strip().lower() == "auto":
             normalized_language = None
@@ -196,7 +199,8 @@ def ensure_local_transcription_track(
         "network_attempts": 0,
         "implicit_download": False,
         "source_language": detected_language,
-        "subtitle_language": "English" if task == "translate" else detected_language,
+        "subtitle_language": detected_language,
+        "requested_target_language": target_language,
         "asr_task": task,
         "audio_filename": audio_path.name,
         "audio_sha256": sha256_file(audio_path),

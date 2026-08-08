@@ -434,6 +434,7 @@ def create_local_transcription_track(
             "cue_id": str(cue["cue_id"]),
             "start_ms": int(cue["start_ms"]),
             "end_ms": int(cue["end_ms"]),
+            "source_text": str(cue["text"]).strip(),
             "text": str(cue["text"]).strip(),
         }
         for cue in cues
@@ -460,8 +461,8 @@ def create_local_transcription_track(
                 track_id=track_id,
                 project_id=row.project_id,
                 run_id=run_id,
-                track_type="translation",
-                display_name="Offline transcription",
+                track_type="source",
+                display_name="Offline source transcription",
                 source_type="local_transcription",
                 source_filename=metadata.get("audio_filename"),
                 source_sha256=metadata.get("audio_sha256"),
@@ -594,7 +595,18 @@ def resolved_cues(run_id: str) -> dict[str, Any]:
         "source_caption_gemini_translation",
         "source_caption_gemini_translation_with_human_review",
     }
-    if provenance in {"local_transcription", *source_caption_provenance}:
+    if provenance == "local_transcription":
+        cues = [
+            {
+                "cue_id": cue["cue_id"],
+                "start_ms": int(cue["start_ms"]),
+                "end_ms": int(cue["end_ms"]),
+                "source_text": str(cue.get("source_text") or cue["text"]),
+                "translation_text": "",
+            }
+            for cue in active_track.get("metadata", {}).get("cues", [])
+        ]
+    elif provenance in source_caption_provenance:
         cues = [
             {
                 "cue_id": cue["cue_id"],
