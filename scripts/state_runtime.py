@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Machine-readable v1.8 runtime snapshots and immutable history."""
+"""Machine-readable v1.16 runtime snapshots and immutable history."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from runtime_support import application_snapshot, atomic_write_json, load_task_baseline, sha256_file, task_delta_files
+from runtime_support import application_snapshot, atomic_write_json, load_task_baseline, sha256_file, task_delta_files, validate_identifier, confined_child
 
 
 def field(body: str, name: str, default: str = "") -> str:
@@ -22,6 +22,13 @@ def sync_runtime(root: Path) -> None:
     project_body = (ai / "PROJECT.md").read_text(encoding="utf-8")
     state_body = (ai / "STATE.md").read_text(encoding="utf-8")
     task_body = (ai / "ACTIVE_TASK.md").read_text(encoding="utf-8")
+    goal_state_path = ai / "GOAL_STATE.json"
+    goal_state = {}
+    if goal_state_path.exists():
+        try:
+            goal_state = json.loads(goal_state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            goal_state = {"status": "INVALID"}
     snapshot = application_snapshot(root)
     try:
         non_shipping_count = int(field(state_body, "Consecutive Non-Shipping Tasks", "0"))
@@ -32,6 +39,18 @@ def sync_runtime(root: Path) -> None:
     except ValueError:
         non_shipping_threshold = 3
     derived_breaker = "ACTIVE" if non_shipping_count >= non_shipping_threshold else "INACTIVE"
+    if goal_state_path.exists():
+        atomic_write_json(runtime / "goal.json", {
+            "schema_version": 1,
+            "goal_id": goal_state.get("goal_id", "NONE"),
+            "goal_status": goal_state.get("status", "NONE"),
+            "risk_ceiling": goal_state.get("risk_ceiling", "R2"),
+            "ready_nodes": [
+                node_id for node_id, node in (goal_state.get("tasks", {}) or {}).items()
+                if node.get("status") == "PLANNED"
+            ],
+            "source_sha256": sha256_file(goal_state_path),
+        })
     atomic_write_json(runtime / "project.json", {
         "schema_version": 1,
         "project_id": field(project_body, "Project ID"),
@@ -58,6 +77,8 @@ def sync_runtime(root: Path) -> None:
     atomic_write_json(runtime / "task.json", {
         "schema_version": 2,
         "task_id": field(task_body, "Task ID"),
+        "goal_id": field(task_body, "Goal ID", "NONE"),
+        "goal_node": field(task_body, "Goal Node", "NONE"),
         "task_status": field(task_body, "Task Status"),
         "risk_tier": field(task_body, "Risk Tier"),
         "risk_floor": field(task_body, "Risk Floor"),
@@ -72,9 +93,9 @@ def sync_runtime(root: Path) -> None:
 
 
 def archive_history(root: Path, record: dict[str, Any]) -> Path:
-    task_id = str(record["task_id"])
+    task_id = validate_identifier(str(record["task_id"]), "task ID")
     revision = int(record["task_revision"])
-    path = root / ".ai" / "history" / task_id / f"r{revision:03d}.json"
+    path = confined_child(root, Path(".ai/history"), task_id, "task ID") / f"r{revision:03d}.json"
     if path.exists():
         raise SystemExit(f"Immutable task history already exists: {path.relative_to(root)}")
     path.parent.mkdir(parents=True, exist_ok=True)

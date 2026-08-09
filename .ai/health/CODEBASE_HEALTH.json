@@ -1,0 +1,56 @@
+{
+  "git_repo_mb": 1.129,
+  "hard_violations": [],
+  "largest_source_file_loc": 2640,
+  "largest_source_files": [
+    {
+      "loc": 2640,
+      "path": "app/services/source_caption_translation.py"
+    },
+    {
+      "loc": 2038,
+      "path": "tools/build_cp13a1_complete_payload_hotfix.py"
+    },
+    {
+      "loc": 1796,
+      "path": "tools/run_cp07_full_canonical_sample.py"
+    },
+    {
+      "loc": 1648,
+      "path": "tools/run_cp06k_tail_audio_alignment_and_residual_repair.py"
+    },
+    {
+      "loc": 1641,
+      "path": "scripts/ai_os.py"
+    },
+    {
+      "loc": 1503,
+      "path": "app/static/operator/app.js"
+    },
+    {
+      "loc": 1395,
+      "path": "tools/run_cp07_downstream_from_gemini_transform.py"
+    },
+    {
+      "loc": 1331,
+      "path": "tools/run_cp06j_source_zone_replacement_subtitle.py"
+    },
+    {
+      "loc": 1328,
+      "path": "app/services/production_golden_path.py"
+    },
+    {
+      "loc": 1268,
+      "path": "app/providers/translation/gemini.py"
+    }
+  ],
+  "product_tree_mb": 469.527,
+  "runtime_dependencies": 8,
+  "schema_version": 2,
+  "scoped_source_file_locs": {},
+  "source_bytes": 2690908,
+  "source_files": 204,
+  "source_loc": 57971,
+  "tracked_files": 256,
+  "tracked_repo_mb": 2.479
+}

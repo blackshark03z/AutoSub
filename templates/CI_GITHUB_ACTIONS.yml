@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   verify:
@@ -12,51 +13,81 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Set up Node when needed
         if: ${{ hashFiles('package.json') != '' }}
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
-
-      - name: Install Node dependencies (npm lockfile)
-        if: ${{ hashFiles('package-lock.json') != '' }}
-        run: npm ci
-
-      - name: Install Python dependencies (requirements)
-        if: ${{ hashFiles('requirements.txt') != '' }}
-        run: pip install -r requirements.txt
-
-      - name: Install Python project
-        if: ${{ hashFiles('pyproject.toml') != '' && hashFiles('requirements.txt') == '' }}
-        run: pip install -e .
-
+      - name: Enable Corepack for pnpm/yarn
+        if: ${{ hashFiles('pnpm-lock.yaml') != '' || hashFiles('yarn.lock') != '' }}
+        run: corepack enable
+      - name: Set up uv when needed
+        if: ${{ hashFiles('uv.lock') != '' }}
+        uses: astral-sh/setup-uv@v6
+      - name: Install Poetry when needed
+        if: ${{ hashFiles('poetry.lock') != '' }}
+        run: python -m pip install poetry
+      - name: Install project dependencies from canonical/autodetected command
+        run: python scripts/project_ci.py --install --ci
+      - name: Configure external Guardian verifier when repository variable is set
+        if: ${{ vars.AI_BUILD_OS_GUARDIAN_PUBLIC_KEY_PEM != '' }}
+        shell: bash
+        env:
+          GUARDIAN_PUBLIC_KEY_PEM: ${{ vars.AI_BUILD_OS_GUARDIAN_PUBLIC_KEY_PEM }}
+        run: |
+          printf '%s\n' "$GUARDIAN_PUBLIC_KEY_PEM" > "$RUNNER_TEMP/ai-build-os-guardian-public.pem"
+          echo "AI_BUILD_OS_GUARDIAN_PUBLIC_KEY=$RUNNER_TEMP/ai-build-os-guardian-public.pem" >> "$GITHUB_ENV"
+      - name: Report achieved assurance
+        env:
+          AI_BUILD_OS_GUARDIAN_EXTERNAL_ATTESTED: ${{ vars.AI_BUILD_OS_GUARDIAN_EXTERNAL_ATTESTED }}
+          AI_BUILD_OS_PROTECTED_MERGE_ATTESTED: ${{ vars.AI_BUILD_OS_PROTECTED_MERGE_ATTESTED }}
+          AI_BUILD_OS_ISOLATED_WORKER_ATTESTED: ${{ vars.AI_BUILD_OS_ISOLATED_WORKER_ATTESTED }}
+        run: python scripts/ai_os.py assurance
       - name: Validate AI Build OS commit provenance
         run: python scripts/validate_ai_os.py --ci
-
+      - name: Codebase health hard gates
+        run: python scripts/ai_os.py health check --ci
       - name: Detect AI Build OS core changes
         id: ai_os_core
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
-            BASE_SHA="$(git rev-parse HEAD^)"
-          fi
-          if git diff --quiet "$BASE_SHA" HEAD -- scripts/*.py templates/*.yml templates/*.md; then
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then BASE_SHA="$(git rev-parse HEAD^)"; fi
+          if git diff --quiet "$BASE_SHA" HEAD -- scripts/*.py templates/*.yml templates/*.md config/*.json; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Run AI Build OS regression suite
+      - name: Run default fast/current regression pyramid
         if: ${{ steps.ai_os_core.outputs.changed == 'true' }}
         run: python scripts/self_test.py
-
-      - name: Run detected product checks
+      - name: Run v1.14 compatibility regressions
+        if: ${{ steps.ai_os_core.outputs.changed == 'true' }}
+        run: python scripts/self_test_v114.py
+      - name: Run v1.13 compatibility regressions
+        if: ${{ steps.ai_os_core.outputs.changed == 'true' }}
+        run: python scripts/self_test_v113.py
+      - name: Run v1.12 trust/delegation regressions
+        if: ${{ steps.ai_os_core.outputs.changed == 'true' }}
+        run: python scripts/self_test_v112.py
+      - name: Run external-trust regressions
+        if: ${{ steps.ai_os_core.outputs.changed == 'true' }}
+        run: python scripts/self_test_v112_trust.py
+      - name: Run canonical product checks (fail closed)
         run: python scripts/project_ci.py --ci
+
+  full_build_os_regression:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Historical full Build OS regression
+        run: python scripts/self_test_full.py

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "review_trust": {
+    "R0": "NONE",
+    "R1": "NONE",
+    "R2_when_review_triggered": "SIGNED_GUARDIAN",
+    "R3": "SIGNED_GUARDIAN"
+  },
+  "guardian": {
+    "public_key_env": "AI_BUILD_OS_GUARDIAN_PUBLIC_KEY",
+    "protected_merge_env": "AI_BUILD_OS_PROTECTED_MERGE_ATTESTED",
+    "isolated_worker_env": "AI_BUILD_OS_ISOLATED_WORKER_ATTESTED",
+    "external_guardian_attested_env": "AI_BUILD_OS_GUARDIAN_EXTERNAL_ATTESTED"
+  },
+  "field_learning": {
+    "local_enabled": true,
+    "global_enabled": false,
+    "redact_project_id_in_global": true
+  }
+}

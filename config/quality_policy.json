@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "required_for_executable": [
+    "test"
+  ],
+  "recommended_for_executable": [
+    "lint",
+    "typecheck",
+    "build"
+  ],
+  "capability_waivers": {},
+  "minimum_waiver_reason_chars": 24
+}

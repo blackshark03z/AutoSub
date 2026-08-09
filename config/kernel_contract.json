@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "kernel_channel": "stable-candidate",
+  "policy_channel": "tunable",
+  "stable_core": [
+    "scripts/runtime_support.py",
+    "scripts/evidence_support.py",
+    "scripts/state_runtime.py",
+    "scripts/state_hazard_support.py",
+    "scripts/assurance_support.py",
+    "scripts/guardian.py"
+  ],
+  "tunable_policy": [
+    "config/gates.json",
+    "config/codebase_health.json",
+    "config/quality_policy.json",
+    "config/risk_semantics.json",
+    "config/assurance.json"
+  ],
+  "promotion_rule": "Field evidence -> bounded experiment -> regression -> owner promotion. Never auto-edit stable core from field telemetry.",
+  "release_discipline": {
+    "minimum_field_window_days_before_stable_core_promotion": 14,
+    "minimum_distinct_projects_recommended": 3,
+    "policy_revision_may_change_without_kernel_version": true
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "schema_version": 2,
+  "source_extensions": [
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".cs",
+    ".php",
+    ".rb",
+    ".swift",
+    ".vue",
+    ".svelte"
+  ],
+  "ignore_dirs": [
+    ".git",
+    ".ai/evidence",
+    ".ai/transactions",
+    "node_modules",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    "coverage",
+    "target",
+    "__pycache__"
+  ],
+  "hard_forbidden_tracked_patterns": [
+    "node_modules/**",
+    ".venv/**",
+    "venv/**",
+    "__pycache__/**",
+    "coverage/**",
+    "tmp/**",
+    "*.log",
+    "*.sqlite-journal",
+    "*.pyc"
+  ],
+  "generated_warn_patterns": [
+    "dist/**",
+    "build/**",
+    "target/**",
+    "*.zip",
+    "*.tar",
+    "*.gz"
+  ],
+  "max_new_binary_mb": 5,
+  "ratchets": {
+    "largest_source_file_growth_percent_warn": 30,
+    "source_loc_growth_percent_warn": 20,
+    "runtime_dependency_growth_warn": 3,
+    "new_source_files_warn": 12,
+    "net_loc_per_goal_warn": 2000,
+    "product_tree_growth_mb_warn": 10,
+    "git_repo_growth_mb_warn": 25,
+    "largest_source_file_loc_warn": 800
+  },
+  "hotspot": {
+    "minimum_touches": 5,
+    "high_score": 12
+  },
+  "architecture_boundaries": [],
+  "hard_ratchets": {
+    "new_source_file_loc_max": 1000,
+    "existing_large_file_growth_loc_max": 300,
+    "existing_large_file_soft_floor_loc": 800,
+    "hotspot_large_file_growth_loc_max": 150
+  },
+  "architecture_policy": {
+    "require_explicit_decision_for_executable": true,
+    "no_boundaries_reason": "Existing modular-monolith boundaries are documented, but enforceable import-direction rules require a dedicated architecture decision.",
+    "minimum_waiver_reason_chars": 24
+  }
+}

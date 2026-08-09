@@ -7,6 +7,7 @@ Capsule Revision: 0
 
 - ID: NONE/r000
 - Status: NOT_CREATED
+- Goal: NONE / node NONE
 - Milestone / criterion: NONE / NONE
 - Risk / profile: R0 / LEAN
 - Negative path required: no
@@ -15,6 +16,10 @@ Capsule Revision: 0
 ## Outcome
 
 - NONE
+
+## Goal Context
+
+NONE
 
 ## Scope
 

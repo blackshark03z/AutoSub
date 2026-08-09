@@ -1,0 +1,80 @@
+{
+  "files": [
+    {
+      "path": "EVIDENCE_INDEX.md",
+      "sha256": "6dd53067cb5d5607144a2c7a115fb94c9db187f82483f98f972f9765fe1bca0b",
+      "size": 2505
+    },
+    {
+      "path": "logs/EV-001-focused.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "logs/EV-001-focused.stdout.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "logs/EV-002-negative.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "logs/EV-002-negative.stdout.txt",
+      "sha256": "69cc6271ec1893acd9749ecede820ddb45831bf3581cf6d5a5fffd59b84d18d1",
+      "size": 21
+    },
+    {
+      "path": "logs/EV-003-integration.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "logs/EV-003-integration.stdout.txt",
+      "sha256": "60cd1db2dc83dad926ce7d5b7056941fcfcdee2c69dfade26279da3a7578518c",
+      "size": 104
+    },
+    {
+      "path": "logs/EV-004-rollback.stderr.txt",
+      "sha256": "e1b55978efc9273f0439da6976c8e4ac47cc90b985671c4f592e87bb5b0db6f4",
+      "size": 212
+    },
+    {
+      "path": "logs/EV-004-rollback.stdout.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "logs/EV-005-full_suite.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "logs/EV-005-full_suite.stdout.txt",
+      "sha256": "b3da5510047db2d13fbfa9a15bcdd3eca5f0b7db235aedb9b79e548d7bd9b588",
+      "size": 83
+    },
+    {
+      "path": "manifest.json",
+      "sha256": "c2b5ef2b7687a73b5ff4cbce5a229b6eb550a4adfaaacd89167ac929d1b7c049",
+      "size": 27225
+    },
+    {
+      "path": "review/attestation.json",
+      "sha256": "9104eb9e003deee497872ce4e1163a947ec1dc1335e7316f023e8366260c65af",
+      "size": 876
+    },
+    {
+      "path": "review/BUILD_OS_V116_ADOPTION_REVIEW.md",
+      "sha256": "7323a1cf43fe065674af07d919b9c9a35c061c2068c4cc45a30895681a7cc700",
+      "size": 1146
+    },
+    {
+      "path": "WORKER_REPORT.md",
+      "sha256": "3de2d46b5e6a43708d5ff4fd8572d5b8567ee74dbc28270fa06c11675b088e14",
+      "size": 792
+    }
+  ],
+  "schema_version": 1
+}

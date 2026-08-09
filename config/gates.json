@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "R0": {
+    "profile": "LEAN",
+    "focused": "required",
+    "negative": "none",
+    "integration": "none",
+    "acceptance_contract": "none",
+    "rollback": "none",
+    "full_suite": "none",
+    "review": "none"
+  },
+  "R1": {
+    "profile": "LEAN",
+    "focused": "required",
+    "negative": "when_failure_behavior",
+    "integration": "none",
+    "acceptance_contract": "none",
+    "rollback": "none",
+    "full_suite": "none",
+    "review": "none"
+  },
+  "R2": {
+    "profile": "STANDARD",
+    "focused": "required",
+    "negative": "required",
+    "integration": "required",
+    "acceptance_contract": "required_for_goal",
+    "rollback": "when_recovery_relevant",
+    "full_suite": "when_shared_critical_core",
+    "review": "triggered_signed_guardian"
+  },
+  "R3": {
+    "profile": "DEEP",
+    "focused": "required",
+    "negative": "required",
+    "integration": "required",
+    "acceptance_contract": "required_for_goal",
+    "rollback": "required",
+    "full_suite": "required",
+    "review": "signed_guardian"
+  }
+}

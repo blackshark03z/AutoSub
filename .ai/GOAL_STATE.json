@@ -1,0 +1,28 @@
+{
+  "acceptance": [],
+  "acceptance_attempts": 0,
+  "acceptance_quality_warnings": [],
+  "budget": {
+    "max_auto_scouts": 2,
+    "max_non_shipping_tasks": 2,
+    "max_parallel": 1,
+    "max_revisions_per_task": 2,
+    "max_tasks": 8,
+    "scope_growth_limit_percent": 30,
+    "scout_summary_token_budget": 350
+  },
+  "completed_non_shipping_streak": 0,
+  "created_at": null,
+  "decisions_required": [],
+  "discoveries": [],
+  "goal_id": "NONE",
+  "goal_type": "product",
+  "last_task_id": null,
+  "non_goals": [],
+  "outcome": "",
+  "risk_ceiling": "R2",
+  "schema_version": 1,
+  "status": "NONE",
+  "tasks": {},
+  "updated_at": null
+}

@@ -1,4 +1,4 @@
-# Evidence Integrity — v1.8
+# Evidence Integrity — v1.13
 
 Evidence là immutable acceptance record, với mức lưu trữ tỷ lệ theo risk.
 

@@ -32,3 +32,10 @@ Evidence close phải ghi:
 - side effect, cleanup và rollback status.
 
 `done` tự sinh schema này. Evidence viết tay phải theo `templates/EVIDENCE_INDEX.md`. Output sai phủ quyết PASS dù command exit code 0.
+
+
+## v1.10 builder/judge separation
+
+For Goal-linked R2/R3 work, the acceptance command must be declared on the Goal node before the Worker starts. `goal start` freezes the contract; `done` automatically runs it. Optional `--probe-file` hashes are checked before verification, so the Worker cannot silently rewrite the acceptance probe used as the judge.
+
+R0/R1 stay self-verified. R2 reviewer is trigger-based rather than universal; R3 independent review remains mandatory.

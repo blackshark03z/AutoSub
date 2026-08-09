@@ -1,0 +1,2 @@
+WARNING Found 14 __pycache__ directories; exclude from release package
+RESULT: PASS errors=0 warnings=1

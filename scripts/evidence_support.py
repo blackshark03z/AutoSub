@@ -20,6 +20,8 @@ from runtime_support import (
     sha256_file,
     sha256_text,
     task_delta_files,
+    validate_identifier,
+    confined_child,
 )
 
 INSPECTION_STATES = {"AUTOMATED_EXIT_ONLY", "AGENT_INSPECTED", "HUMAN_INSPECTED", "NOT_INSPECTED"}
@@ -36,6 +38,7 @@ def parse_iso(value: str) -> datetime:
 
 
 def next_revision(root: Path, task_id: str) -> int:
+    task_id = validate_identifier(task_id, 'task ID')
     revisions: set[int] = set()
     ledger = root / ".ai" / "COST_LEDGER.csv"
     if ledger.is_file():
@@ -46,13 +49,13 @@ def next_revision(root: Path, task_id: str) -> int:
                         revisions.add(int(row.get("task_revision") or 0))
                     except ValueError:
                         pass
-    task_dir = root / ".ai" / "evidence" / task_id
+    task_dir = confined_child(root, Path(".ai/evidence"), task_id, "task ID")
     if task_dir.is_dir():
         for child in task_dir.iterdir():
             match = re.fullmatch(r"r(\d{3,})", child.name)
             if match:
                 revisions.add(int(match.group(1)))
-    history_dir = root / ".ai" / "history" / task_id
+    history_dir = confined_child(root, Path(".ai/history"), task_id, "task ID")
     if history_dir.is_dir():
         for child in history_dir.glob("r*.json"):
             match = re.fullmatch(r"r(\d{3,})\.json", child.name)
@@ -77,9 +80,17 @@ def ensure_repo_file(root: Path, relative: str) -> Path:
 
 
 def sanitize_output(value: str, limit_bytes: int = 256_000) -> tuple[str, bool, int]:
-    # Conservative redaction for common secret syntaxes. Projects may add their own redactor upstream.
-    redacted = re.sub(r"(?i)(authorization:\s*bearer\s+)[^\s]+", r"\1[REDACTED]", value)
-    redacted = re.sub(r"(?i)((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s]+", r"\1[REDACTED]", redacted)
+    # Evidence is durable, so redact high-signal credential forms before persistence.
+    redacted = value
+    redacted = re.sub(r"(?i)(authorization:\s*(?:bearer|basic)\s+)[^\s]+", r"\1[REDACTED]", redacted)
+    redacted = re.sub(r"(?im)^((?:set-cookie|cookie)\s*:\s*).*$", r"\1[REDACTED]", redacted)
+    redacted = re.sub(r"(?is)-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----", "[REDACTED PRIVATE KEY]", redacted)
+    redacted = re.sub(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", "[REDACTED JWT]", redacted)
+    redacted = re.sub(r"\bAKIA[0-9A-Z]{16}\b", "[REDACTED AWS ACCESS KEY]", redacted)
+    redacted = re.sub(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "[REDACTED GITHUB TOKEN]", redacted)
+    redacted = re.sub(r"\bsk-[A-Za-z0-9_-]{20,}\b", "[REDACTED API TOKEN]", redacted)
+    redacted = re.sub(r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|client[_-]?secret)\s*[=:]\s*[\"']?)[^\s,;\"']+", r"\1[REDACTED]", redacted)
+    redacted = re.sub(r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s:]+:[^/@\s]+@", r"\1[REDACTED]@", redacted)
     encoded = redacted.encode("utf-8", errors="replace")
     original_size = len(encoded)
     if original_size <= limit_bytes:
@@ -200,6 +211,52 @@ def validate_review_report(root: Path, relative: str, expected: dict[str, str]) 
     return errors
 
 
+
+def validate_review_attestation(root: Path, relative_or_absolute: str, expected: dict[str, str], *, require_signed: bool = False) -> tuple[list[str], dict[str, Any] | None]:
+    """Validate an outer-runtime review attestation.
+
+    This is a trust hook, not a cryptographic root of trust. The path must live
+    outside the repository so repo-write authority alone cannot modify the bundled
+    attestation. Real independence depends on the outer runtime controlling origin.
+    """
+    errors: list[str] = []
+    path = Path(relative_or_absolute).expanduser().resolve()
+    try:
+        path.relative_to(root.resolve())
+        errors.append('Review attestation must be supplied from outside the repository trust boundary')
+    except ValueError:
+        pass
+    if not path.is_file():
+        return errors + [f'Review attestation missing: {path}'], None
+    try:
+        value = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as exc:
+        return errors + [f'Review attestation invalid JSON: {exc}'], None
+    required = ['task_id','task_revision','reviewed_snapshot_sha256','reviewer_session_id','writer_session_id','verdict','reviewed_at','issuer']
+    for name in required:
+        if not str(value.get(name) or '').strip(): errors.append(f'Review attestation missing {name}')
+    if str(value.get('task_id')) != expected['task_id']: errors.append('Review attestation Task ID mismatch')
+    if str(value.get('task_revision')) != str(expected['task_revision']): errors.append('Review attestation task revision mismatch')
+    if str(value.get('reviewed_snapshot_sha256')) != expected['snapshot_sha256']: errors.append('Review attestation snapshot mismatch')
+    if str(value.get('writer_session_id')) != expected.get('writer_identity'): errors.append('Review attestation writer session mismatch')
+    expected_report_hash=str(expected.get('review_report_sha256') or '').strip()
+    signed_report_hash=str(value.get('review_report_sha256') or '').strip()
+    if int(value.get('schema_version') or 0) >= 3 and not signed_report_hash:
+        errors.append('Guardian attestation schema v3+ must bind review_report_sha256')
+    if expected_report_hash and signed_report_hash != expected_report_hash:
+        errors.append('Guardian attestation review report hash mismatch')
+    if str(value.get('reviewer_session_id')) == str(value.get('writer_session_id')): errors.append('Attested reviewer session must differ from writer session')
+    if str(value.get('verdict')).upper() not in {'PASS','ACCEPTED'}: errors.append('Review attestation verdict must be PASS or ACCEPTED')
+    try: parse_iso(str(value.get('reviewed_at') or ''))
+    except (ValueError, TypeError): errors.append('Review attestation reviewed_at must be ISO-8601')
+    if require_signed:
+        try:
+            from assurance_support import verify_guardian_signature
+            errors.extend(verify_guardian_signature(root, value))
+        except Exception as exc:
+            errors.append(f'Guardian signature validation failed closed: {exc}')
+    return errors, value
+
 def create_staged_bundle(
     root: Path,
     tx_dir: Path,
@@ -215,6 +272,7 @@ def create_staged_bundle(
     cleanup_note: str,
     known_limits: str,
     review_report: str | None,
+    review_attestation: dict[str, Any] | None = None,
     compact: bool = False,
     expected_outputs: list[str] | None = None,
 ) -> tuple[Path, dict[str, Any]]:
@@ -228,13 +286,50 @@ def create_staged_bundle(
 
     before = application_snapshot(root)
     checks: list[dict[str, Any]] = []
-    for index, (kind, command) in enumerate(commands, start=1):
-        check = run_command(
-            root, kind, command, timeout, logs_dir, index,
-            allow_shell=allow_shell, inspected_by=inspected_by,
-            limit_bytes=32_768 if compact else 256_000,
-        )
-        checks.append(check)
+    executed: dict[tuple[str, str, bool], dict[str, Any]] = {}
+    next_index = 1
+    from state_hazard_support import parse_contract as parse_state_contract, proof_key as state_proof_key, reusable_proof as reusable_state_proof
+    state_contract = parse_state_contract(task.get("state_contract_json", "{}"))
+    for kind, command in commands:
+        # Reuse only an exact command executed against the exact same application snapshot.
+        # This lets one run satisfy focused/integration/acceptance gates without weakening freshness.
+        snapshot_key = application_snapshot(root)["snapshot_sha256"]
+        key = (command.strip(), snapshot_key, bool(allow_shell))
+        if key in executed:
+            check = executed[key]
+            check.setdefault("satisfies", []).append(kind)
+            print(f"{kind}: REUSED {check['id']} command={command}")
+            continue
+        reused_state = reusable_state_proof(root, state_contract, kind, command) if kind in {"state_transition", "state_temporal"} else None
+        if reused_state:
+            started = completed = now()
+            prefix = f"EV-{next_index:03d}-{kind}"
+            stdout_path = logs_dir / f"{prefix}.stdout.txt"
+            stderr_path = logs_dir / f"{prefix}.stderr.txt"
+            atomic_write_text(stdout_path, f"[REUSED STATE PROOF]\nproof_key={reused_state['proof_key']}\nsource_manifest={reused_state['source_manifest']}\n")
+            atomic_write_text(stderr_path, "")
+            check = {
+                "id": f"EV-{next_index:03d}", "kind": kind, "command": command, "execution_mode": "reused-proof",
+                "started_at": started, "completed_at": completed, "exit_code": 0, "result": "PASS",
+                "inspection_status": "AGENT_INSPECTED" if inspected_by else "AUTOMATED_EXIT_ONLY", "inspected_by": inspected_by or "NONE",
+                "stdout": {"path": stdout_path.name, "sha256": sha256_file(stdout_path), "stored_bytes": stdout_path.stat().st_size, "original_bytes": stdout_path.stat().st_size, "truncated": False},
+                "stderr": {"path": stderr_path.name, "sha256": sha256_file(stderr_path), "stored_bytes": 0, "original_bytes": 0, "truncated": False},
+                "reused": True, "reused_from": reused_state.get("source_manifest"), "proof_key": reused_state.get("proof_key"),
+            }
+        else:
+            check = run_command(
+                root, kind, command, timeout, logs_dir, next_index,
+                allow_shell=allow_shell, inspected_by=inspected_by,
+                limit_bytes=32_768 if compact else 256_000,
+            )
+            if kind in {"state_transition", "state_temporal"}:
+                key_value, dep = state_proof_key(root, state_contract, kind, command)
+                check["proof_key"] = key_value
+                check["state_dependency_sha256"] = dep.get("sha256")
+                check["reused"] = False
+        next_index += 1
+        check["satisfies"] = [kind]
+        checks.append(check); executed[key] = check
         print(f"{kind}: {check['result']} exit={check['exit_code']} command={command}")
         if check["result"] != "PASS":
             raise SystemExit("Verification command failed; task remains open and staged evidence will not be published")
@@ -278,7 +373,15 @@ def create_staged_bundle(
             "source_path": review_report.replace("\\", "/"),
             "bundle_path": f"review/{source.name}",
             "sha256": sha256_file(target),
+            "trust": "DECLARED_REPO_REVIEW",
         }
+
+    if review_record and review_attestation:
+        attestation_path = review_dir / "attestation.json"
+        atomic_write_json(attestation_path, review_attestation)
+        review_record["trust"] = "SIGNED_GUARDIAN" if review_attestation.get("signature_b64") else "ATTESTED_EXTERNAL_RUNTIME"
+        review_record["attestation_bundle_path"] = "review/attestation.json"
+        review_record["attestation_sha256"] = sha256_file(attestation_path)
 
     generated = now()
     manifest: dict[str, Any] = {
@@ -286,9 +389,16 @@ def create_staged_bundle(
         "evidence_mode": "COMPACT" if compact else "FULL",
         "task_id": task["task_id"],
         "task_revision": revision,
+        "goal_id": task.get("goal_id", "NONE"),
+        "goal_node": task.get("goal_node", "NONE"),
         "risk_tier": task["risk_tier"],
         "execution_profile": task["execution_profile"],
         "success_criterion": task["success_criterion"],
+        "acceptance_contract_sha256": task.get("acceptance_contract_sha256", "NONE"),
+        "review_policy": task.get("review_policy", "auto"),
+        "state_hazard_level": task.get("state_hazard_level", "S0"),
+        "state_contract_sha256": task.get("state_contract_sha256", "NONE"),
+        "state_contract": state_contract,
         "accepted_outcome": outcome,
         "generated_at": generated,
         "starting_snapshot": before,
@@ -308,7 +418,7 @@ def create_staged_bundle(
     rows: list[str] = []
     for check in checks:
         rows.append(
-            f"| {check['id']} | {check['kind']} | `{_safe_inline(check['command'])}` | {check['exit_code']} | "
+            f"| {check['id']} | {','.join(check.get('satisfies') or [check['kind']])} | `{_safe_inline(check['command'])}` | {check['exit_code']} | "
             f"{check['result']} | {check['inspection_status']} | `{check['stdout']['sha256']}` | `{check['stderr']['sha256']}` | "
             f"{check['started_at']} | {check['completed_at']} |"
         )
@@ -380,7 +490,8 @@ def create_staged_bundle(
 
 
 def publish_bundle(root: Path, stage: Path, task_id: str, revision: int) -> Path:
-    final = root / ".ai" / "evidence" / task_id / revision_name(revision)
+    task_dir = confined_child(root, Path(".ai/evidence"), task_id, "task ID")
+    final = task_dir / revision_name(revision)
     if final.exists():
         raise SystemExit(f"Immutable evidence bundle already exists: {final.relative_to(root)}")
     final.parent.mkdir(parents=True, exist_ok=True)

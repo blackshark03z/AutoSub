@@ -65,8 +65,13 @@ Project Status: DRAFT
 - Package manager: UNSET
 - Entry point: UNSET
 - Run command: UNSET
+- Install command: UNSET
 - Test command: UNSET
+- Lint command: UNSET
+- Typecheck command: UNSET
 - Build command: UNSET
+- CI quality command: UNSET
+- CI quality capabilities: UNSET
 - Important directories: UNSET
 
 ## Risk Surface Map
@@ -85,6 +90,17 @@ Optional project-specific floors used by acceptance-time actual-delta reconcilia
 - New framework requires owner approval: yes
 - New production dependency requires justification: yes
 - Abstraction requires real variation or tested boundary: yes
+
+## Codebase Health Policy
+
+- Health mode: RATCHET
+- Architecture boundaries config: config/codebase_health.json
+- Architecture decision: configure boundaries or record an explicit no-boundaries reason before protected CI
+- Tracked build/cache artifacts: prohibited unless explicitly allowlisted
+- Large new binary threshold: 5 MB
+- New runtime dependency: structured capability / alternatives / removal-cost decision required
+- Cleanup budget: bounded to the touched area; broad rewrites require a separate Goal
+- Refactor priority: change-frequency × rework/defect hotspot, not file size alone
 
 ## Quality Priorities
 

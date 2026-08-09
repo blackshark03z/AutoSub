@@ -37,7 +37,7 @@ operator/translation_runtime_config.local.json
 addons/translation_runtime/packages/
 
 # Fresh development baseline: generated/build/runtime artifacts stay external.
-.ai/
+# Build OS project/Goal/evidence records are versioned; .ai/.gitignore excludes local runtime state.
 release/
 build/
 build_temp/

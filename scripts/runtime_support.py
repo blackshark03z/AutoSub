@@ -16,6 +16,25 @@ from typing import Any, Iterator
 
 OS_EXCLUDED_PREFIXES = (".ai/", ".git/", ".github/workflows/ai-build-os.yml")
 TASK_BASELINE_RELATIVE = Path(".ai/runtime/task_baseline.json")
+SAFE_IDENTIFIER = __import__('re').compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
+
+
+def validate_identifier(value: str, kind: str = 'identifier') -> str:
+    value = str(value or '').strip()
+    if not value or value in {'.', '..'} or not SAFE_IDENTIFIER.fullmatch(value):
+        raise SystemExit(f"Invalid {kind}: {value!r}. Use 1-128 characters from A-Z, a-z, 0-9, dot, underscore or hyphen; path separators are forbidden.")
+    return value
+
+
+def confined_child(root: Path, base: Path, identifier: str, kind: str = 'identifier') -> Path:
+    safe = validate_identifier(identifier, kind)
+    base_path = (root / base).resolve()
+    child = (base_path / safe).resolve()
+    try:
+        child.relative_to(base_path)
+    except ValueError as exc:
+        raise SystemExit(f"{kind} escapes managed namespace: {identifier!r}") from exc
+    return child
 
 
 def atomic_write_text(path: Path, body: str) -> None:
@@ -165,15 +184,24 @@ def application_snapshot(root: Path) -> dict[str, Any]:
     }
 
 
-def capture_task_baseline(root: Path, task_id: str, task_revision: int) -> dict[str, Any]:
+def capture_task_baseline(root: Path, task_id: str, task_revision: int, health_scope_patterns: list[str] | None = None, state_contract_sha256: str = "NONE") -> dict[str, Any]:
     """Capture pre-existing worktree changes so scope enforcement uses only task delta."""
     snapshot = application_snapshot(root)
     preexisting = {
         relative: application_file_fingerprint(root, relative)
         for relative in snapshot.get("changed_files", [])
     }
+    # Keep a lightweight codebase-health point-in-time baseline with the task so
+    # per-task economics (for example a new runtime dependency) are measured
+    # against what this Worker actually inherited, not against an older Goal/global
+    # baseline. Import locally to keep the generic runtime module dependency-light.
+    try:
+        from health_support import snapshot as codebase_health_snapshot
+        health_at_start = codebase_health_snapshot(root, file_loc_patterns=health_scope_patterns or [])
+    except Exception:
+        health_at_start = {}
     baseline = {
-        "schema_version": 1,
+        "schema_version": 2,
         "task_id": task_id,
         "task_revision": int(task_revision),
         "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -181,6 +209,8 @@ def capture_task_baseline(root: Path, task_id: str, task_revision: int) -> dict[
         "head": snapshot.get("head"),
         "snapshot_sha256": snapshot.get("snapshot_sha256"),
         "preexisting_changed_files": preexisting,
+        "state_contract_sha256": state_contract_sha256 or "NONE",
+        "codebase_health": health_at_start,
     }
     atomic_write_json(root / TASK_BASELINE_RELATIVE, baseline)
     return baseline
@@ -271,19 +301,66 @@ def git_info(root: Path) -> tuple[str, str, str] | None:
     return str(snap["branch"]), str(snap["head"]), str(snap["worktree"])
 
 
+def _process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _recover_stale_lock(lock_path: Path, *, malformed_grace_seconds: float = 900.0) -> bool:
+    """Remove a lock only when its recorded process is dead, or malformed and old.
+
+    A live PID always wins. Malformed fresh locks fail closed to avoid two writers.
+    """
+    try:
+        body = lock_path.read_text(encoding='utf-8', errors='replace')
+        stat = lock_path.stat()
+    except FileNotFoundError:
+        return True
+    pid_match = __import__('re').search(r'\bpid=(\d+)\b', body)
+    if pid_match:
+        pid = int(pid_match.group(1))
+        if _process_alive(pid):
+            return False
+        lock_path.unlink(missing_ok=True)
+        return True
+    age = max(0.0, time.time() - stat.st_mtime)
+    if age >= malformed_grace_seconds:
+        lock_path.unlink(missing_ok=True)
+        return True
+    return False
+
+
 @contextlib.contextmanager
 def lifecycle_lock(root: Path) -> Iterator[None]:
     lock_path = root / ".ai" / ".lifecycle.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError as exc:
-        raise SystemExit("Another AI Build OS lifecycle command is already running") from exc
+    fd = None
+    for attempt in range(2):
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError as exc:
+            if attempt == 0 and _recover_stale_lock(lock_path):
+                continue
+            raise SystemExit("Another AI Build OS lifecycle command is already running (live or fresh lock)") from exc
+    if fd is None:
+        raise SystemExit("Unable to acquire AI Build OS lifecycle lock")
     try:
         os.write(fd, f"pid={os.getpid()} started={time.time()}\n".encode())
-        os.close(fd)
+        os.close(fd); fd = None
         yield
     finally:
+        if fd is not None:
+            os.close(fd)
         lock_path.unlink(missing_ok=True)
 
 

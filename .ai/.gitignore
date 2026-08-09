@@ -1,0 +1,17 @@
+.lifecycle.lock
+runtime/*.json
+transactions/TX-*/
+
+runtime/*.jsonl
+
+field/events.jsonl
+
+runtime/state_failures/
+
+# Retained pre-v1.16 local history is preserved on disk but intentionally not migrated.
+history/BUILD_OS_POST_COMMIT_STATE_SYNC/
+history/BUILD_OS_SINGLE_SOURCE_OF_TRUTH_CLEANUP/
+history/LOCAL_ASR_SOURCE_TRANSLATION_TRACK_SEPARATION/
+history/REAL_MEDIA_SOURCE_ASR_QUALITY_BASELINE/
+history/REMOVE_ALL_LEGACY_GIT_AND_DUPLICATE_SOURCE/
+history/SEMANTIC_ASR_SOURCE_CAPTION_ACCEPTANCE_BASELINE/

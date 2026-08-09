@@ -179,6 +179,33 @@ def minimum_actual_risk(
     return floor, list(dict.fromkeys(reasons))
 
 
+
+def semantic_uncertainty(root, *, paths: Iterable[str], diffs: Mapping[str, str] | None = None) -> tuple[bool, list[str]]:
+    """Detect high-signal side-effect calls not covered by the known classifier.
+
+    This deliberately models UNKNOWN as a first-class state. The project config may
+    choose warn-only or fail-closed R2 escalation; defaults to fail-closed.
+    """
+    import fnmatch, json
+    from pathlib import Path
+    cfg_path=Path(root)/"config/risk_semantics.json"
+    try: cfg=json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.is_file() else {}
+    except json.JSONDecodeError: cfg={}
+    patterns=cfg.get("uncertain_side_effect_patterns") or []
+    ignores=cfg.get("ignore_path_patterns") or []
+    reasons=[]
+    for path,diff_text in (diffs or {}).items():
+        norm=path.replace("\\","/")
+        if any(fnmatch.fnmatch(norm,pat) for pat in ignores): continue
+        changed=_changed_lines(diff_text)
+        for raw in patterns:
+            try: matched=re.search(raw,changed,re.IGNORECASE)
+            except re.error: matched=None
+            if matched:
+                reasons.append(f"semantic side effect uncertain in {path}: {matched.group(0)[:80]}")
+                break
+    return bool(reasons), reasons
+
 def effective_risk(declared: str, **kwargs: str) -> tuple[str, str, list[str]]:
     """Return (effective, floor, reasons). `auto` behaves like an R0 declaration."""
     declared_norm = (declared or "auto").upper()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Senior AI Build OS v1.8 lifecycle, task-delta and learning-loop CLI."""
+"""Senior AI Build OS v1.16 cost-aware subagent delegation, goal orchestration, acceptance-contract, lifecycle and learning-loop CLI."""
 from __future__ import annotations
 
 import argparse
@@ -21,10 +21,37 @@ from evidence_support import (
     publish_bundle,
     revision_name,
     validate_review_report,
+    validate_review_attestation,
     verify_bundle,
+    run_command,
 )
 from refresh_context_capsule import refresh
-from risk_support import RISK_ORDER, effective_risk, minimum_actual_risk, minimum_risk
+from goal_support import (
+    GOALS_DIR,
+    add_task as goal_add_task,
+    abort_goal,
+    begin_goal,
+    block_goal,
+    complete_goal,
+    defer_node,
+    ensure_goal_files,
+    load_goal,
+    mark_scout_done,
+    next_wave as goal_next_wave,
+    record_discovery,
+    resume_goal,
+    sync_task_completion,
+    sync_task_abort,
+    link_task_active,
+    freeze_acceptance_contract,
+    freeze_goal_acceptance_contract,
+    verify_goal_acceptance_contract,
+    bind_goal_acceptance,
+    maybe_apply_scout_scope,
+    scope_footprint,
+    record_acceptance_attempt,
+)
+from risk_support import RISK_ORDER, effective_risk, minimum_actual_risk, minimum_risk, semantic_uncertainty
 from runtime_support import (
     TASK_BASELINE_RELATIVE,
     application_snapshot,
@@ -38,9 +65,22 @@ from runtime_support import (
     task_delta_diffs,
     task_delta_files,
     transaction_journal,
+    validate_identifier,
+    confined_child,
 )
 from state_runtime import archive_history, load_history, sync_runtime
+from state_hazard_support import detect_level as detect_state_hazard, build_contract as build_state_contract, parse_contract as parse_state_contract, LEVELS as STATE_LEVELS, cache_proof as cache_state_proof, record_failure_signature
 from validate_ai_os import validate
+from project_support import detect_technical_baseline as _project_detect_baseline, install_ci_workflow as _project_install_ci
+from policy_support import gate as policy_gate, sync_quality_gates
+from health_support import check_delta as health_check_delta, check_repository as health_check_repository, compare as health_compare, report as health_report, save_snapshot as health_save_snapshot, snapshot as health_snapshot, set_architecture_waiver
+from lane_support import recommend_lane
+from telemetry_support import ingest as telemetry_ingest, summarize as telemetry_summarize
+from assurance_support import achieved_assurance, review_requirement
+from field_support import record as field_record, report as field_report, load as field_load
+from decision_support import record as decision_record, digest as decision_digest
+from reporting_support import report as _report_impl
+from cli_support import build_parser
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 SHIPPING_DELTAS = {"USER_VISIBLE_BEHAVIOR", "EXECUTABLE_CAPABILITY"}
@@ -139,8 +179,123 @@ def task_map(body: str) -> dict[str, str]:
         "execution_profile": field(body, "Execution Profile"),
         "success_criterion": field(body, "Success Criterion"),
         "writer_identity": field(body, "Session Label"),
+        "goal_id": field(body, "Goal ID", "NONE"),
+        "goal_node": field(body, "Goal Node", "NONE"),
+        "acceptance_contract_sha256": field(body, "Acceptance Contract SHA256", "NONE"),
+        "acceptance_contract_json": field(body, "Acceptance Contract JSON", "{}"),
+        "review_policy": field(body, "Review policy", "auto"),
+        "state_hazard_level": field(body, "State Hazard Level", "S0"),
+        "state_contract_sha256": field(body, "State Contract SHA256", "NONE"),
+        "state_contract_json": field(body, "State Contract JSON", "{}"),
     }
 
+
+
+def json_field(body: str, name: str, default: Any) -> Any:
+    raw = field(body, name, '')
+    if not raw or raw.upper() in {'NONE', 'UNSET'}:
+        return default
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f'Invalid JSON in task field {name}: {exc}')
+
+
+def acceptance_contract(task_body: str) -> dict[str, Any]:
+    value = json_field(task_body, 'Acceptance Contract JSON', {})
+    if not isinstance(value, dict):
+        raise SystemExit('Acceptance Contract JSON must be an object')
+    return value
+
+
+def verify_acceptance_contract(root: Path, task_body: str, risk: str) -> tuple[list[str], list[str]]:
+    """Return frozen acceptance commands/markers and verify probe immutability."""
+    goal_id = field(task_body, 'Goal ID', 'NONE')
+    if goal_id in {'', 'NONE', 'UNSET'}:
+        return [], []
+    contract = acceptance_contract(task_body)
+    contract_hash = field(task_body, 'Acceptance Contract SHA256', 'NONE')
+    if risk in {'R2', 'R3'} and (not contract or contract_hash in {'', 'NONE', 'UNSET'}):
+        raise SystemExit(
+            f'{risk} Goal-linked task requires an acceptance contract frozen before Worker start; '
+            'revert/abort and restart the Goal node after adding --acceptance-command.'
+        )
+    if not contract:
+        return [], []
+    payload = dict(contract)
+    embedded_hash = str(payload.pop('contract_sha256', '') or '')
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    from runtime_support import sha256_text
+    calculated = sha256_text(canonical)
+    if contract_hash != calculated or (embedded_hash and embedded_hash != calculated):
+        raise SystemExit('Acceptance contract hash mismatch; refusing mutable builder-owned acceptance')
+    commands = [str(x).strip() for x in contract.get('commands', []) if str(x).strip()]
+    expected = [str(x).strip() for x in contract.get('expected_outputs', []) if str(x).strip()]
+    if risk in {'R2', 'R3'} and not commands:
+        raise SystemExit(f'{risk} Goal-linked task has no predeclared acceptance command')
+    probe_hashes = contract.get('probe_hashes', {}) or {}
+    if not isinstance(probe_hashes, dict):
+        raise SystemExit('Acceptance probe hashes must be an object')
+    for relative, expected_hash in probe_hashes.items():
+        path = root / str(relative)
+        if not path.is_file():
+            raise SystemExit(f'Acceptance probe disappeared after Worker start: {relative}')
+        if sha256_file(path) != str(expected_hash):
+            raise SystemExit(f'Acceptance probe changed after Worker start: {relative}; builder may not rewrite the judge')
+    return commands, expected
+
+
+def set_delegation_request(root: Path, *, action: str, task_body: str, reasons: list[str], model_class: str, summary_token_budget: int = 500) -> None:
+    """Publish a machine-readable subagent request for the outer coding environment."""
+    runtime = root / '.ai' / 'runtime'
+    runtime.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(runtime / 'delegation_request.json', {
+        'schema_version': 1,
+        'created_at': now(),
+        'action': action,
+        'hard': True,
+        'model_class': model_class,
+        'summary_token_budget': summary_token_budget,
+        'task_id': field(task_body, 'Task ID', 'NONE'),
+        'task_revision': integer_field(task_body, 'Task Revision', 1),
+        'goal_id': field(task_body, 'Goal ID', 'NONE'),
+        'goal_node': field(task_body, 'Goal Node', 'NONE'),
+        'reasons': reasons,
+        'instruction': 'Use a fresh read-only context. Return verdict, concrete findings and evidence only; do not duplicate Worker exploration.',
+    })
+
+
+def clear_delegation_request(root: Path) -> None:
+    path = root / '.ai' / 'runtime' / 'delegation_request.json'
+    if path.exists():
+        path.unlink()
+
+
+def r2_review_reasons(root: Path, task_body: str, first_pass_accepted: str, actual_reasons: list[str]) -> list[str]:
+    if field(task_body, 'Risk Tier', 'R0') != 'R2':
+        return []
+    policy = field(task_body, 'Review policy', 'auto').casefold()
+    if policy == 'required':
+        return ['review policy=required']
+    if policy == 'none':
+        return []
+    reasons: list[str] = []
+    if first_pass_accepted == 'no':
+        reasons.append('first pass was not accepted')
+    task_id = field(task_body, 'Task ID')
+    revision = integer_field(task_body, 'Task Revision', 1)
+    delta = task_delta_files(root, task_id=task_id, task_revision=revision)
+    if len(delta) > 8:
+        reasons.append(f'large task delta ({len(delta)} files)')
+    risk_at_start = field(task_body, 'Risk At Start', field(task_body, 'Risk Tier', 'R2'))
+    if risk_at_start in RISK_ORDER and RISK_ORDER[risk_at_start] < RISK_ORDER['R2']:
+        reasons.append(f'risk escalated after Worker start ({risk_at_start}->R2)')
+    if any('sensitive business term' in reason.casefold() or 'project r2 surface' in reason.casefold() for reason in actual_reasons):
+        reasons.append('project-declared sensitive boundary detected in actual delta')
+    sensitive_path_terms = ('auth', 'security', 'payment', 'billing', 'refund', 'wallet')
+    if any(any(term in path.casefold().replace('\\', '/') for term in sensitive_path_terms) for path in delta):
+        reasons.append('auth/security/financial path detected in actual delta')
+    return list(dict.fromkeys(reasons))
 
 def backups(root: Path) -> dict[Path, str]:
     paths = [root / ".ai" / name for name in ["ACTIVE_TASK.md", "STATE.md", "CONTEXT_CAPSULE.md", "COST_LEDGER.csv"]]
@@ -249,6 +404,16 @@ def reconcile_actual_risk(root: Path, task: str) -> tuple[str, list[str]]:
         paths=paths, diffs=diffs, project_r2_paths=r2_paths, project_r3_paths=r3_paths,
         project_sensitive_terms=sensitive_terms,
     )
+    uncertain, uncertainty_reasons = semantic_uncertainty(root, paths=paths, diffs=diffs)
+    if uncertain:
+        reasons.extend("UNCERTAIN:" + x for x in uncertainty_reasons)
+        try: field_record(root,'UNEXPECTED_RISK_ESCALATION',phase='ACCEPTANCE',severity='MEDIUM',trigger='; '.join(uncertainty_reasons),automatic=True,evidence_code='SEMANTIC_RISK_UNCERTAIN')
+        except Exception: pass
+        try:
+            cfg=json.loads((root/'config/risk_semantics.json').read_text(encoding='utf-8'))
+        except Exception: cfg={}
+        if str(cfg.get('uncertainty_mode') or 'raise_to_R2').lower()=='raise_to_r2' and RISK_ORDER[floor] < RISK_ORDER['R2']:
+            floor='R2'
     authorized = field(task, "Risk Tier", "R0")
     if authorized not in RISK_ORDER:
         raise SystemExit(f"Unknown authorized risk tier: {authorized}")
@@ -293,73 +458,13 @@ def reconcile_delivery_delta(root: Path, task: str, delivery_delta: str) -> list
 
 
 def detect_technical_baseline(root: Path) -> dict[str, str]:
-    """Best-effort technical baseline without forcing the owner to restate the repo."""
-    languages: list[str] = []
-    framework = "NONE_DETECTED"
-    database = "NONE_DETECTED"
-    package_manager = "NONE_DETECTED"
-    entry_point = "AUTO_DETECT_ON_FIRST_TASK"
-    run_command = "PROJECT_SPECIFIC"
-    test_command = "PROJECT_SPECIFIC"
-    build_command = "NONE_REQUIRED_OR_PROJECT_SPECIFIC"
-
-    package = root / "package.json"
-    if package.is_file():
-        languages.append("Node/TypeScript/JavaScript")
-        try:
-            data = json.loads(package.read_text(encoding="utf-8")); deps = {**(data.get("dependencies") or {}), **(data.get("devDependencies") or {})}; scripts = data.get("scripts") or {}
-        except json.JSONDecodeError:
-            deps = {}; scripts = {}
-        for dep, name in [("next", "Next.js"), ("react", "React"), ("vue", "Vue"), ("svelte", "Svelte"), ("express", "Express"), ("@nestjs/core", "NestJS")]:
-            if dep in deps: framework = name; break
-        for dep, name in [("prisma", "Prisma/SQL"), ("@prisma/client", "Prisma/SQL"), ("mongoose", "MongoDB"), ("pg", "PostgreSQL"), ("better-sqlite3", "SQLite")]:
-            if dep in deps: database = name; break
-        if (root / "pnpm-lock.yaml").is_file(): package_manager = "pnpm"
-        elif (root / "yarn.lock").is_file(): package_manager = "yarn"
-        else: package_manager = "npm"
-        if "dev" in scripts: run_command = f"{package_manager} run dev"
-        elif "start" in scripts: run_command = f"{package_manager} run start"
-        if "test" in scripts: test_command = f"{package_manager} run test"
-        if "build" in scripts: build_command = f"{package_manager} run build"
-
-    pyproject = root / "pyproject.toml"
-    if pyproject.is_file() or (root / "requirements.txt").is_file() or (root / "setup.py").is_file():
-        languages.append("Python")
-        text = pyproject.read_text(encoding="utf-8", errors="ignore").casefold() if pyproject.is_file() else ""
-        for needle, name in [("fastapi", "FastAPI"), ("django", "Django"), ("flask", "Flask")]:
-            if needle in text: framework = name; break
-        for needle, name in [("sqlalchemy", "SQLAlchemy/SQL"), ("psycopg", "PostgreSQL"), ("sqlite", "SQLite")]:
-            if needle in text: database = name; break
-        if (root / "uv.lock").is_file(): package_manager = "uv"
-        elif "poetry" in text: package_manager = "poetry"
-        elif package_manager == "NONE_DETECTED": package_manager = "pip"
-        if (root / "tests").exists(): test_command = "python -m pytest -q"
-        for candidate in ["main.py", "app.py", "src/main.py"]:
-            if (root / candidate).is_file(): entry_point = candidate; break
-
-    if (root / "go.mod").is_file():
-        languages.append("Go"); package_manager = "go modules"; test_command = "go test ./..."; build_command = "go build ./..."
-    if (root / "Cargo.toml").is_file():
-        languages.append("Rust"); package_manager = "cargo"; test_command = "cargo test --all-targets"; build_command = "cargo build"
-    important = [name for name in ["src", "app", "tests", "test", "packages", "services"] if (root / name).exists()]
-    return {
-        "Language/runtime": ", ".join(languages) if languages else "AUTO_DETECT_ON_FIRST_TASK",
-        "Framework": framework, "Database": database, "Package manager": package_manager,
-        "Entry point": entry_point, "Run command": run_command, "Test command": test_command,
-        "Build command": build_command, "Important directories": ", ".join(important) if important else "AUTO_DETECT_ON_FIRST_TASK",
-    }
+    """Compatibility wrapper; implementation lives in project_support.py."""
+    return _project_detect_baseline(root)
 
 
 def install_ci_workflow(root: Path) -> bool:
-    """Install the managed GitHub Actions gate without overwriting an existing file."""
-    source = root / "templates" / "CI_GITHUB_ACTIONS.yml"
-    target = root / ".github" / "workflows" / "ai-build-os.yml"
-    if target.exists():
-        return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
-    return True
-
+    """Compatibility wrapper; implementation lives in project_support.py."""
+    return _project_install_ci(root)
 
 def consecutive_failed_first_pass_revisions(root: Path, task_id: str, next_revision_number: int) -> int:
     """Count immediately preceding accepted revisions whose first pass was explicitly rejected."""
@@ -403,6 +508,7 @@ def breaker_override_info(task: str) -> tuple[bool, str]:
 
 
 def initialize_project(root: Path, args: argparse.Namespace) -> None:
+    ensure_goal_files(root)
     project_path = root / ".ai" / "PROJECT.md"
     state_path = root / ".ai" / "STATE.md"
     task_path = root / ".ai" / "ACTIVE_TASK.md"
@@ -474,6 +580,8 @@ def initialize_project(root: Path, args: argparse.Namespace) -> None:
     write(project_path, project)
     write(state_path, state)
     write(task_path, task)
+    sync_quality_gates(root)
+    health_save_snapshot(root)
     sync_and_validate(root)
     print(f"Initialized project {args.project_id}" + ("; installed .github/workflows/ai-build-os.yml" if ci_installed else ""))
 
@@ -503,6 +611,18 @@ def start_task(root: Path, args: argparse.Namespace) -> None:
     if not app["git"] and not args.allow_no_git:
         raise SystemExit("Git repository required; pass --allow-no-git only for temporary evaluation")
 
+    args.task_id = validate_identifier(args.task_id, "task ID")
+    state_level, detected_state_signals = detect_state_hazard(
+        requested=getattr(args, "state_hazard", "auto"), outcome=args.outcome, modify=args.modify, create=args.create,
+        signals=list(getattr(args, "state_signal", []) or []),
+    )
+    state_dependencies = list(getattr(args, "state_dependency", []) or []) or (parse_patterns(args.modify) + parse_patterns(args.create))
+    state_contract = build_state_contract(
+        level=state_level, authority=getattr(args, "state_authority", ""),
+        transitions=list(getattr(args, "state_transition", []) or []), invariants=list(getattr(args, "state_invariant", []) or []),
+        dependencies=state_dependencies, signals=sorted(set(detected_state_signals) | set(getattr(args, "state_signal", []) or [])),
+    )
+
     risk, risk_floor, risk_reasons = effective_risk(
         args.risk,
         data_operation=args.data_operation,
@@ -514,12 +634,39 @@ def start_task(root: Path, args: argparse.Namespace) -> None:
         modify=args.modify,
         create=args.create,
     )
+    goal_id = getattr(args, "goal_id", None) or "NONE"
+    goal_node = getattr(args, "goal_node", None) or "NONE"
+    if goal_id not in {"", "NONE", "UNSET"}:
+        goal_id = validate_identifier(goal_id, "goal ID")
+        goal_node = validate_identifier(goal_node, "goal node ID")
+        goal = load_goal(root)
+        if goal.get("goal_id") != goal_id or goal.get("status") != "ACTIVE":
+            raise SystemExit(f"Task goal link invalid: {goal_id} is not the ACTIVE goal")
+        ceiling = str(goal.get("risk_ceiling", "R2"))
+        if RISK_ORDER[risk] > RISK_ORDER[ceiling]:
+            raise SystemExit(f"Effective task risk {risk} exceeds Goal {goal_id} risk ceiling {ceiling}; owner decision/escalation required")
+        node = (goal.get("tasks") or {}).get(goal_node)
+        if goal_node in {"", "NONE", "UNSET"} or not node:
+            raise SystemExit("Goal-linked task requires a valid --goal-node")
+        if node.get("status") != "PLANNED":
+            raise SystemExit(f"Goal node {goal_node} is not PLANNED: {node.get('status')}")
     profile = PROFILE_BY_RISK[risk]
     revision = next_revision(root, args.task_id)
+    if goal_id not in {"", "NONE", "UNSET"}:
+        revision_limit = max(1, int((goal.get("budget") or {}).get("max_revisions_per_task", 2) or 2))
+        if revision > revision_limit and not args.stop_loss_ack.strip():
+            raise SystemExit(
+                f"Goal revision budget exceeded for {args.task_id}: attempting r{revision:03d} with max_revisions_per_task={revision_limit}. "
+                "Use --stop-loss-ack with the changed root-cause hypothesis, or split/replan the node."
+            )
     failed_revisions = consecutive_failed_first_pass_revisions(root, args.task_id, revision)
-    if failed_revisions >= 2 and not args.stop_loss_ack.strip():
+    stop_loss_threshold = 2
+    if goal_id not in {"", "NONE", "UNSET"}:
+        stop_loss_threshold = max(1, int((goal.get("budget") or {}).get("max_revisions_per_task", 2) or 2))
+    if failed_revisions >= stop_loss_threshold and not args.stop_loss_ack.strip():
         raise SystemExit(
-            f"Stop-loss active for {args.task_id}: {failed_revisions} consecutive prior revisions had first_pass_accepted=no. "
+            f"Stop-loss active for {args.task_id}: {failed_revisions} consecutive prior revisions had first_pass_accepted=no; "
+            f"Goal budget allows {stop_loss_threshold} before acknowledgement. "
             "Start the next revision only with --stop-loss-ack 'what root-cause hypothesis changed'."
         )
     task = read(root / "templates" / TEMPLATE_BY_RISK[risk])
@@ -533,15 +680,24 @@ def start_task(root: Path, args: argparse.Namespace) -> None:
     if args.owner_authorization == "APPROVED" and not args.authorization_reference.strip():
         raise SystemExit("Approved work requires --authorization-reference")
 
+    clear_delegation_request(root)
     replacements = {
         "Task Status": "ACTIVE" if args.claim else "READY", "Task Mode": profile,
         "Task ID": args.task_id, "Task Revision": revision, "Created": timestamp[:10],
         "Owner Authorization": args.owner_authorization, "Authorization Reference": args.authorization_reference or "NONE",
         "Milestone ID": args.milestone_id, "Success Criterion": args.success_criterion,
+        "Goal ID": getattr(args, "goal_id", None) or "NONE", "Goal Node": getattr(args, "goal_node", None) or "NONE",
         "Delivery Delta": args.delivery_delta, "Demonstrable Result": args.demonstrable_result,
-        "Unlocks": args.unlocks, "Declared Risk Tier": args.risk.upper(), "Risk Tier": risk,
+        "Unlocks": args.unlocks, "Declared Risk Tier": args.risk.upper(), "Risk At Start": risk, "Risk Tier": risk,
         "Risk Floor": risk_floor, "Risk Floor Reason": "; ".join(risk_reasons) or "none",
         "Execution Profile": profile, "Negative path required": "yes" if args.negative_required else "no",
+        "Review policy": getattr(args, "review_policy", "auto"),
+        "Acceptance Contract SHA256": getattr(args, "acceptance_contract_sha256", "NONE"),
+        "Acceptance Contract JSON": getattr(args, "acceptance_contract_json", "{}"),
+        "State Hazard Level": state_level,
+        "State Hazard Signals": ", ".join(state_contract.get("signals") or []) or "NONE",
+        "State Contract SHA256": state_contract.get("contract_sha256", "NONE"),
+        "State Contract JSON": json.dumps(state_contract, ensure_ascii=False, separators=(",", ":")),
         "Project ID": project_id, "Branch": app["branch"], "HEAD": app["head"], "Worktree": app["worktree"],
         "Starting Snapshot SHA256": app["snapshot_sha256"], "Verified Snapshot SHA256": "NONE",
         "State Revision": state_revision, "Context Capsule Revision": capsule_revision,
@@ -568,6 +724,8 @@ def start_task(root: Path, args: argparse.Namespace) -> None:
     task = set_section(task, "Single Outcome", args.outcome)
     if args.accept:
         task = set_section(task, "Acceptance Criteria", "\n".join(f"- [ ] {item}" for item in args.accept))
+    if getattr(args, "replaces", None):
+        task = task.rstrip() + "\n\n## Replacement Contract\n\n" + "\n".join(f"- {item}" for item in args.replaces if item.strip()) + "\n"
     if args.breaker_override:
         task = task.rstrip() + (
             "\n\n## Shipping Breaker Override\n\n"
@@ -601,10 +759,12 @@ def start_task(root: Path, args: argparse.Namespace) -> None:
     baseline_path = root / TASK_BASELINE_RELATIVE
     old_baseline = baseline_path.read_text(encoding="utf-8") if baseline_path.is_file() else None
     try:
-        capture_task_baseline(root, args.task_id, revision)
+        capture_task_baseline(root, args.task_id, revision, parse_patterns(args.modify) + parse_patterns(args.create), state_contract_sha256=str(state_contract.get("contract_sha256") or "NONE"))
         write(task_path, task)
         write(state_path, state)
         sync_and_validate(root)
+        if goal_id not in {"", "NONE", "UNSET"}:
+            link_task_active(root, goal_id, goal_node, args.task_id, revision)
     except BaseException:
         restore(snapshot)
         if old_baseline is None:
@@ -612,9 +772,14 @@ def start_task(root: Path, args: argparse.Namespace) -> None:
         else:
             write(baseline_path, old_baseline)
         raise
+    if args.breaker_override:
+        try: field_record(root,'POLICY_OVERRIDE',phase='TASK_START',severity='MEDIUM',trigger=args.breaker_override_reason.strip(),automatic=True,evidence_code='SHIPPING_BREAKER_OVERRIDE',metadata={'risk':risk,'lane':profile})
+        except Exception: pass
     if args.risk.upper() != risk:
         print(f"Risk auto-floor: declared={args.risk.upper()} effective={risk} floor={risk_floor} reasons={'; '.join(risk_reasons) or 'none'}")
     print(f"Started {args.task_id}/r{revision:03d} risk={risk} profile={profile} status={'ACTIVE' if args.claim else 'READY'} preexisting_dirty={len(app['changed_files'])}")
+    if state_level != 'S0':
+        print(f"State hazard: {state_level} signals={','.join(state_contract.get('signals') or []) or 'declared'}" + ("; transition proof required" if STATE_LEVELS[state_level] >= 2 else ""))
 
 def _save_task_state(root: Path, task: str, state: str, snapshot: dict[Path, str]) -> None:
     try:
@@ -701,6 +866,8 @@ def abort_task(root: Path, args: argparse.Namespace) -> None:
         state = set_field_in_section(state, "Active Work", name, value)
     state = set_section(state, "Next Exact Action", "1. Create the next smallest milestone-linked task.\n2. Keep aborted work out of the application worktree.")
     _save_task_state(root, task, state, snapshot)
+    sync_task_abort(root, field(task, "Goal ID", "NONE"), field(task, "Goal Node", "NONE"), reason="task aborted with zero delta")
+    sync_runtime(root)
     print(f"Aborted {field(task, 'Task ID')} with zero task delta")
 
 
@@ -738,6 +905,36 @@ def amend_task(root: Path, args: argparse.Namespace) -> None:
     )
     if RISK_ORDER[risk] < RISK_ORDER[old_risk]:
         risk = old_risk
+    linked_goal_id = field(task, "Goal ID", "NONE")
+    if linked_goal_id not in {"", "NONE", "UNSET"}:
+        goal = load_goal(root)
+        ceiling = str(goal.get("risk_ceiling", "R2"))
+        if RISK_ORDER[risk] > RISK_ORDER[ceiling]:
+            raise SystemExit(f"Amendment risk {risk} exceeds Goal {linked_goal_id} risk ceiling {ceiling}; owner decision/escalation required")
+        goal_node_id = field(task, "Goal Node", "NONE")
+        goal_node = (goal.get("tasks") or {}).get(goal_node_id) or {}
+        initial = set(goal_node.get("initial_scope_footprint") or [])
+        if initial:
+            proposed = scope_footprint(root, modify, create)
+            original_patterns = (
+                parse_patterns(str(goal_node.get("initial_modify_scope") or "NONE"))
+                + parse_patterns(str(goal_node.get("initial_create_scope") or "NONE"))
+            )
+            # Count only authorization that is genuinely outside the scope grammar
+            # frozen at task start. A new file created under an already-authorized
+            # wildcard such as src/** is not scope growth.
+            newly_authorized = set()
+            for item in proposed:
+                candidate = item[len("PATTERN:"):] if item.startswith("PATTERN:") else item
+                if not path_allowed(candidate, original_patterns):
+                    newly_authorized.add(item)
+            growth = (len(newly_authorized) / max(1, len(initial))) * 100.0
+            limit = float((goal.get("budget") or {}).get("scope_growth_limit_percent", 30) or 30)
+            if growth > limit:
+                raise SystemExit(
+                    f"Scope growth {growth:.1f}% exceeds Goal limit {limit:.1f}% ({len(initial)} baseline footprint, "
+                    f"{len(newly_authorized)} additional entries). SPLIT_OR_REPLAN instead of widening this task."
+                )
     if risk == "R3" and field(task, "Owner Authorization") != "APPROVED":
         if args.owner_authorization != "APPROVED" or not args.authorization_reference:
             raise SystemExit("Amendment escalates to R3; provide --owner-authorization APPROVED --authorization-reference ...")
@@ -801,7 +998,14 @@ def close_with_bundle(root: Path, args: argparse.Namespace, stage: Path | None =
     task_id = field(task, "Task ID"); revision = int(field(task, "Task Revision", "1")); risk = field(task, "Risk Tier")
     enforce_risk_floor(task)
     actual_floor, actual_risk_reasons = reconcile_actual_risk(root, task)
-    final_bundle = ai / "evidence" / task_id / revision_name(revision)
+    linked_goal_id = field(task, "Goal ID", "NONE")
+    linked_goal_node = field(task, "Goal Node", "NONE")
+    if linked_goal_id not in {"", "NONE", "UNSET"}:
+        goal = load_goal(root)
+        ceiling = str(goal.get("risk_ceiling", "R2"))
+        if RISK_ORDER[actual_floor] > RISK_ORDER[ceiling]:
+            raise SystemExit(f"Actual task delta requires {actual_floor}, above Goal {linked_goal_id} risk ceiling {ceiling}; owner decision/escalation required")
+    final_bundle = confined_child(root, Path(".ai/evidence"), validate_identifier(task_id, "task ID"), "task ID") / revision_name(revision)
     published = False; history_path: Path | None = None
     if stage is not None:
         manifest = staged_manifest or json.loads((stage / "manifest.json").read_text(encoding="utf-8"))
@@ -821,6 +1025,8 @@ def close_with_bundle(root: Path, args: argparse.Namespace, stage: Path | None =
     enforce_scope(root, task)
     if risk == "R3" and not manifest.get("review"):
         raise SystemExit("R3 requires bundled independent review")
+    if risk == "R3" and (manifest.get("review") or {}).get("trust") != "SIGNED_GUARDIAN":
+        raise SystemExit("R3 requires SIGNED_GUARDIAN review evidence")
     timestamp = args.completed_at or now(); delta = args.delivery_delta or field(task, "Delivery Delta")
     reconcile_delivery_delta(root, task, delta)
     evidence_relative = f".ai/evidence/{task_id}/{revision_name(revision)}"
@@ -890,6 +1096,7 @@ def close_with_bundle(root: Path, args: argparse.Namespace, stage: Path | None =
             })
         history_record = {
             "schema_version": 1, "task_id": task_id, "task_revision": revision,
+            "goal_id": linked_goal_id, "goal_node": linked_goal_node,
             "risk_tier": risk, "delivery_delta": delta, "outcome": args.outcome,
             "completed_at": timestamp, "evidence_bundle": evidence_relative,
             "evidence_manifest_sha256": sha256_file(final_bundle / "manifest.json"),
@@ -898,6 +1105,11 @@ def close_with_bundle(root: Path, args: argparse.Namespace, stage: Path | None =
             "first_pass_accepted": args.first_pass_accepted,
             "breaker_override": breaker_override_info(task)[0],
             "breaker_override_reason": breaker_override_info(task)[1],
+            "review_required": bool(risk == "R3" or getattr(args, "r2_review_reasons", [])),
+            "review_reasons": list(getattr(args, "r2_review_reasons", [])),
+            "acceptance_contract_sha256": field(task, "Acceptance Contract SHA256", "NONE"),
+            "state_hazard_level": field(task, "State Hazard Level", "S0"),
+            "state_contract_sha256": field(task, "State Contract SHA256", "NONE"),
             "quality_reconciliation": {"later_rework": "unknown", "escaped_defect": "unknown", "rollback_required": args.rollback_required},
         }
         history_path = archive_history(root, history_record)
@@ -905,6 +1117,20 @@ def close_with_bundle(root: Path, args: argparse.Namespace, stage: Path | None =
         errors, warnings = validate(root, strict=False)
         for warning in warnings: print("WARNING", warning)
         if errors: raise SystemExit("; ".join(errors))
+        sync_task_completion(
+            root, task_id, revision, args.outcome, delta, evidence_relative, risk, args.first_pass_accepted,
+            goal_id=linked_goal_id, goal_node=linked_goal_node,
+        )
+        sync_runtime(root)
+        # Promote only successfully published state proofs. Reused proofs remain linked to their original immutable source.
+        try:
+            state_contract = parse_state_contract(field(task, "State Contract JSON", "{}"))
+            source_manifest = final_bundle / "manifest.json"
+            for check_item in manifest.get("checks", []) or []:
+                if check_item.get("kind") in {"state_transition", "state_temporal"} and check_item.get("result") == "PASS" and not check_item.get("reused"):
+                    cache_state_proof(root, contract=state_contract, kind=str(check_item.get("kind")), command=str(check_item.get("command") or ""), source_manifest=source_manifest, source_check_id=str(check_item.get("id") or ""))
+        except Exception as exc:
+            print(f"WARNING state proof cache not updated: {exc}")
     except BaseException:
         restore(snapshot_files)
         if published and final_bundle.exists(): shutil.rmtree(final_bundle)
@@ -919,35 +1145,108 @@ def finish_task(root: Path, args: argparse.Namespace) -> None:
     if field(task_body, "Task Status") != "ACTIVE" or field(task_body, "Lease Status") != "CLAIMED" or field(task_body, "Identity Verification") != "VERIFIED":
         raise SystemExit("done requires ACTIVE task with CLAIMED lease and VERIFIED identity")
     enforce_risk_floor(task_body)
-    reconcile_actual_risk(root, task_body)
+    actual_floor, actual_risk_reasons = reconcile_actual_risk(root, task_body)
     risk = field(task_body, "Risk Tier")
-    if not args.focused_command: raise SystemExit("done requires at least one --focused-command")
+    task_id_for_health = field(task_body, "Task ID")
+    revision_for_health = integer_field(task_body, "Task Revision", 1)
+    health_delta = task_delta_files(root, task_id=task_id_for_health, task_revision=revision_for_health)
+    task_health_baseline = (load_task_baseline(root) or {}).get('codebase_health') or health_snapshot(root, file_loc_patterns=health_delta)
+    health_result = health_check_delta(root, health_delta, baseline=task_health_baseline, hard_fail=True)
+    for warning in health_result.get("warnings", []): print("HEALTH WARNING", warning)
+    replacement_span = find_section_span(task_body, "Replacement Contract")
+    if replacement_span is not None:
+        chunk = task_body[replacement_span[0]:replacement_span[1]]
+        obsolete = [line[2:].strip() for line in chunk.splitlines() if line.strip().startswith("- ")]
+        remaining = [rel for rel in obsolete if (root / rel).exists()]
+        if remaining:
+            raise SystemExit("Replacement contract not satisfied; obsolete path(s) still exist: " + ", ".join(remaining))
+    health_ratchet = health_compare(root)
+    task_baseline_health = task_health_baseline
+    base_deps = int(task_baseline_health.get('runtime_dependencies') or 0)
+    current_deps = int((health_ratchet.get('current') or {}).get('runtime_dependencies') or 0)
+    if current_deps > base_deps:
+        structured = {
+            "--dependency-capability": args.dependency_capability.strip(),
+            "--dependency-alternatives-considered": args.dependency_alternatives_considered.strip(),
+            "--dependency-removal-cost": args.dependency_removal_cost.strip(),
+        }
+        missing=[name for name,value in structured.items() if len(value)<8]
+        if missing:
+            raise SystemExit(f"Runtime dependencies increased during this task {base_deps}→{current_deps}; structured dependency decision incomplete: missing/too-short {', '.join(missing)}. New production dependencies must buy concrete capability, consider existing alternatives, and state exit/removal cost.")
+    for warning in health_ratchet.get('warnings', []): print('HEALTH RATCHET', warning)
+    contract_commands, contract_expected = verify_acceptance_contract(root, task_body, risk)
+    r2_review = r2_review_reasons(root, task_body, args.first_pass_accepted, actual_risk_reasons)
+    state_level = field(task_body, "State Hazard Level", "S0").upper()
+    state_contract = parse_state_contract(field(task_body, "State Contract JSON", "{}"))
+    state_contract_hash = field(task_body, "State Contract SHA256", "NONE")
+    baseline_state_hash = str((load_task_baseline(root) or {}).get("state_contract_sha256") or "NONE")
+    if state_contract_hash != str(state_contract.get("contract_sha256") or "NONE") or state_contract_hash != baseline_state_hash:
+        raise SystemExit("State contract changed after task start; abort/restart or amend implementation scope without rewriting the pre-code state authority/invariant")
+    if state_level != str(state_contract.get("level") or "S0").upper():
+        raise SystemExit("State Hazard Level does not match frozen State Contract")
+    if state_level not in STATE_LEVELS:
+        raise SystemExit(f"Invalid State Hazard Level in task: {state_level}")
+    if STATE_LEVELS[state_level] >= 2 and not args.state_transition_command:
+        raise SystemExit(f"{state_level} state hazard requires --state-transition-command; exact proof will be reused automatically while its contract/dependencies are unchanged")
+    if STATE_LEVELS[state_level] >= 3 and not args.state_temporal_command:
+        raise SystemExit(f"{state_level} state hazard requires --state-temporal-command for background/competing-writer behavior; reusable proof avoids repeated soak/browser cost")
+    if policy_gate(root, risk, "focused") == "required" and not args.focused_command:
+        raise SystemExit("done requires at least one --focused-command")
     negative_required = field(task_body, "Negative path required", "no").casefold() in {"yes", "true", "required"}
-    if (risk in {"R2", "R3"} or negative_required) and not args.negative_command:
+    negative_policy = policy_gate(root, risk, "negative")
+    if (negative_policy == "required" or (negative_policy == "when_failure_behavior" and negative_required)) and not args.negative_command:
         raise SystemExit(f"{risk} done requires --negative-command for this task")
-    if risk in {"R2", "R3"} and not args.integration_command: raise SystemExit(f"{risk} done requires --integration-command")
-    if risk == "R3" and not args.rollback_command: raise SystemExit("R3 done requires --rollback-command rehearsal/proof")
-    if risk == "R3" and not args.full_suite_command: raise SystemExit("R3 done requires --full-suite-command")
-    if risk == "R3" and not args.review_report: raise SystemExit("R3 done requires --review-report")
+    if policy_gate(root, risk, "integration") == "required" and not args.integration_command:
+        raise SystemExit(f"{risk} done requires --integration-command")
+    recovery_relevant = field(task_body, "Data operation", "READ_ONLY") in {"MUTATE_IN_PLACE", "DELETE"} or field(task_body, "Artifact operation", "READ_ONLY") in {"MUTATE_IN_PLACE", "OVERWRITE", "DELETE"}
+    rollback_policy = policy_gate(root, risk, "rollback")
+    if (rollback_policy == "required" or (rollback_policy == "when_recovery_relevant" and recovery_relevant)) and not args.rollback_command:
+        raise SystemExit(f"{risk} done requires --rollback-command for this recovery-relevant task")
+    if policy_gate(root, risk, "full_suite") == "required" and not args.full_suite_command:
+        raise SystemExit(f"{risk} done requires --full-suite-command")
+    if risk == "R3" and not args.review_report:
+        set_delegation_request(root, action='SPAWN_REVIEWER', task_body=task_body, reasons=['R3 independent review is mandatory'], model_class='FRESH_REVIEW_CONTEXT', summary_token_budget=500)
+        raise SystemExit("R3 done requires --review-report; DELEGATION_REQUEST=SPAWN_REVIEWER written to .ai/runtime/delegation_request.json")
+    review_required = risk == "R3" or (risk == "R2" and bool(r2_review))
+    required_review_trust = review_requirement(root, risk, r2_review_triggered=bool(r2_review))
+    if review_required and not args.review_attestation:
+        set_delegation_request(root, action='SPAWN_REVIEWER', task_body=task_body, reasons=[f'{risk} review requires external Guardian-attested reviewer session'], model_class='FRESH_REVIEW_CONTEXT', summary_token_budget=500)
+        raise SystemExit(f"{risk} review requires --review-attestation from a separate external reviewer session; configured trust={required_review_trust}")
+    if risk == "R2" and r2_review and not args.review_report:
+        set_delegation_request(root, action='SPAWN_REVIEWER', task_body=task_body, reasons=r2_review, model_class='FRESH_REVIEW_CONTEXT', summary_token_budget=500)
+        raise SystemExit("R2 elevated review required: " + "; ".join(r2_review) + ". DELEGATION_REQUEST=SPAWN_REVIEWER written to .ai/runtime/delegation_request.json. Supply --review-report from a fresh reviewer or explicitly plan --review-policy none before Worker start for a justified low-coupling R2 task.")
+    if args.review_report:
+        clear_delegation_request(root)
     if risk in {"R1", "R2", "R3"} and not args.output_inspected_by:
         raise SystemExit(f"{risk} done requires --output-inspected-by agent:<id> or human:<id>")
     commands: list[tuple[str, str]] = []
-    for kind, values in [("focused", args.focused_command), ("negative", args.negative_command), ("integration", args.integration_command), ("rollback", args.rollback_command), ("full_suite", args.full_suite_command)]:
+    for kind, values in [("focused", args.focused_command), ("negative", args.negative_command), ("integration", args.integration_command), ("state_transition", args.state_transition_command), ("state_temporal", args.state_temporal_command), ("acceptance_contract", contract_commands), ("rollback", args.rollback_command), ("full_suite", args.full_suite_command)]:
         commands.extend((kind, value) for value in values or [])
     revision = int(field(task_body, "Task Revision", "1")); task_id = field(task_body, "Task ID")
+    review_attestation_payload = None
+    if args.review_attestation:
+        current_snapshot = application_snapshot(root)["snapshot_sha256"]
+        expected_attestation = {"task_id": task_id, "task_revision": revision, "snapshot_sha256": current_snapshot, "writer_identity": field(task_body, "Session Label")}
+        att_errors, review_attestation_payload = validate_review_attestation(root, args.review_attestation, {k: str(v) for k, v in expected_attestation.items()}, require_signed=(required_review_trust=='SIGNED_GUARDIAN'))
+        if att_errors: raise SystemExit("; ".join(att_errors))
     with transaction_journal(root, "done", {"task_id": task_id, "task_revision": revision}) as tx_dir:
         stage, manifest = create_staged_bundle(
             root, tx_dir, task=task_map(task_body), revision=revision, outcome=args.outcome,
             commands=commands, artifacts=args.artifact or [], timeout=args.command_timeout,
             allow_shell=args.allow_shell_command, inspected_by=args.output_inspected_by,
-            cleanup_note=args.cleanup_note, known_limits=args.known_limits, review_report=args.review_report,
-            compact=risk in {"R0", "R1"}, expected_outputs=args.expected_output,
+            cleanup_note=args.cleanup_note, known_limits=args.known_limits, review_report=args.review_report, review_attestation=review_attestation_payload,
+            compact=risk in {"R0", "R1"}, expected_outputs=list(dict.fromkeys(contract_expected + (args.expected_output or []))),
         )
         enforce_scope(root, task_body)
-        if risk == "R3":
+        if risk == "R3" or (risk == "R2" and r2_review):
             expected = {"task_id": task_id, "task_revision": revision, "snapshot_sha256": manifest["verified_snapshot"]["snapshot_sha256"], "writer_identity": field(task_body, "Session Label")}
+            report_path=(root/args.review_report).resolve()
+            if report_path.is_file(): expected["review_report_sha256"] = sha256_file(report_path)
             errors = validate_review_report(root, args.review_report, {k: str(v) for k, v in expected.items()})
             if errors: raise SystemExit("; ".join(errors))
+            if args.review_attestation:
+                att_errors, _ = validate_review_attestation(root, args.review_attestation, {k: str(v) for k, v in expected.items()}, require_signed=(required_review_trust=='SIGNED_GUARDIAN'))
+                if att_errors: raise SystemExit("; ".join(att_errors))
         close_args = argparse.Namespace(
             outcome=args.outcome, evidence_bundle="", delivery_delta=None, completed_at=None,
             skip_ledger=args.skip_ledger, cycle_minutes=None, first_pass_accepted=args.first_pass_accepted,
@@ -958,9 +1257,14 @@ def finish_task(root: Path, args: argparse.Namespace) -> None:
             focused_test_runs=len(args.focused_command or []), integration_test_runs=len(args.integration_command or []),
             full_suite_runs=len(args.full_suite_command or []), provider_runs=args.provider_runs,
             human_review_minutes=args.human_review_minutes, human_wait_minutes=args.human_wait_minutes,
-            rollback_required=args.rollback_required, notes=args.notes,
+            rollback_required=args.rollback_required, notes=(args.notes + ((" | dependency: capability=" + args.dependency_capability + "; alternatives=" + args.dependency_alternatives_considered + "; removal_cost=" + args.dependency_removal_cost + ("; note=" + args.dependency_justification if args.dependency_justification else "")) if current_deps > base_deps else "")), r2_review_reasons=r2_review,
         )
         close_with_bundle(root, close_args, stage=stage, staged_manifest=manifest)
+        if args.first_pass_accepted == 'no':
+            try: field_record(root,'FIRST_PASS_FAILURE',phase='TASK_ACCEPTANCE',severity='MEDIUM',trigger=f'{task_id}/r{revision}',automatic=True,evidence_code='TASK_FIRST_PASS_NO')
+            except Exception: pass
+        if field(task_body, "Goal ID", "NONE") in {"", "NONE", "UNSET"}:
+            health_save_snapshot(root)
 
 
 def doctor(root: Path) -> None:
@@ -978,6 +1282,10 @@ def doctor(root: Path) -> None:
     findings.append(("WARN" if pycache else "PASS", f"Package __pycache__: {len(pycache)}"))
     errors, warnings = validate(root, strict=False)
     findings.append(("PASS" if not errors else "FAIL", f"Validator errors={len(errors)} warnings={len(warnings)}"))
+    health = health_check_repository(root, hard_fail=False)
+    findings.append(("PASS" if not health.get("errors") else "FAIL", f"Codebase health hard errors={len(health.get('errors', []))} warnings={len(health.get('warnings', []))}"))
+    assurance=achieved_assurance(root)
+    findings.append(("PASS" if assurance.get('level') in {'A3','A4'} else "WARN", f"Assurance {assurance.get('level')}: {'; '.join(assurance.get('reasons') or [])}"))
     for status, message in findings: print(f"{status:4} {message}")
     if any(status == "FAIL" for status, _ in findings): raise SystemExit(1)
 
@@ -992,7 +1300,7 @@ def show_status(root: Path, as_json: bool) -> None:
         "project_id": field(state, "Project ID"), "task_id": field(task, "Task ID"),
         "task_revision": field(task, "Task Revision"), "task_status": field(task, "Task Status"),
         "risk": field(task, "Risk Tier"), "risk_floor": field(task, "Risk Floor", field(task, "Risk Tier")),
-        "profile": field(task, "Execution Profile"), "lease": field(task, "Lease Status"), "writer": field(task, "Session Label"),
+        "profile": field(task, "Execution Profile"), "state_hazard": field(task, "State Hazard Level", "S0"), "lease": field(task, "Lease Status"), "writer": field(task, "Session Label"),
         "branch": snap["branch"], "head": snap["head"], "worktree": snap["worktree"],
         "snapshot_sha256": snap["snapshot_sha256"], "changed_files": snap["changed_files"],
         "task_delta_files": delta, "preexisting_dirty_files": sorted((baseline.get("preexisting_changed_files") or {}).keys()),
@@ -1001,17 +1309,32 @@ def show_status(root: Path, as_json: bool) -> None:
         "consecutive_non_shipping_tasks": non_shipping_count,
         "max_consecutive_non_shipping_tasks": non_shipping_threshold,
         "next_action": next_action(root, emit=False),
+        "assurance": achieved_assurance(root),
     }
     if as_json: print(json.dumps(value, ensure_ascii=False, indent=2))
     else:
         print(f"Project: {value['project_id']}")
-        print(f"Task: {value['task_id']}/r{str(value['task_revision']).zfill(3)} {value['task_status']} | {value['risk']}/{value['profile']}")
+        print(f"Task: {value['task_id']}/r{str(value['task_revision']).zfill(3)} {value['task_status']} | {value['risk']}/{value['profile']} state={value['state_hazard']}")
         print(f"Lease: {value['lease']} by {value['writer']}")
         print(f"Git: {value['branch']} {str(value['head'])[:12]} {value['worktree']}")
         print(f"Task delta: {', '.join(value['task_delta_files']) if value['task_delta_files'] else 'NONE'}")
         print(f"Pre-existing dirty: {len(value['preexisting_dirty_files'])}")
         print(f"Shipping breaker: {value['shipping_circuit_breaker']} ({value['consecutive_non_shipping_tasks']}/{value['max_consecutive_non_shipping_tasks']} non-shipping)")
+        print(f"Assurance: {value['assurance'].get('level')} — {'; '.join(value['assurance'].get('reasons') or [])}")
         print(f"Next: {value['next_action']}")
+
+
+def evidence_infra_stop_loss(root: Path, task_id: str) -> tuple[bool, str, int]:
+    rows = [r for r in field_load(root, 100) if r.get("event_type") == "EVIDENCE_INFRA_FAILURE" and str((r.get("metadata") or {}).get("task_id") or "") == task_id]
+    if not rows:
+        return False, "", 0
+    method = str((rows[-1].get("metadata") or {}).get("method") or "UNKNOWN")
+    count = 0
+    for row in reversed(rows):
+        if str((row.get("metadata") or {}).get("method") or "UNKNOWN") != method:
+            break
+        count += 1
+    return count >= 2, method, count
 
 
 def next_action(root: Path, emit: bool = True) -> str:
@@ -1019,7 +1342,10 @@ def next_action(root: Path, emit: bool = True) -> str:
     status = field(task, "Task Status"); lease = field(task, "Lease Status"); risk = field(task, "Risk Tier")
     project = read(root / ".ai" / "PROJECT.md")
     breaker, _, _ = shipping_breaker_state(project, state)
-    if status in {"NOT_CREATED", "COMPLETED", "ABANDONED", "ABORTED"}:
+    infra_stop, infra_method, infra_count = evidence_infra_stop_loss(root, field(task, "Task ID"))
+    if infra_stop and status in {"READY", "ACTIVE", "BLOCKED", "PAUSED"}:
+        action = f"Evidence stop-loss: {infra_method} infrastructure failed {infra_count} consecutive times. Change acceptance method; do not spend another Worker cycle repairing the same verifier unless product-failure evidence appears."
+    elif status in {"NOT_CREATED", "COMPLETED", "ABANDONED", "ABORTED"}:
         action = (
             "Shipping Circuit Breaker is ACTIVE: create the next smallest USER_VISIBLE_BEHAVIOR or EXECUTABLE_CAPABILITY task."
             if breaker == "ACTIVE" else "Create the next smallest milestone-linked task with `ai_os.py begin`."
@@ -1030,6 +1356,10 @@ def next_action(root: Path, emit: bool = True) -> str:
         action = "Resume with `ai_os.py resume`; the original task baseline remains authoritative."
     elif lease != "CLAIMED":
         action = "Restore a claimed writer lease before modifying application code."
+    elif STATE_LEVELS.get(field(task, "State Hazard Level", "S0").upper(), 0) >= 3:
+        action = "Implement against the frozen state authority/invariant; verify transition + competing-writer temporal behavior. Reuse proof automatically when dependencies are unchanged."
+    elif STATE_LEVELS.get(field(task, "State Hazard Level", "S0").upper(), 0) >= 2:
+        action = "Implement against the frozen state authority/invariant; run one representative transition proof, then finish. Exact proof is reusable until affected source changes."
     elif risk in {"R0", "R1"}:
         action = "Make the smallest patch, run focused verification, inspect output + task delta, then `ai_os.py done`."
     elif risk == "R2":
@@ -1047,47 +1377,9 @@ def show_history(root: Path, limit: int) -> None:
         print(f"{item['completed_at']} {item['task_id']}/r{int(item['task_revision']):03d} {item['risk_tier']} {item['delivery_delta']} — {item['outcome']}")
 
 
-def report(root: Path, last: int) -> None:
-    with (root / ".ai" / "COST_LEDGER.csv").open(encoding="utf-8", newline="") as handle: rows = list(csv.DictReader(handle))[-last:]
-    if not rows: print("No ledger data yet."); return
-    accepted = [row for row in rows if row["accepted"] == "yes"]
-    cycles = [float(row["cycle_minutes"]) for row in accepted if row["cycle_minutes"]]
-    first_pass = [row for row in accepted if row["first_pass_accepted"] in {"yes", "no"}]
-    rework = [row for row in accepted if row["later_rework"] in {"yes", "no"}]
-    defects = [row for row in accepted if row["escaped_defect"] in {"yes", "no"}]
-    ai_cost = sum(float(row["estimated_ai_cost"] or 0) for row in accepted)
-    provider_cost = sum(float(row["provider_cost"] or 0) for row in accepted)
-    print(f"Accepted outcomes: {len(accepted)}")
-    print(f"Median cycle minutes: {statistics.median(cycles):.2f}" if cycles else "Median cycle minutes: unknown")
-    print(f"First-pass acceptance: {sum(r['first_pass_accepted']=='yes' for r in first_pass)}/{len(first_pass)}" if first_pass else "First-pass acceptance: unknown")
-    print(f"Later rework: {sum(r['later_rework']=='yes' for r in rework)}/{len(rework)}" if rework else "Later rework: unreconciled")
-    print(f"Escaped defects: {sum(r['escaped_defect']=='yes' for r in defects)}/{len(defects)}" if defects else "Escaped defects: unreconciled")
-    print(f"Recorded AI/provider cost: {ai_cost:.6f} + {provider_cost:.6f}")
-    accepted_keys = {(row.get("task_id"), int(row.get("task_revision") or 0)) for row in accepted}
-    recent_history = [
-        item for item in load_history(root)
-        if (item.get("task_id"), int(item.get("task_revision") or 0)) in accepted_keys
-    ]
-    overrides = [item for item in recent_history if item.get("breaker_override") is True]
-    print(f"Shipping breaker overrides: {len(overrides)}/{len(accepted)}")
-    if overrides:
-        reasons: dict[str, int] = {}
-        for item in overrides:
-            reason = str(item.get("breaker_override_reason") or "UNSPECIFIED")
-            reasons[reason] = reasons.get(reason, 0) + 1
-        for reason, count in sorted(reasons.items(), key=lambda pair: (-pair[1], pair[0]))[:5]:
-            print(f"  - {count}x {reason}")
-    # Evidence-based recommendations, intentionally conservative.
-    if len(first_pass) >= 3 and sum(r["first_pass_accepted"] == "yes" for r in first_pass) / len(first_pass) < 0.6:
-        print("Recommendation: acceptance criteria or focused checks are too weak; strengthen preflight before adding broader gates.")
-    r1 = [r for r in accepted if r["risk_tier"] in {"R0", "R1"}]
-    if r1 and sum(int(r["integration_test_runs"] or 0) for r in r1) > len(r1):
-        print("Recommendation: Fast Lane is over-testing; make integration trigger-based for R0/R1.")
-    if accepted and len(overrides) / len(accepted) > 0.20:
-        print("Recommendation: shipping-breaker overrides exceed 20% of recent accepted work; inspect threshold/policy abuse.")
-    unreconciled = sum(r["later_rework"] == "unknown" or r["escaped_defect"] == "unknown" for r in accepted)
-    if unreconciled: print(f"Recommendation: reconcile {unreconciled} accepted outcome(s) after operational use.")
 
+def report(root: Path, last: int) -> None:
+    return _report_impl(root, last)
 
 def reconcile(root: Path, args: argparse.Namespace) -> None:
     updates = {k: v for k, v in {
@@ -1096,8 +1388,9 @@ def reconcile(root: Path, args: argparse.Namespace) -> None:
         "human_review_minutes": str(args.human_review_minutes) if args.human_review_minutes is not None else None,
         "human_wait_minutes": str(args.human_wait_minutes) if args.human_wait_minutes is not None else None,
     }.items() if v is not None}
-    reconcile_row(root, args.task_id, args.task_revision, updates)
-    history = root / ".ai" / "history" / args.task_id / f"r{args.task_revision:03d}.json"
+    safe_task_id = validate_identifier(args.task_id, "task ID")
+    reconcile_row(root, safe_task_id, args.task_revision, updates)
+    history = confined_child(root, Path(".ai/history"), safe_task_id, "task ID") / f"r{args.task_revision:03d}.json"
     if history.is_file():
         record = json.loads(history.read_text(encoding="utf-8")); record.setdefault("quality_reconciliation", {}).update(updates); atomic_write_json(history, record)
 
@@ -1111,157 +1404,6 @@ def check(root: Path, strict: bool) -> None:
     if errors: raise SystemExit(1)
 
 
-def add_metrics(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--skip-ledger", action="store_true"); parser.add_argument("--cycle-minutes", type=float)
-    parser.add_argument("--first-pass-accepted", choices=["yes", "no", "unknown"], default="unknown")
-    for name in ["coordination-input-tokens", "implementation-input-tokens", "cached-input-tokens", "output-tokens", "worker-turns", "retries", "provider-runs", "human-review-minutes", "human-wait-minutes"]:
-        parser.add_argument(f"--{name}", type=int)
-    parser.add_argument("--estimated-ai-cost", type=float); parser.add_argument("--provider-cost", type=float)
-    parser.add_argument("--currency", default="USD"); parser.add_argument("--rollback-required", choices=["yes", "no"], default="no"); parser.add_argument("--notes", default="")
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Senior AI Build OS v1.8")
-    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    init = sub.add_parser("init")
-    init.add_argument("--project-id", required=True)
-    init.add_argument("--owner", required=True)
-    init.add_argument("--problem", required=True)
-    init.add_argument("--target-user", required=True)
-    init.add_argument("--primary-action", required=True)
-    init.add_argument("--observable-result", required=True)
-    init.add_argument("--mvp-goal", required=True)
-    init.add_argument("--acceptance-threshold", default="observable result passes representative fixtures")
-    init.add_argument("--demo-method", default="local runtime demo")
-    init.add_argument("--milestone-id", default="M-001")
-    init.add_argument("--no-ci", action="store_true", help="Do not install the managed GitHub Actions workflow")
-
-    start_p = sub.add_parser("start", aliases=["begin"])
-    start_p.add_argument("--task-id", required=True)
-    start_p.add_argument("--outcome", required=True)
-    start_p.add_argument("--risk", default="auto", choices=["auto", "R0", "R1", "R2", "R3"])
-    start_p.add_argument("--success-criterion", required=True)
-    start_p.add_argument("--accept", action="append", default=[], help="Concrete acceptance criterion; repeat for multiple checks")
-    start_p.add_argument("--delivery-delta", required=True, choices=["USER_VISIBLE_BEHAVIOR", "EXECUTABLE_CAPABILITY", "RISK_RETIREMENT", "DOCUMENTATION_ONLY", "NO_DELTA"])
-    start_p.add_argument("--milestone-id", default="M-001")
-    start_p.add_argument("--project-id")
-    start_p.add_argument("--demonstrable-result", default="runtime/output evidence listed in task evidence index")
-    start_p.add_argument("--unlocks", default="next milestone capability")
-    start_p.add_argument("--read-scope", default="task-relevant repository files")
-    start_p.add_argument("--modify", required=True)
-    start_p.add_argument("--create", default="NONE")
-    start_p.add_argument("--commands", default="focused checks and task-authorized commands")
-    start_p.add_argument("--local-services", default="NONE")
-    start_p.add_argument("--external-calls", default="NONE")
-    start_p.add_argument("--data-operation", choices=["READ_ONLY", "CREATE_NEW_VERSION", "MUTATE_IN_PLACE", "DELETE"], default="READ_ONLY")
-    start_p.add_argument("--artifact-operation", choices=["READ_ONLY", "CREATE_NEW_VERSION", "MUTATE_IN_PLACE", "OVERWRITE", "DELETE"], default="CREATE_NEW_VERSION")
-    start_p.add_argument("--inputs", default="task-relevant source and fixtures")
-    start_p.add_argument("--outputs", default="accepted outcome and evidence")
-    start_p.add_argument("--files-created", default="NONE")
-    start_p.add_argument("--files-overwritten", default="NONE")
-    start_p.add_argument("--data-mutated", default="NONE")
-    start_p.add_argument("--provider-calls", default="NONE")
-    start_p.add_argument("--expected-provider-cost", type=float, default=0.0)
-    start_p.add_argument("--disk-requirement", default="MINIMAL")
-    start_p.add_argument("--ram-requirement", default="MINIMAL")
-    start_p.add_argument("--process-port", default="NONE")
-    start_p.add_argument("--artifact-lineage", default="source inputs and evidence manifest")
-    start_p.add_argument("--rollback", default="revert task-scoped diff and remove new artifacts")
-    start_p.add_argument("--expected-cost-range", default="small; investigate repeated attempts without evidence")
-    start_p.add_argument("--primary-cost-drivers", default="implementation, verification and output inspection")
-    start_p.add_argument("--evidence-sequence", default="focused → affected regression/runtime → diff review")
-    start_p.add_argument("--escalation-conditions", default="risk exceeds profile or same approach fails twice")
-    start_p.add_argument("--negative-required", action="store_true", help="Require an explicit negative/failure-path check even on Fast Lane")
-    start_p.add_argument("--owner-authorization", choices=["NOT_REQUIRED", "APPROVED"], default="NOT_REQUIRED")
-    start_p.add_argument("--authorization-reference", default="")
-    start_p.add_argument("--breaker-override", action="store_true", help="Explicitly allow a non-shipping task while the shipping breaker is active")
-    start_p.add_argument("--breaker-override-reason", default="", help="Audit reason required with --breaker-override")
-    start_p.add_argument("--stop-loss-ack", default="", help="Required only after two consecutive prior revisions with first_pass_accepted=no")
-    claim_mode = start_p.add_mutually_exclusive_group()
-    claim_mode.add_argument("--claim", dest="claim", action="store_true", help="Auto-claim writer lease (default)")
-    claim_mode.add_argument("--ready", "--no-claim", dest="claim", action="store_false", help="Create READY task without claiming it")
-    start_p.set_defaults(claim=True)
-    start_p.add_argument("--writer-role", default="WORKER")
-    start_p.add_argument("--platform", default="ChatGPT")
-    start_p.add_argument("--session-label", default="AI-WORKER")
-    start_p.add_argument("--allow-no-git", action="store_true")
-
-    claim = sub.add_parser("claim")
-    claim.add_argument("--writer-role", default="WORKER")
-    claim.add_argument("--platform", default="ChatGPT")
-    claim.add_argument("--session-label", default="AI-WORKER")
-    sub.add_parser("pause")
-    resume = sub.add_parser("resume")
-    resume.add_argument("--writer-role", default="WORKER")
-    resume.add_argument("--platform", default="ChatGPT")
-    resume.add_argument("--session-label", default="AI-WORKER")
-    sub.add_parser("abort")
-
-    amend = sub.add_parser("amend")
-    amend.add_argument("--add-modify")
-    amend.add_argument("--add-create")
-    amend.add_argument("--risk", choices=["R0", "R1", "R2", "R3"])
-    amend.add_argument("--data-operation", choices=["READ_ONLY", "CREATE_NEW_VERSION", "MUTATE_IN_PLACE", "DELETE"])
-    amend.add_argument("--artifact-operation", choices=["READ_ONLY", "CREATE_NEW_VERSION", "MUTATE_IN_PLACE", "OVERWRITE", "DELETE"])
-    amend.add_argument("--files-overwritten")
-    amend.add_argument("--data-mutated")
-    amend.add_argument("--external-calls")
-    amend.add_argument("--provider-calls")
-    amend.add_argument("--owner-authorization", choices=["APPROVED"])
-    amend.add_argument("--authorization-reference", default="")
-    amend.add_argument("--reason", required=True)
-
-    runnable = sub.add_parser("runnable")
-    runnable.add_argument("--evidence", required=True)
-    runnable.add_argument("--at")
-
-    done = sub.add_parser("done")
-    done.add_argument("--outcome", required=True)
-    done.add_argument("--focused-command", action="append", default=[])
-    done.add_argument("--negative-command", action="append", default=[])
-    done.add_argument("--integration-command", action="append", default=[])
-    done.add_argument("--rollback-command", action="append", default=[], help="R3 rollback rehearsal/proof; must leave final application state intact")
-    done.add_argument("--full-suite-command", action="append", default=[])
-    done.add_argument("--artifact", action="append", default=[])
-    done.add_argument("--review-report")
-    done.add_argument("--command-timeout", type=int, default=300)
-    done.add_argument("--allow-shell-command", action="store_true")
-    done.add_argument("--output-inspected-by")
-    done.add_argument("--expected-output", action="append", default=[], help="Optional exact marker that must appear in stored verification stdout/stderr")
-    done.add_argument("--cleanup-note", default="no residual process; rollback remains available")
-    done.add_argument("--known-limits", default="NONE")
-    add_metrics(done)
-
-    close = sub.add_parser("close")
-    close.add_argument("--outcome", required=True)
-    close.add_argument("--evidence-bundle", required=True)
-    close.add_argument("--delivery-delta", choices=["USER_VISIBLE_BEHAVIOR", "EXECUTABLE_CAPABILITY", "RISK_RETIREMENT", "DOCUMENTATION_ONLY", "NO_DELTA"])
-    close.add_argument("--completed-at")
-    add_metrics(close)
-    close.set_defaults(focused_test_runs=None, integration_test_runs=None, full_suite_runs=None)
-
-    check_p = sub.add_parser("check")
-    check_p.add_argument("--strict", action="store_true")
-    sub.add_parser("doctor")
-    status = sub.add_parser("status")
-    status.add_argument("--json", action="store_true")
-    sub.add_parser("next")
-    history = sub.add_parser("history")
-    history.add_argument("--limit", type=int, default=20)
-    report_p = sub.add_parser("report")
-    report_p.add_argument("--last", type=int, default=30)
-    rec = sub.add_parser("reconcile")
-    rec.add_argument("--task-id", required=True)
-    rec.add_argument("--task-revision", type=int, required=True)
-    rec.add_argument("--later-rework", choices=["yes", "no", "unknown"])
-    rec.add_argument("--escaped-defect", choices=["yes", "no", "unknown"])
-    rec.add_argument("--rollback-required", choices=["yes", "no"])
-    rec.add_argument("--notes")
-    rec.add_argument("--human-review-minutes", type=int)
-    rec.add_argument("--human-wait-minutes", type=int)
-    return parser
 
 def main() -> None:
     args = build_parser().parse_args(); root = args.root.resolve()
@@ -1271,7 +1413,207 @@ def main() -> None:
     if args.command == "next": next_action(root); return
     if args.command == "history": show_history(root, args.limit); return
     if args.command == "report": report(root, args.last); return
+    if args.command == "route":
+        value = recommend_lane(outcome=args.outcome, acceptance=args.accept, modify=args.modify, risk=args.risk, dependency_count=args.dependency_count, acceptance_surfaces=args.acceptance_surfaces, parallel_opportunity=args.parallel_opportunity)
+        print(json.dumps(value, ensure_ascii=False, indent=2) if args.json else f"ROUTE={value['lane']} orchestration={value['orchestration']} reason={'; '.join(value['reasons'])}")
+        return
+    if args.command == "assurance":
+        print(json.dumps(achieved_assurance(root), ensure_ascii=False, indent=2))
+        return
+    if args.command == "field":
+        if args.field_command == "report":
+            print(json.dumps(field_report(root,args.last,global_scope=args.global_scope),ensure_ascii=False,indent=2))
+        else:
+            item=field_record(root,args.event_type,phase=args.phase,severity=args.severity,trigger=args.trigger,automatic=False,extra_wall_seconds=args.extra_wall_seconds,extra_input_tokens=args.extra_input_tokens,extra_output_tokens=args.extra_output_tokens,extra_provider_cost=args.extra_provider_cost,evidence_code=args.evidence_code)
+            print(json.dumps(item,ensure_ascii=False,indent=2))
+        return
+    if args.command == "health":
+        if args.health_command == "baseline":
+            print(json.dumps(health_save_snapshot(root), ensure_ascii=False, indent=2))
+        elif args.health_command == "check":
+            result = health_check_repository(root, hard_fail=args.ci)
+            for w in result.get('warnings', []): print('HEALTH WARNING', w)
+            for e in result.get('errors', []): print('HEALTH ERROR', e)
+            if not result.get('errors'): print('CODEBASE_HEALTH: PASS')
+        elif args.health_command == "architecture-decision":
+            set_architecture_waiver(root,args.no_boundaries_reason); print('ARCHITECTURE_DECISION: recorded explicit no-boundaries reason')
+        else:
+            print(json.dumps(health_report(root), ensure_ascii=False, indent=2))
+        return
+    if args.command == "telemetry":
+        if args.telemetry_command == "ingest":
+            path=Path(args.file); text=path.read_text(encoding='utf-8'); records=[]
+            try:
+                obj=json.loads(text); records=obj if isinstance(obj,list) else [obj]
+            except json.JSONDecodeError:
+                records=[json.loads(line) for line in text.splitlines() if line.strip()]
+            print(f"TELEMETRY ingested={telemetry_ingest(root, records)}")
+        else:
+            print(json.dumps(telemetry_summarize(root), ensure_ascii=False, indent=2))
+        return
+    if args.command == "goal" and args.goal_command in {"status", "next"}:
+        ensure_goal_files(root)
+        if args.goal_command == "status":
+            goal = load_goal(root)
+            if args.json: print(json.dumps(goal, ensure_ascii=False, indent=2))
+            else: print((root / ".ai" / "GOAL.md").read_text(encoding="utf-8"))
+        else:
+            wave = goal_next_wave(root)
+            if args.json: print(json.dumps(wave, ensure_ascii=False, indent=2))
+            else:
+                print(f"Goal {wave.get('goal_id')} status={wave.get('status')}")
+                for node in wave.get('ready', []):
+                    print(f"READY {node['node_id']} agent={node['agent_role']} delta={node['delivery_delta']} depends={','.join(node.get('depends_on',[])) or '-'} outcome={node['outcome']}")
+                delegation = wave.get('delegation') or {}
+                for item in delegation.get('recommendations', []):
+                    if item.get('action') in {'SPAWN_SCOUT','SPAWN_REVIEWER','SCOUT_FIRST','SCOUT_OPTIONAL'}:
+                        print(f"DELEGATE {item.get('node_id')} action={item.get('action')} model={item.get('model_class')} hard={'yes' if item.get('hard') else 'no'} budget={item.get('summary_token_budget') or '-'}t reason={'; '.join(item.get('reasons') or [])}")
+                for group in delegation.get('parallel_groups', []):
+                    print(f"PARALLEL candidates={','.join(group.get('nodes') or [])} isolated_worktrees=required reason={group.get('reason')}")
+                opportunity = delegation.get('parallel_opportunity') or {}
+                if opportunity:
+                    print(f"PARALLEL-OPPORTUNITY candidates={','.join(opportunity.get('nodes') or [])} action={opportunity.get('action')} note={opportunity.get('cost_note')}")
+                held = delegation.get('held_sequential') or []
+                if held:
+                    print(f"SEQUENTIAL held={','.join(held)} reason=write-scope overlap/uncertainty or parallel budget")
+                if wave.get('parallel_writers_require_isolated_worktrees'):
+                    print("PARALLEL: use isolated Git worktrees; a single worktree remains single-writer")
+        return
     with lifecycle_lock(root):
+        if args.command == "goal":
+            ensure_goal_files(root)
+            if args.goal_command == "decision":
+                item=decision_record(root,args.type,args.text,confidence=args.confidence,reversibility=args.reversibility,owner_impact=args.owner_impact,reason=args.reason)
+                print(json.dumps(item,ensure_ascii=False,indent=2))
+            elif args.goal_command == "digest":
+                print(json.dumps(decision_digest(root,args.goal_id),ensure_ascii=False,indent=2))
+            elif args.goal_command == "begin":
+                value = begin_goal(root, goal_id=args.goal_id, outcome=args.goal_outcome, acceptance=args.accept, non_goals=args.non_goal, goal_type=args.goal_type, risk_ceiling=args.risk_ceiling, max_tasks=args.max_tasks, max_parallel=args.max_parallel, max_non_shipping=args.max_non_shipping, max_revisions=args.max_revisions, scope_growth_limit=args.scope_growth_limit, max_auto_scouts=args.max_auto_scouts, scout_summary_token_budget=args.scout_summary_token_budget, scout_input_token_budget=args.scout_input_token_budget, scout_wall_minutes_budget=args.scout_wall_minutes_budget, scout_provider_cost_budget=args.scout_provider_cost_budget)
+                print(f"Goal {value['goal_id']} ACTIVE risk_ceiling={value['risk_ceiling']}")
+                for warning in value.get('acceptance_quality_warnings', []):
+                    print('WARNING', warning)
+            elif args.goal_command == "add-task":
+                node = goal_add_task(root, node_id=args.node, outcome=args.outcome, depends_on=args.depends_on, agent_role=args.agent_role, risk=args.risk, delivery_delta=args.delivery_delta, modify=args.modify, create=args.create, replaces=args.replaces, success_criterion=args.success_criterion, acceptance=args.accept, negative_required=args.negative_required, data_operation=args.data_operation, artifact_operation=args.artifact_operation, acceptance_commands=args.acceptance_command, expected_outputs=args.expected_output, probe_files=args.probe_file, review_policy=args.review_policy, delegation_policy=args.delegation_policy, state_hazard=args.state_hazard, state_signals=args.state_signal, state_authority=args.state_authority, state_transitions=args.state_transition, state_invariants=args.state_invariant, state_dependencies=args.state_dependency)
+                print(f"Planned {node['node_id']} task={node['task_id']} agent={node['agent_role']}")
+                delegation = node.get('delegation') or {}
+                if delegation.get('auto_scout_node'):
+                    print(f"DELEGATION auto-scout={delegation['auto_scout_node']} model=CHEAP_FAST_READ_ONLY summary_budget={delegation.get('summary_token_budget',350)}t")
+                elif delegation.get('action') == 'SCOUT_OPTIONAL':
+                    print('DELEGATION optional Scout: ' + '; '.join(delegation.get('reasons') or []))
+            elif args.goal_command == "bind-acceptance":
+                mapping = bind_goal_acceptance(root, criterion_index=args.criterion, command=args.judge_command, expected_output=args.expected_output, probe_file=args.probe_file, inspection_requirement=args.inspection_requirement)
+                print(f"Goal acceptance criterion {mapping['criterion_index']} bound evaluator={mapping['evaluator_type']}")
+            elif args.goal_command == "start":
+                goal = load_goal(root); node = (goal.get("tasks") or {}).get(args.node)
+                if not node: raise SystemExit(f"Unknown Goal node: {args.node}")
+                ready_map = {item['node_id']: item for item in goal_next_wave(root).get('ready', [])}
+                if args.node not in ready_map: raise SystemExit(f"Goal node {args.node} is not READY; satisfy dependencies or resolve blockers first")
+                if node.get("agent_role") in {"SCOUT", "REVIEWER"}: raise SystemExit("Read-only SCOUT/REVIEWER nodes complete with `goal node-done`, not task start")
+                selected = ready_map[args.node]
+                node = maybe_apply_scout_scope(root, args.node)
+                goal = load_goal(root)
+                planned_risk, _, _ = effective_risk(
+                    node.get('risk', 'auto'), data_operation=node.get('data_operation', 'READ_ONLY'),
+                    artifact_operation=node.get('artifact_operation', 'CREATE_NEW_VERSION'), files_overwritten='NONE',
+                    data_mutated='NONE', external_calls='NONE', provider_calls='NONE',
+                    modify=node.get('modify', 'NONE'), create=node.get('create', 'NONE'),
+                )
+                ceiling = str(goal.get('risk_ceiling', 'R2'))
+                if RISK_ORDER[planned_risk] > RISK_ORDER[ceiling]:
+                    raise SystemExit(f"Effective task risk {planned_risk} exceeds Goal {goal['goal_id']} risk ceiling {ceiling}; owner decision/escalation required")
+                # Freeze the Goal-level judge only after authority/risk checks pass, but before Worker materialization.
+                freeze_goal_acceptance_contract(root)
+                frozen_contract = freeze_acceptance_contract(root, args.node, planned_risk)
+                auto_breaker_override = node.get('delivery_delta') not in SHIPPING_DELTAS and bool(selected.get('on_path_to_shipping'))
+                ns = argparse.Namespace(
+                    task_id=node['task_id'], outcome=node['outcome'], risk=node.get('risk','auto'), success_criterion=node.get('success_criterion','SC-001'),
+                    accept=node.get('acceptance',[]), delivery_delta=node.get('delivery_delta','NO_DELTA'), milestone_id='M-001', project_id=None,
+                    goal_id=goal['goal_id'], goal_node=args.node, demonstrable_result='runtime/output evidence listed in task evidence index', unlocks='next ready Goal node',
+                    read_scope='task-relevant repository files', modify=node.get('modify','NONE'), create=node.get('create','NONE'), replaces=node.get('replaces',[]), commands='focused checks and task-authorized commands',
+                    local_services='NONE', external_calls='NONE', data_operation=node.get('data_operation','READ_ONLY'), artifact_operation=node.get('artifact_operation','CREATE_NEW_VERSION'),
+                    inputs='task-relevant source and fixtures', outputs='accepted outcome and evidence', files_created='NONE', files_overwritten='NONE', data_mutated='NONE', provider_calls='NONE',
+                    expected_provider_cost=0.0, disk_requirement='MINIMAL', ram_requirement='MINIMAL', process_port='NONE', artifact_lineage='source inputs and evidence manifest',
+                    rollback='revert task-scoped diff and remove new artifacts', expected_cost_range='small; investigate repeated attempts without evidence', primary_cost_drivers='implementation, verification and output inspection',
+                    evidence_sequence='focused → affected regression/runtime → acceptance contract → diff review', escalation_conditions='risk exceeds profile or same approach fails twice', negative_required=bool(node.get('negative_required')),
+                    acceptance_contract_sha256=frozen_contract.get('contract_sha256','NONE'), acceptance_contract_json=json.dumps(frozen_contract, ensure_ascii=False, separators=(',', ':')), review_policy=node.get('review_policy','auto'),
+                    state_hazard=node.get('state_hazard','auto'), state_signal=node.get('state_signals',[]), state_authority=node.get('state_authority',''), state_transition=node.get('state_transitions',[]), state_invariant=node.get('state_invariants',[]), state_dependency=node.get('state_dependencies',[]),
+                    owner_authorization=args.owner_authorization, authorization_reference=args.authorization_reference, breaker_override=auto_breaker_override, breaker_override_reason='Goal dependency path to accepted shipping node' if auto_breaker_override else '', stop_loss_ack=args.stop_loss_ack, claim=True, writer_role='WORKER', platform=args.platform, session_label=args.session_label, allow_no_git=args.allow_no_git,
+                )
+                start_task(root, ns)
+            elif args.goal_command == "discover":
+                record_discovery(root, args.summary, affected_files=args.affected_file, risk_signals=args.risk_signal); print("Goal discovery recorded")
+            elif args.goal_command in {"scout-done", "node-done"}:
+                mark_scout_done(root, args.node, args.summary, args.affected_file, args.risk_signal, input_tokens=args.input_tokens, output_tokens=args.output_tokens, provider_cost=args.provider_cost, wall_minutes=args.wall_minutes, invariants=args.invariant, entry_point=args.entry_point, confidence=args.confidence, recommended_scope=args.recommended_scope); print(f"Read-only node {args.node} DONE")
+            elif args.goal_command == "defer": defer_node(root, args.node, args.reason); print(f"Goal node {args.node} DEFERRED")
+            elif args.goal_command == "block":
+                block_goal(root, args.reason, owner_decision=args.owner_decision)
+                if args.owner_decision:
+                    try: field_record(root,'OWNER_INTERRUPT',phase='GOAL',severity='MEDIUM',trigger=args.reason,automatic=True,evidence_code='GOAL_BLOCK_OWNER_DECISION')
+                    except Exception: pass
+                print("Goal BLOCKED")
+            elif args.goal_command == "resume": resume_goal(root, args.decision); print("Goal ACTIVE")
+            elif args.goal_command == "abort": abort_goal(root, args.reason); print("Goal ABORTED")
+            elif args.goal_command == "done":
+                goal = load_goal(root); contract = verify_goal_acceptance_contract(root)
+                logs = confined_child(root, GOALS_DIR, str(goal.get('goal_id')), 'goal ID') / 'acceptance'; logs.mkdir(parents=True, exist_ok=True)
+                records = []; passed = True; executed = {}; next_index = 1
+                inspection_confirmed = set(args.inspection_confirm or [])
+                for mapping in contract.get('mappings', []) or []:
+                    idx = int(mapping.get('criterion_index', 0)); kind = mapping.get('evaluator_type')
+                    if kind == 'inspection':
+                        ok = idx in inspection_confirmed
+                        records.append({'criterion_index': idx, 'criterion': mapping.get('criterion'), 'kind': 'declared_inspection', 'requirement': mapping.get('inspection_requirement'), 'result': 'PASS' if ok else 'FAIL', 'inspected_by': args.output_inspected_by})
+                        print(f"goal_acceptance:A{idx} {'PASS' if ok else 'FAIL'} declared_inspection")
+                        if not ok: passed = False; break
+                        continue
+                    command = str(mapping.get('command') or '').strip()
+                    snapshot_key = application_snapshot(root)['snapshot_sha256']; key = (command, snapshot_key, bool(args.allow_shell_command))
+                    if key in executed:
+                        record = dict(executed[key]); record['reused_execution'] = True
+                    else:
+                        record = run_command(root, f'goal_A{idx}', command, args.command_timeout, logs, next_index, allow_shell=args.allow_shell_command, inspected_by=args.output_inspected_by)
+                        next_index += 1; executed[key] = record
+                    record = dict(record); record['criterion_index'] = idx; record['criterion'] = mapping.get('criterion')
+                    marker = str(mapping.get('expected_output') or '')
+                    if record.get('result') == 'PASS' and marker:
+                        stdout = (logs / record['stdout']['path']).read_text(encoding='utf-8', errors='replace')
+                        stderr = (logs / record['stderr']['path']).read_text(encoding='utf-8', errors='replace')
+                        record['expected_output'] = marker; record['expected_output_matched'] = marker in (stdout + '\n' + stderr)
+                        if not record['expected_output_matched']: record['result'] = 'FAIL'
+                    records.append(record); print(f"goal_acceptance:A{idx} {record['result']} command={command}")
+                    if record['result'] != 'PASS': passed = False; break
+                attempt = record_acceptance_attempt(root, passed)
+                if not passed: raise SystemExit(f'Goal acceptance attempt {attempt} failed; Goal remains ACTIVE')
+                goal_health = health_check_repository(root, hard_fail=True)
+                for warning in goal_health.get('warnings', []): print('HEALTH WARNING', warning)
+                result = complete_goal(root, acceptance_records=records, inspected_by=args.output_inspected_by, known_limits=args.known_limits)
+                digest = decision_digest(root, result['goal_id'])
+                atomic_write_json(confined_child(root, GOALS_DIR, str(result['goal_id']), 'goal ID') / 'owner_digest.json', digest)
+                if not result.get('goal_first_pass_accepted', True):
+                    try: field_record(root,'FIRST_PASS_FAILURE',phase='GOAL_ACCEPTANCE',severity='MEDIUM',trigger=str(result['goal_id']),automatic=True,evidence_code='GOAL_ACCEPTANCE_RETRY')
+                    except Exception: pass
+                for warning in (result.get('codebase_health', {}) or {}).get('warnings', []): print('HEALTH RATCHET', warning)
+                if digest.get('attention_required'): print(f"OWNER_DIGEST attention={len(digest['attention_required'])} path=.ai/goals/{result['goal_id']}/owner_digest.json")
+                print(f"Goal {result['goal_id']} COMPLETED")
+            sync_runtime(root)
+            return
+        if args.command == "debug":
+            task_body = read(root / ".ai" / "ACTIVE_TASK.md")
+            if args.debug_command == "state-failure":
+                task_id = validate_identifier(field(task_body, "Task ID"), "task ID")
+                revision = integer_field(task_body, "Task Revision", 1)
+                path = record_failure_signature(root, task_id=task_id, revision=revision, state=args.state, event=args.event, expected=args.expected, observed=args.observed, hazard_class=args.hazard_class, suspects=args.suspect)
+                print(f"State failure signature recorded: {path.relative_to(root)}")
+                return
+            if args.debug_command == "evidence-infra-failure":
+                task_id = validate_identifier(field(task_body, "Task ID"), "task ID")
+                revision = integer_field(task_body, "Task Revision", 1)
+                field_record(root, 'EVIDENCE_INFRA_FAILURE', phase='TASK_ACCEPTANCE', severity='MEDIUM', trigger=f'{task_id}/r{revision}:{args.method}', automatic=False, evidence_code='EVIDENCE_METHOD_FAILURE', metadata={'task_id':task_id,'task_revision':revision,'method':args.method,'note':args.note[:240]})
+                stop, method, count = evidence_infra_stop_loss(root, task_id)
+                print(f"Evidence infrastructure failure recorded: method={method} consecutive={count}")
+                if stop:
+                    print("STOP_LOSS: change acceptance method before another expensive verification attempt")
+                return
         if args.command == "init": initialize_project(root, args)
         elif args.command in {"start", "begin"}: start_task(root, args)
         elif args.command == "claim": claim_task(root, args)
@@ -1285,4 +1627,15 @@ def main() -> None:
         elif args.command == "reconcile": reconcile(root, args)
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    try:
+        main()
+    except SystemExit as exc:
+        code=exc.code if isinstance(exc.code,int) else (0 if exc.code in {None,''} else 1)
+        if code:
+            try:
+                root=Path(sys.argv[sys.argv.index('--root')+1]).resolve() if '--root' in sys.argv else DEFAULT_ROOT
+                field_record(root,'WORKFLOW_RETRY',phase='CLI',severity='LOW',trigger=str(exc),automatic=True,evidence_code='NONZERO_SYSTEM_EXIT',metadata={'argv':sys.argv[1:4]})
+            except Exception:
+                pass
+        raise

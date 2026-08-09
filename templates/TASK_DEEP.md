@@ -16,6 +16,8 @@ Authorization Reference: REQUIRED_IF_APPROVED
 
 - Milestone ID: M-XXX
 - Success Criterion: SC-XXX
+- Goal ID: NONE
+- Goal Node: NONE
 - Delivery Delta: EXECUTABLE_CAPABILITY
 - Demonstrable Result: UNSET
 - Unlocks: UNSET
@@ -23,6 +25,7 @@ Authorization Reference: REQUIRED_IF_APPROVED
 
 ## Risk and Execution Profile
 
+- Risk At Start: R0
 - Risk Tier: R2_OR_R3
 - Declared Risk Tier: auto
 - Risk Floor: R0
@@ -32,6 +35,13 @@ Authorization Reference: REQUIRED_IF_APPROVED
 - Human review required: yes-if-triggered
 - Specialist reviewer trigger: UNSET
 - Full suite required: yes-for-R3-or-shared-critical-core
+- Review policy: auto
+- Acceptance Contract SHA256: NONE
+- Acceptance Contract JSON: {}
+- State Hazard Level: S0
+- State Hazard Signals: NONE
+- State Contract SHA256: NONE
+- State Contract JSON: {}
 
 ## Continuity Fingerprint at Authorization
 

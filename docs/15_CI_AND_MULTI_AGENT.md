@@ -1,4 +1,4 @@
-# CI and Multi-Agent Operation — v1.8
+# CI, Goal and Multi-Agent Operation — v1.15
 
 ## Commit-aware CI
 
@@ -14,7 +14,9 @@
 
 ### Trust boundary
 
-Đây không phải cryptographic attestation. Actor có quyền sửa toàn bộ repository vẫn có thể giả evidence/history nếu không có external signer. Strong provenance cần protected branch/required CI và, nếu threat model yêu cầu, một external trusted review/signing job.
+Repo-local evidence/CLI is **A1**, not a security boundary against an actor with unrestricted repository write authority. v1.15 adds an external Guardian signature for triggered R2/R3 reviewer trust: the private key stays outside the repository; CI/validator verifies the bundled attestation with `AI_BUILD_OS_GUARDIAN_PUBLIC_KEY`.
+
+**Required CI alone is not the same as protected merge.** `ai_os.py assurance` reports A3 only when a trusted runtime explicitly attests that required checks + branch/merge protection are configured. The managed GitHub workflow intentionally does not infer branch protection from the presence of a YAML file. Configure repository variable `AI_BUILD_OS_GUARDIAN_PUBLIC_KEY_PEM` for signature verification. Set `AI_BUILD_OS_GUARDIAN_EXTERNAL_ATTESTED=true` only when the signer/private-key authority is genuinely outside Worker control; a public key by itself remains A1. Set `AI_BUILD_OS_PROTECTED_MERGE_ATTESTED=true` only after branch protection/required checks are actually enforced. A4 additionally requires isolated Worker/reviewer authority.
 
 ## Product checks
 
@@ -30,4 +32,8 @@
 - `amend` là cách hợp lệ để mở adjacent scope;
 - R3 review vẫn phải independent và snapshot-bound.
 
-v1.8 không kèm scheduler; nó cung cấp lifecycle + integrity boundary cho orchestrator ngoài.
+v1.13 retains machine-readable automatic delegation requests/plans but still does not embed a provider-specific model scheduler. The coding environment/orchestrator consumes `goal next --json.delegation` and `.ai/runtime/delegation_request.json`; task kernel + CI remain the integrity boundary.
+
+## Goal dispatch
+
+`goal next --json` là scheduling hint canonical. Scout/Reviewer read-only không chiếm writer slot. Nhiều Worker READY chỉ được chạy song song khi mỗi worker có isolated Git worktree/branch; một root vẫn giữ `ACTIVE_TASK` single-writer. Worker `done` tự sync node result về Goal DAG.

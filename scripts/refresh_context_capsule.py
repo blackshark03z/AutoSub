@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +59,7 @@ def refresh(root: Path) -> int:
     state = read(ai / "STATE.md")
     task = read(ai / "ACTIVE_TASK.md")
     decisions = read(ai / "DECISIONS.md")
+    goal = read(ai / "GOAL.md") if (ai / "GOAL.md").exists() else ""
     old = read(ai / "CONTEXT_CAPSULE.md")
     try:
         revision = int(field(old, "Capsule Revision", "0")) + 1
@@ -89,6 +91,39 @@ def refresh(root: Path) -> int:
         breaker = "ACTIVE" if int(non_shipping) >= max(1, int(max_non_shipping)) else "INACTIVE"
     except ValueError:
         breaker = field(state, "Shipping Circuit Breaker", "INACTIVE")
+    goal_outcome = compact_section(section(goal, "Outcome", default="NONE", limit=240), 2) if goal else "NONE"
+    contract_hash = field(task, "Acceptance Contract SHA256", "NONE")
+    try:
+        contract = json.loads(field(task, "Acceptance Contract JSON", "{}"))
+        contract_commands = len(contract.get("commands", []) or []) if isinstance(contract, dict) else 0
+        contract_probes = len(contract.get("probe_hashes", {}) or {}) if isinstance(contract, dict) else 0
+    except json.JSONDecodeError:
+        contract_commands = 0
+        contract_probes = 0
+
+    scout_handoff = "## Scout Handoff\n\nNONE"
+    goal_id = field(task, 'Goal ID', 'NONE'); goal_node = field(task, 'Goal Node', 'NONE')
+    if goal_id not in {'NONE','UNSET',''} and goal:
+        try:
+            goal_state = json.loads((root / '.ai' / 'GOAL_STATE.json').read_text(encoding='utf-8'))
+            node = (goal_state.get('tasks') or {}).get(goal_node) or {}
+            chunks = []
+            for dep in node.get('depends_on', []) or []:
+                scout = (goal_state.get('tasks') or {}).get(dep) or {}
+                result = scout.get('result') or {}
+                if scout.get('agent_role') != 'SCOUT' or scout.get('status') != 'DONE' or not result:
+                    continue
+                summary = compact_section(str(result.get('summary') or ''), 3)
+                affected = ', '.join((result.get('affected_files') or [])[:8]) or 'NONE'
+                invariants = '; '.join((result.get('invariants') or [])[:4]) or 'NONE'
+                risks = '; '.join((result.get('risk_signals') or [])[:4]) or 'NONE'
+                entry = str(result.get('entry_point') or 'NONE')
+                confidence = str(result.get('confidence') or 'MEDIUM')
+                chunks.append(f"Scout {dep} ({confidence}): {summary}\n- Affected: {affected}\n- Invariants: {invariants}\n- Risk: {risks}\n- Entry: {entry}")
+            if chunks:
+                scout_handoff = "## Scout Handoff\n\n" + "\n\n".join(chunks)
+        except (OSError, json.JSONDecodeError):
+            pass
 
     base = f"""# Worker Packet
 
@@ -99,6 +134,7 @@ Capsule Revision: {revision}
 
 - ID: {task_id}/r{task_revision:03d}
 - Status: {field(task, 'Task Status')}
+- Goal: {field(task, 'Goal ID', 'NONE')} / node {field(task, 'Goal Node', 'NONE')}
 - Milestone / criterion: {field(task, 'Milestone ID')} / {field(task, 'Success Criterion')}
 - Risk / profile: {field(task, 'Risk Tier')} / {profile}
 - Negative path required: {negative}
@@ -107,6 +143,12 @@ Capsule Revision: {revision}
 ## Outcome
 
 {outcome}
+
+## Goal Context
+
+{goal_outcome if field(task, 'Goal ID', 'NONE') not in {'NONE','UNSET'} else 'NONE'}
+
+{scout_handoff}
 
 ## Scope
 
@@ -123,6 +165,8 @@ Capsule Revision: {revision}
 ## Verify
 
 {verification}
+- Acceptance contract: {contract_hash} (predeclared commands={contract_commands}, locked probes={contract_probes})
+- Review policy: {field(task, 'Review policy', 'auto')}
 
 ## Stop
 

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "uncertainty_mode": "raise_to_R2",
+  "uncertain_side_effect_patterns": [
+    "\\.(?:save|commit|delete|remove|publish|enqueue|persist)\\s*\\(",
+    "\\b(?:charge|refund|transfer|adjust_balance|sync_external)\\s*\\("
+  ],
+  "ignore_path_patterns": ["docs/**", "tests/**", "test/**", "**/*.md"]
+}

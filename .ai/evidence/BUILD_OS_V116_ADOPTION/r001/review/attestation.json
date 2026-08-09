@@ -1,0 +1,19 @@
+{
+  "issuer": "tool-autosub-guardian",
+  "key_fingerprint_sha256": "89c228416ca77e0bbc7dbd0ef596d1ea345720f3d7357a1dd3aafb999c8826fa",
+  "review_report_sha256": "7323a1cf43fe065674af07d919b9c9a35c061c2068c4cc45a30895681a7cc700",
+  "reviewed_at": "2026-08-09T03:56:31+00:00",
+  "reviewed_snapshot_sha256": "8b45b901c927a85655e583a02f1a38cb57b80bf98aa4308c2712be6e33b988d7",
+  "reviewer_process": {
+    "command_sha256": "63832a88c377189e31d9f2421f2485938343aef43fba6853c840998585a1b8c2",
+    "pid_observed": 17288
+  },
+  "reviewer_session_id": "REVIEWER-81bb6682b4a744b3",
+  "schema_version": 3,
+  "signature_alg": "ed25519-openssl",
+  "signature_b64": "6PeoWb6UEuFcdpsmEo5S0xHUoEkXsQaS4p5IOuIsxBnkJxTfWm7TGolbv1bUvda+R6bButbJmPgEyd8kjXgUBw==",
+  "task_id": "BUILD_OS_V116_ADOPTION",
+  "task_revision": 1,
+  "verdict": "PASS",
+  "writer_session_id": "BUILD_OS_V116_ADOPTION"
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Invariant validator for Senior AI Build OS v1.8."""
+"""Invariant validator for Senior AI Build OS v1.16."""
 from __future__ import annotations
 
 import argparse
@@ -16,7 +16,10 @@ from typing import Any
 from append_cost_ledger import FIELDS as LEDGER_FIELDS
 from evidence_support import parse_iso, verify_bundle
 from risk_support import RISK_ORDER, minimum_risk
-from runtime_support import application_file_fingerprint, application_snapshot, load_task_baseline, sha256_file, task_delta_files
+from runtime_support import application_file_fingerprint, application_snapshot, load_task_baseline, sha256_file, task_delta_files, validate_identifier, confined_child
+from assurance_support import verify_guardian_signature
+from state_hazard_support import LEVELS as STATE_LEVELS, parse_contract as parse_state_contract
+from policy_support import gate as policy_gate, render_quality_gates
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 LIVE = {"READY", "ACTIVE", "BLOCKED", "PAUSED"}
@@ -68,13 +71,38 @@ def review_fields(body: str) -> dict[str, str]:
     return {name: field(body, name) for name in names}
 
 
-def validate_review(bundle: Path, manifest: dict[str, Any], writer: str) -> list[str]:
+def validate_review(bundle: Path, manifest: dict[str, Any], writer: str, *, label: str = "High-risk") -> list[str]:
     errors: list[str] = []
     review = manifest.get("review")
-    if not review: return ["R3 evidence manifest missing review"]
+    if not review: return [f"{label} evidence manifest missing review"]
+    if review.get("trust") not in {"SIGNED_GUARDIAN"}:
+        errors.append(f"{label} review trust must be SIGNED_GUARDIAN")
     path = bundle / review.get("bundle_path", "")
-    if not path.is_file(): return ["R3 bundled review file missing"]
-    if sha256_file(path) != review.get("sha256"): errors.append("R3 bundled review hash mismatch")
+    if not path.is_file(): return [f"{label} bundled review file missing"]
+    if sha256_file(path) != review.get("sha256"): errors.append(f"{label} bundled review hash mismatch")
+    att_path = bundle / review.get("attestation_bundle_path", "")
+    if not att_path.is_file():
+        errors.append(f"{label} signed Guardian attestation bundle missing")
+    else:
+        if review.get("attestation_sha256") and sha256_file(att_path) != review.get("attestation_sha256"):
+            errors.append(f"{label} Guardian attestation hash mismatch")
+        try:
+            att=json.loads(read(att_path))
+            repo_root=bundle.parents[3]
+            errors.extend(verify_guardian_signature(repo_root,att))
+            if str(att.get('task_id')) != str(manifest.get('task_id')): errors.append('Guardian attestation Task ID mismatch')
+            if str(att.get('task_revision')) != str(manifest.get('task_revision')): errors.append('Guardian attestation task revision mismatch')
+            if str(att.get('reviewed_snapshot_sha256')) != str(manifest.get('verified_snapshot',{}).get('snapshot_sha256')): errors.append('Guardian attestation snapshot mismatch')
+            if str(att.get('writer_session_id')) != str(writer): errors.append('Guardian attestation writer identity mismatch')
+            signed_report_hash=str(att.get('review_report_sha256') or '').strip()
+            if int(att.get('schema_version') or 0) >= 3 and not signed_report_hash:
+                errors.append('Guardian attestation schema v3+ must bind review_report_sha256')
+            if signed_report_hash and signed_report_hash != sha256_file(path):
+                errors.append('Guardian attestation review report hash mismatch')
+            if str(att.get('reviewer_session_id')) == str(att.get('writer_session_id')): errors.append('Guardian reviewer session must differ from writer session')
+            if str(att.get('verdict')).upper() not in {'PASS','ACCEPTED'}: errors.append('Guardian attestation verdict must be PASS/ACCEPTED')
+        except (OSError,json.JSONDecodeError,IndexError) as exc:
+            errors.append(f'{label} Guardian attestation invalid: {exc}')
     values = review_fields(read(path))
     expected = {
         "Task ID": str(manifest.get("task_id")),
@@ -94,7 +122,7 @@ def validate_review(bundle: Path, manifest: dict[str, Any], writer: str) -> list
 
 def validate_runtime_mirrors(root: Path) -> list[str]:
     errors: list[str] = []
-    mapping = {"project.json": ".ai/PROJECT.md", "state.json": ".ai/STATE.md", "task.json": ".ai/ACTIVE_TASK.md"}
+    mapping = {"project.json": ".ai/PROJECT.md", "state.json": ".ai/STATE.md", "task.json": ".ai/ACTIVE_TASK.md", "goal.json": ".ai/GOAL_STATE.json"}
     runtime = root / ".ai" / "runtime"
     for json_name, source_name in mapping.items():
         path = runtime / json_name
@@ -194,7 +222,7 @@ def ci_commit_binding_errors(root: Path, base_ref: str | None = None) -> list[st
             continue
         hashes = manifest.get("task_delta_file_hashes")
         if not isinstance(hashes, dict) or not hashes:
-            errors.append(f"CI evidence manifest lacks v1.8 task_delta_file_hashes: {relative}")
+            errors.append(f"CI evidence manifest lacks v1.10 task_delta_file_hashes: {relative}")
             continue
         task_id = str(manifest.get("task_id", ""))
         try:
@@ -202,7 +230,7 @@ def ci_commit_binding_errors(root: Path, base_ref: str | None = None) -> list[st
         except (TypeError, ValueError):
             errors.append(f"CI evidence manifest has invalid task revision: {relative}")
             continue
-        history = root / ".ai" / "history" / task_id / f"r{revision:03d}.json"
+        history = confined_child(root, Path(".ai/history"), validate_identifier(task_id, "task ID"), "task ID") / f"r{revision:03d}.json"
         if not history.is_file():
             errors.append(f"CI evidence missing immutable history record for {task_id}/r{revision:03d}")
         else:
@@ -230,17 +258,75 @@ def validate(root: Path, strict: bool = False, *, ci: bool = False, ci_base_ref:
     errors: list[str] = []; warnings: list[str] = []
     required = [
         ".ai/PROJECT.md", ".ai/STATE.md", ".ai/ACTIVE_TASK.md", ".ai/CONTEXT_CAPSULE.md",
-        ".ai/COST_LEDGER.csv", "scripts/ai_os.py", "scripts/evidence_support.py", "scripts/runtime_support.py",
-        "scripts/state_runtime.py", "scripts/risk_support.py", "scripts/project_ci.py",
+        ".ai/GOAL.md", ".ai/GOAL_STATE.json", ".ai/COST_LEDGER.csv", "scripts/ai_os.py", "scripts/goal_support.py", "scripts/delegation_support.py", "scripts/evidence_support.py", "scripts/runtime_support.py",
+        "scripts/state_runtime.py", "scripts/state_hazard_support.py", "scripts/risk_support.py", "scripts/project_ci.py",
+        "config/gates.json", "config/codebase_health.json", "config/quality_policy.json", "config/assurance.json", "config/risk_semantics.json", "config/kernel_contract.json",
         "templates/TASK_LEAN.md", "templates/TASK_STANDARD.md", "templates/TASK_DEEP.md",
     ]
     for relative in required:
         if not (root / relative).is_file(): errors.append(f"Required file missing: {relative}")
     if errors: return errors, warnings
     project = read(root / ".ai" / "PROJECT.md"); state = read(root / ".ai" / "STATE.md"); task = read(root / ".ai" / "ACTIVE_TASK.md"); capsule = read(root / ".ai" / "CONTEXT_CAPSULE.md")
+    quality_path = root / ".ai" / "QUALITY_GATES.md"
+    if quality_path.is_file() and read(quality_path).strip() != render_quality_gates(root).strip():
+        errors.append("QUALITY_GATES.md drift: regenerate from config/gates.json")
+    for cfg_rel, required_keys in (("config/codebase_health.json", {"ratchets","hard_ratchets","architecture_policy"}), ("config/quality_policy.json", {"required_for_executable","recommended_for_executable","capability_waivers"}), ("config/assurance.json", {"review_trust","guardian","field_learning"}), ("config/risk_semantics.json", {"uncertainty_mode","uncertain_side_effect_patterns"}), ("config/kernel_contract.json", {"stable_core","tunable_policy","promotion_rule","release_discipline"})):
+        try:
+            cfg_obj=json.loads(read(root/cfg_rel))
+            missing=sorted(required_keys-set(cfg_obj))
+            if missing: errors.append(f"{cfg_rel} missing keys: {', '.join(missing)}")
+        except json.JSONDecodeError as exc:
+            errors.append(f"Invalid {cfg_rel}: {exc}")
+    try:
+        goal_state = json.loads(read(root / ".ai" / "GOAL_STATE.json"))
+    except json.JSONDecodeError as exc:
+        errors.append(f"Invalid GOAL_STATE.json: {exc}"); goal_state = {}
+    if goal_state:
+        goal_status = str(goal_state.get("status", "NONE"))
+        if goal_status not in {"NONE", "ACTIVE", "BLOCKED", "COMPLETED", "ABORTED"}: errors.append(f"Invalid Goal status: {goal_status}")
+        tasks = goal_state.get("tasks", {}) or {}
+        if not isinstance(tasks, dict): errors.append("Goal tasks must be an object")
+        else:
+            goal_id = str(goal_state.get("goal_id") or "")
+            if goal_id and goal_id.upper() != "NONE":
+                try: validate_identifier(goal_id, "goal ID")
+                except SystemExit as exc: errors.append(str(exc))
+            for node_id, node in tasks.items():
+                try: validate_identifier(str(node_id), "goal node ID")
+                except SystemExit as exc: errors.append(str(exc))
+                if node.get("status") not in {"PLANNED", "ACTIVE", "DONE", "BLOCKED", "DEFERRED"}: errors.append(f"Invalid Goal node status: {node_id}")
+                for dep in node.get("depends_on", []):
+                    try: validate_identifier(str(dep), "goal dependency ID")
+                    except SystemExit as exc: errors.append(str(exc))
+                    if dep not in tasks: errors.append(f"Goal node {node_id} depends on missing node {dep}")
+            active_nodes = [nid for nid, node in tasks.items() if node.get("status") == "ACTIVE"]
+            if len(active_nodes) > 1: warnings.append("Multiple ACTIVE Goal nodes require isolated worktrees; single-root ACTIVE_TASK remains single-writer")
     template_state = field(project, "Project ID") in {"UNSET", ""} and field(task, "Task Status") == "NOT_CREATED"
     status = field(task, "Task Status"); lease = field(task, "Lease Status"); risk = field(task, "Risk Tier"); profile = field(task, "Execution Profile")
     task_id = field(task, "Task ID"); revision = field(task, "Task Revision", "1")
+    task_id_valid = True
+    if task_id and task_id.upper() not in {"NONE", "UNSET", "TASK-XXX"}:
+        try: validate_identifier(task_id, "task ID")
+        except SystemExit as exc:
+            errors.append(str(exc)); task_id_valid = False
+    state_level = field(task, "State Hazard Level", "S0").upper()
+    state_contract: dict[str, Any] = {}
+    if state_level not in STATE_LEVELS:
+        errors.append(f"Invalid State Hazard Level: {state_level}")
+    else:
+        try:
+            state_contract = parse_state_contract(field(task, "State Contract JSON", "{}"))
+        except SystemExit as exc:
+            errors.append(str(exc))
+        if state_contract:
+            contract_level = str(state_contract.get("level") or "S0").upper()
+            if contract_level != state_level:
+                errors.append(f"State hazard/contract level mismatch: {state_level} vs {contract_level}")
+            task_contract_hash = field(task, "State Contract SHA256", "NONE")
+            embedded_hash = str(state_contract.get("contract_sha256") or "NONE")
+            # Template S0 intentionally carries `{}` + NONE. Live/complete tasks have a frozen hash.
+            if status in LIVE | {"COMPLETED"} and task_contract_hash != embedded_hash:
+                errors.append("State Contract SHA256 does not match embedded contract")
 
     if risk in PROFILE_BY_RISK and profile != PROFILE_BY_RISK[risk]: errors.append(f"Risk/profile mismatch: {risk} requires {PROFILE_BY_RISK[risk]}")
     if status == "ACTIVE" and (lease != "CLAIMED" or field(task, "Identity Verification") != "VERIFIED"): errors.append("ACTIVE task requires CLAIMED lease and VERIFIED identity")
@@ -250,12 +336,15 @@ def validate(root: Path, strict: bool = False, *, ci: bool = False, ci_base_ref:
         for heading in ["Single Outcome", "Permission Matrix", "Acceptance Criteria", "Verification Plan", "Execution Lease", "Completion"]:
             if section(task, heading) is None: errors.append(f"Live task missing section: {heading}")
         patterns = parse_patterns(field(task, "Modify")) + parse_patterns(field(task, "Create"))
-        delta = task_delta_files(root, task_id=task_id, task_revision=int(revision))
-        unauthorized = [path for path in delta if not allowed(path, patterns)]
-        if unauthorized: errors.append("Unauthorized task-delta paths modified: " + ", ".join(unauthorized))
+        if task_id_valid:
+            delta = task_delta_files(root, task_id=task_id, task_revision=int(revision))
+            unauthorized = [path for path in delta if not allowed(path, patterns)]
+            if unauthorized: errors.append("Unauthorized task-delta paths modified: " + ", ".join(unauthorized))
         baseline = load_task_baseline(root)
         if not baseline: errors.append("Live task missing task baseline")
         elif baseline.get("task_id") != task_id or int(baseline.get("task_revision", -1)) != int(revision): errors.append("Task baseline identity/revision mismatch")
+        elif baseline.get("state_contract_sha256", "NONE") != field(task, "State Contract SHA256", "NONE"):
+            errors.append("Frozen state contract hash differs from task-start baseline")
     floor, floor_reasons = minimum_risk(
         data_operation=field(task, "Data operation", "READ_ONLY"),
         artifact_operation=field(task, "Artifact operation", "CREATE_NEW_VERSION"),
@@ -303,22 +392,42 @@ def validate(root: Path, strict: bool = False, *, ci: bool = False, ci_base_ref:
             if manifest.get("accepted_outcome") != field(task, "Outcome"): errors.append("Evidence accepted outcome mismatch")
             verified = manifest.get("verified_snapshot", {}).get("snapshot_sha256")
             if verified != field(task, "Verified Snapshot SHA256"): errors.append("Task verified snapshot mismatch")
-            kinds = [item.get("kind") for item in manifest.get("checks", [])]
-            if "focused" not in kinds: errors.append("Completed task missing focused evidence")
+            manifest_state_level = str(manifest.get("state_hazard_level") or "S0").upper()
+            manifest_state_hash = str(manifest.get("state_contract_sha256") or "NONE")
+            if manifest_state_level != state_level: errors.append("Evidence State Hazard Level mismatch")
+            if manifest_state_hash != field(task, "State Contract SHA256", "NONE"): errors.append("Evidence state contract hash mismatch")
+            kinds = []
+            for item in manifest.get("checks", []):
+                kinds.extend(item.get("satisfies") or [item.get("kind")])
+            if state_level in STATE_LEVELS and STATE_LEVELS[state_level] >= 2 and "state_transition" not in kinds:
+                errors.append(f"{state_level} missing required state-transition evidence")
+            if state_level in STATE_LEVELS and STATE_LEVELS[state_level] >= 3 and "state_temporal" not in kinds:
+                errors.append(f"{state_level} missing required temporal-stability evidence")
+            if policy_gate(root, risk, "focused") == "required" and "focused" not in kinds: errors.append("Completed task missing focused evidence")
             negative_required = field(task, "Negative path required", "no").casefold() in {"yes", "true", "required"}
-            if (risk in {"R2", "R3"} or negative_required) and "negative" not in kinds: errors.append(f"{risk} missing required negative evidence")
-            if risk in {"R2", "R3"} and "integration" not in kinds: errors.append(f"{risk} missing integration evidence")
-            if risk == "R3" and "rollback" not in kinds: errors.append("R3 missing rollback rehearsal evidence")
-            if risk == "R3" and "full_suite" not in kinds: errors.append("R3 missing full-suite evidence")
+            np = policy_gate(root, risk, "negative")
+            if (np == "required" or (np == "when_failure_behavior" and negative_required)) and "negative" not in kinds: errors.append(f"{risk} missing required negative evidence")
+            if policy_gate(root, risk, "integration") == "required" and "integration" not in kinds: errors.append(f"{risk} missing integration evidence")
+            recovery_relevant = field(task, "Data operation", "READ_ONLY") in {"MUTATE_IN_PLACE", "DELETE"} or field(task, "Artifact operation", "READ_ONLY") in {"MUTATE_IN_PLACE", "OVERWRITE", "DELETE"}
+            rp = policy_gate(root, risk, "rollback")
+            if (rp == "required" or (rp == "when_recovery_relevant" and recovery_relevant)) and "rollback" not in kinds: errors.append(f"{risk} missing rollback/recovery evidence")
+            if policy_gate(root, risk, "full_suite") == "required" and "full_suite" not in kinds: errors.append(f"{risk} missing full-suite evidence")
             if risk in {"R1", "R2", "R3"} and any(item.get("inspection_status") == "AUTOMATED_EXIT_ONLY" for item in manifest.get("checks", [])):
                 errors.append(f"{risk} requires explicit output inspection for verification checks")
-            if risk == "R3": errors.extend(validate_review(bundle, manifest, field(task, "Session Label")))
-        history = root / ".ai" / "history" / task_id / f"r{int(revision):03d}.json"
-        if not history.is_file(): errors.append("Immutable history record missing")
+            if risk == "R3": errors.extend(validate_review(bundle, manifest, field(task, "Session Label"), label="R3"))
+            elif risk == "R2" and manifest.get("review"):
+                errors.extend(validate_review(bundle, manifest, field(task, "Session Label"), label="R2 triggered"))
+        history = confined_child(root, Path(".ai/history"), validate_identifier(task_id, "task ID"), "task ID") / f"r{int(revision):03d}.json" if task_id_valid else None
+        if history is None or not history.is_file(): errors.append("Immutable history record missing")
         elif manifest:
             try:
                 record = json.loads(read(history))
                 if record.get("evidence_manifest_sha256") != sha256_file(bundle / "manifest.json"): errors.append("History evidence hash mismatch")
+                if risk == "R2" and bool(record.get("review_required")):
+                    if not manifest.get("review"):
+                        errors.append("R2 triggered review required by immutable history but evidence review is missing")
+                    elif manifest.get("review", {}).get("trust") != "SIGNED_GUARDIAN":
+                        errors.append("R2 triggered review must use SIGNED_GUARDIAN trust")
             except json.JSONDecodeError: errors.append("History record invalid JSON")
         # When idle after close, untracked source edits are not allowed outside a new task.
         current = application_snapshot(root)
@@ -358,9 +467,7 @@ def validate(root: Path, strict: bool = False, *, ci: bool = False, ci_base_ref:
     for tx in (root / ".ai" / "transactions").glob("TX-*"):
         if not (tx / "commit.json").exists() and not (tx / "abort.json").exists() and not lifecycle_in_progress:
             errors.append(f"Incomplete lifecycle transaction: {tx.name}")
-    # A takeover must report dangling junctions/symlinks as repository reality,
-    # not crash while traversing a legacy worktree.  Do not follow links here.
-    pycache = [Path(dirpath) / name for dirpath, dirnames, _ in os.walk(root, followlinks=False) for name in dirnames if name == "__pycache__"]
+    pycache = list(root.rglob("__pycache__"))
     if pycache: warnings.append(f"Found {len(pycache)} __pycache__ directories; exclude from release package")
     if len(state.splitlines()) > 180: errors.append("STATE.md exceeds 180-line operating-state budget")
     if len(capsule.splitlines()) > 120: errors.append("CONTEXT_CAPSULE.md exceeds 120-line worker-packet budget")

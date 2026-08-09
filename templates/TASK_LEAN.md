@@ -16,10 +16,13 @@ Authorization Reference: NONE
 
 - Milestone ID: M-XXX
 - Success Criterion: SC-XXX
+- Goal ID: NONE
+- Goal Node: NONE
 - Delivery Delta: EXECUTABLE_CAPABILITY
 
 ## Risk and Execution Profile
 
+- Risk At Start: R0
 - Risk Tier: R0_OR_R1
 - Declared Risk Tier: auto
 - Risk Floor: R0
@@ -28,6 +31,13 @@ Authorization Reference: NONE
 - Execution Profile: LEAN
 - Human review required: no
 - Full suite required: no
+- Review policy: auto
+- Acceptance Contract SHA256: NONE
+- Acceptance Contract JSON: {}
+- State Hazard Level: S0
+- State Hazard Signals: NONE
+- State Contract SHA256: NONE
+- State Contract JSON: {}
 
 ## Continuity Fingerprint at Authorization
 
