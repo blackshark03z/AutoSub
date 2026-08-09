@@ -1,0 +1,32 @@
+{
+  "acceptance_contract_sha256": "948a48d3857c14ec5d8223d4ed68baf842fc3d8c99e8588c3d4f0cb5397420f3",
+  "actual_risk_floor": "R2",
+  "actual_risk_reasons": [
+    "R2:project R2 surface app/providers/asr/autosubs_provider.py",
+    "R2:project R2 surface tests/test_external_transcription_provider.py"
+  ],
+  "breaker_override": false,
+  "breaker_override_reason": "",
+  "completed_at": "2026-08-09T09:20:30+00:00",
+  "delivery_delta": "EXECUTABLE_CAPABILITY",
+  "evidence_bundle": ".ai/evidence/AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY/r001",
+  "evidence_manifest_sha256": "8b8fc84a87fc8f9ab0fe3def5ee1473ee450da326bf156f1916fed20c0eb38ae",
+  "first_pass_accepted": "no",
+  "goal_id": "AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY",
+  "goal_node": "FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY",
+  "outcome": "Canonical full Chinese media completed bounded AutoSubs source transcription, local Argos translation, and inspected MP4 export.",
+  "quality_reconciliation": {
+    "escaped_defect": "unknown",
+    "later_rework": "unknown",
+    "rollback_required": "no"
+  },
+  "review_reasons": [],
+  "review_required": false,
+  "risk_tier": "R2",
+  "schema_version": 1,
+  "state_contract_sha256": "3cfedf07ed8c7de26111378ea4d752cf5b52d69569bca6af3594ac4a7a70dc72",
+  "state_hazard_level": "S1",
+  "task_id": "AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY",
+  "task_revision": 1,
+  "verified_snapshot_sha256": "51c53f7b7ba885e7c61479bbd7ceac3f32a00453847ab758f33b1c709094f73e"
+}

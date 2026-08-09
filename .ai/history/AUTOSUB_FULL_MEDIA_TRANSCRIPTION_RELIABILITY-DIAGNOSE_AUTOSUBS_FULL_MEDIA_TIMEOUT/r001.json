@@ -1,0 +1,29 @@
+{
+  "acceptance_contract_sha256": "e7e102021bd02e38d102c202930ac44cc76dfb4eaee314e67c4e1e95fd3cb7fe",
+  "actual_risk_floor": "R0",
+  "actual_risk_reasons": [],
+  "breaker_override": true,
+  "breaker_override_reason": "Goal dependency path to accepted shipping node",
+  "completed_at": "2026-08-09T08:09:54+00:00",
+  "delivery_delta": "NO_DELTA",
+  "evidence_bundle": ".ai/evidence/AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-DIAGNOSE_AUTOSUBS_FULL_MEDIA_TIMEOUT/r001",
+  "evidence_manifest_sha256": "e482b1483ee42227c053e5eb1a5fc3803fe44d424a39ba5d1e92bc4823db1724",
+  "first_pass_accepted": "yes",
+  "goal_id": "AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY",
+  "goal_node": "DIAGNOSE_AUTOSUBS_FULL_MEDIA_TIMEOUT",
+  "outcome": "Classified the 900-second full-media failure as normal CPU-bound AutoSubs small-model scaling (root-cause class A), with direct and wrapped evidence; no product files changed.",
+  "quality_reconciliation": {
+    "escaped_defect": "unknown",
+    "later_rework": "unknown",
+    "rollback_required": "no"
+  },
+  "review_reasons": [],
+  "review_required": false,
+  "risk_tier": "R2",
+  "schema_version": 1,
+  "state_contract_sha256": "649f421b0594e3d9f5aeb12d9827e3eaf55ae555a89e0cf8ea3f12176f74252a",
+  "state_hazard_level": "S1",
+  "task_id": "AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-DIAGNOSE_AUTOSUBS_FULL_MEDIA_TIMEOUT",
+  "task_revision": 1,
+  "verified_snapshot_sha256": "1ae36ab8834161a73f7d75f03778b39ad1e8c9a1564803901cf293f659dede12"
+}

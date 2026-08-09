@@ -1,22 +1,24 @@
 # Active Goal
 
-Goal ID: AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP
+Goal ID: AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY
 Goal Status: COMPLETED
 Goal Type: product
 Risk Ceiling: R2
-Updated: 2026-08-09T05:50:02+00:00
+Updated: 2026-08-09T09:20:52+00:00
 
 ## Outcome
 
-Validate and ship the preserved AutoSubs external-transcription MVP using the already verified Git-object reconstruction, real Chinese-media execution, and frozen product acceptance.
+Make the retained 366.270998-second Chinese video complete source-only AutoSubs transcription through the normal AutoSub workflow with bounded, explainable reliability semantics, then complete existing local Argos translation and preview/export.
 
 ## Acceptance
 
-- [ ] Approved local external engine transcribes representative Chinese local-speech video into deterministic timestamped Chinese source cues.
-- [ ] Normalized external transcript enters source-track resolution without downstream semantic mutation.
-- [ ] Chinese-to-English translation is separate from the Chinese source track, and same-language behavior does not translate.
-- [ ] One-click local video plus target language reaches external transcription, source track, translation, existing layout/timeline, and preview/export with actionable runtime/model failures.
-- [ ] Accepted subtitle presentation/layout/timeline and source/translation regressions remain intact.
+- [ ] Use the canonical retained 366.270998-second Chinese video and prove normal full-media AutoSubs source-only transcription completes without fallback or timeout.
+- [ ] Return non-empty timestamped Chinese source cues; AutoSubs must not translate, diarize, or force-align.
+- [ ] Keep a bounded, explainable reliability policy that fails a hung provider clearly without removing timeout protection.
+- [ ] Preserve provider source text and timestamps through normalization and resolved source-track creation.
+- [ ] Continue the same real application workflow through the existing Argos 1.9.6 translate-zh_en-1_9 runtime to non-empty English translation cues.
+- [ ] Produce and inspect a real preview/export artifact with populated timeline/layout and source/translation provenance.
+- [ ] Pass relevant existing regressions plus focused coverage of the evidence-backed reliability fix.
 
 ## Acceptance Quality
 
@@ -24,16 +26,16 @@ Validate and ship the preserved AutoSubs external-transcription MVP using the al
 
 ## Goal Acceptance Contract
 
-- Status: FROZEN 49c8056e08cc
-- Criterion mappings: 5/5
+- Status: FROZEN 58be69b32e26
+- Criterion mappings: 7/7
 
 ## Non-Goals
 
-- No redesign, cloud ASR, noncommercial alignment assets, diarization, forced alignment, Faster-Whisper removal, or Vibe exploration.
+- Do not replace AutoSubs, alter Argos, add cloud ASR, tune recognition quality, alter OCR/layout/packaging, or use an arbitrary static timeout increase as a fix.
 
 ## Budget
 
-- Maximum tasks: 1
+- Maximum tasks: 2
 - Maximum parallel writers: 1
 - Maximum consecutive non-shipping tasks: 2
 - Maximum revisions per task before stop-loss: 2
@@ -46,7 +48,8 @@ Validate and ship the preserved AutoSubs external-transcription MVP using the al
 
 | Node | Status | Agent | Risk | Delivery Delta | Depends On | Outcome |
 |---|---|---|---|---|---|---|
-| SHIP_EXTERNAL_TRANSCRIPTION_MVP | DONE | WORKER | R2 | EXECUTABLE_CAPABILITY | - | Materialize the externally Git-verified AutoSubs MVP, run real Chinese-media source-only AutoSubs acceptance and the frozen 5/5 suite, then ship the intentional product delta without redesign. |
+| DIAGNOSE_AUTOSUBS_FULL_MEDIA_TIMEOUT | DONE | WORKER | auto | NO_DELTA | - | Diagnose the full-media AutoSubs timeout using the canonical source audio, bounded comparative direct probes, process/output instrumentation, and the normal-workflow evidence; classify the root cause without product changes. |
+| FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY | DONE | WORKER | R2 | EXECUTABLE_CAPABILITY | DIAGNOSE_AUTOSUBS_FULL_MEDIA_TIMEOUT | Implement only the smallest AutoSubs full-media reliability fix supported by Task 1, preserve source-only timestamp semantics, then prove the full normal workflow through existing Argos translation and preview/export. |
 
 ## Human Interrupt Policy
 

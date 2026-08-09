@@ -1,0 +1,250 @@
+{
+  "abort_reason": "CONTROL_PLANE_DELIVERY_DELTA_MISMATCH: all eight frozen runtime acceptance criteria and regression checks passed using the existing source unchanged, but the one frozen task is EXECUTABLE_CAPABILITY and v1.16 rejects both the empty product delta and the only legitimate docs-only delta. There is no supported delivery-delta amendment, max_tasks=1 prevents a replacement task, and Owner prohibited Build OS/policy edits. This is not a runtime/model/product failure.",
+  "acceptance": [
+    "Runtime config is discoverable through an existing supported mechanism.",
+    "Configured local Python/runtime launches successfully.",
+    "Configured package/model exists in the exact structure expected by offline_translation.",
+    "A real Chinese source cue produces non-empty English translation through the actual existing AutoSub translation service.",
+    "Source text remains unchanged and translated text is returned separately.",
+    "No fake provider or mock result is used.",
+    "Existing translation/source-track contract regressions pass.",
+    "Provisioned runtime/model remains machine-local unless a small durable config/example/manifest is intentionally required."
+  ],
+  "acceptance_attempts": 0,
+  "acceptance_quality_warnings": [],
+  "budget": {
+    "max_auto_scouts": 0,
+    "max_non_shipping_tasks": 2,
+    "max_parallel": 1,
+    "max_revisions_per_task": 2,
+    "max_tasks": 1,
+    "scope_growth_limit_percent": 30,
+    "scout_input_token_budget": 24000,
+    "scout_provider_cost_budget": 0.0,
+    "scout_summary_token_budget": 350,
+    "scout_wall_minutes_budget": 5.0
+  },
+  "codebase_health_baseline": {
+    "git_repo_mb": 1.539,
+    "hard_violations": [],
+    "largest_source_file_loc": 2652,
+    "largest_source_files": [
+      {
+        "loc": 2652,
+        "path": "app/services/source_caption_translation.py"
+      },
+      {
+        "loc": 2038,
+        "path": "tools/build_cp13a1_complete_payload_hotfix.py"
+      },
+      {
+        "loc": 1796,
+        "path": "tools/run_cp07_full_canonical_sample.py"
+      },
+      {
+        "loc": 1648,
+        "path": "tools/run_cp06k_tail_audio_alignment_and_residual_repair.py"
+      },
+      {
+        "loc": 1641,
+        "path": "scripts/ai_os.py"
+      },
+      {
+        "loc": 1503,
+        "path": "app/static/operator/app.js"
+      },
+      {
+        "loc": 1395,
+        "path": "tools/run_cp07_downstream_from_gemini_transform.py"
+      },
+      {
+        "loc": 1331,
+        "path": "tools/run_cp06j_source_zone_replacement_subtitle.py"
+      },
+      {
+        "loc": 1328,
+        "path": "app/services/production_golden_path.py"
+      },
+      {
+        "loc": 1300,
+        "path": "app/services/simple_workflow.py"
+      }
+    ],
+    "product_tree_mb": 761.988,
+    "runtime_dependencies": 8,
+    "schema_version": 2,
+    "scoped_source_file_locs": {},
+    "source_bytes": 2766397,
+    "source_files": 209,
+    "source_loc": 59865,
+    "tracked_files": 307,
+    "tracked_repo_mb": 2.797
+  },
+  "completed_non_shipping_streak": 0,
+  "created_at": "2026-08-09T07:09:26+00:00",
+  "decisions_required": [],
+  "discoveries": [],
+  "goal_acceptance_contract": {
+    "contract_sha256": "23abe399c347887a7845eb2b9b9ad5d3f4797dd7de3361ae158264645f05623b",
+    "frozen_at": "2026-08-09T07:09:39+00:00",
+    "mappings": [
+      {
+        "command": "",
+        "criterion": "Runtime config is discoverable through an existing supported mechanism.",
+        "criterion_index": 1,
+        "evaluator_type": "inspection",
+        "expected_output": "",
+        "inspection_requirement": "Inspect supported environment-variable config discovery and verify no repository-local secret/config is required.",
+        "probe_file": ""
+      },
+      {
+        "command": "",
+        "criterion": "Configured local Python/runtime launches successfully.",
+        "criterion_index": 2,
+        "evaluator_type": "inspection",
+        "expected_output": "",
+        "inspection_requirement": "Inspect configured local Python executable version and successful worker launch.",
+        "probe_file": ""
+      },
+      {
+        "command": "",
+        "criterion": "Configured package/model exists in the exact structure expected by offline_translation.",
+        "criterion_index": 3,
+        "evaluator_type": "inspection",
+        "expected_output": "",
+        "inspection_requirement": "Inspect configured packages root, translate-zh_en-1_9 model directory, model/model.bin, size, and hashes where practical.",
+        "probe_file": ""
+      },
+      {
+        "command": "",
+        "criterion": "A real Chinese source cue produces non-empty English translation through the actual existing AutoSub translation service.",
+        "criterion_index": 4,
+        "evaluator_type": "inspection",
+        "expected_output": "",
+        "inspection_requirement": "Run actual app.services.offline_translation.translate_source_captions with real Chinese cues and inspect non-empty English results.",
+        "probe_file": ""
+      },
+      {
+        "command": "",
+        "criterion": "Source text remains unchanged and translated text is returned separately.",
+        "criterion_index": 5,
+        "evaluator_type": "inspection",
+        "expected_output": "",
+        "inspection_requirement": "Compare original Chinese input strings to returned source_text fields and separate translated_text fields.",
+        "probe_file": ""
+      },
+      {
+        "command": "",
+        "criterion": "No fake provider or mock result is used.",
+        "criterion_index": 6,
+        "evaluator_type": "inspection",
+        "expected_output": "",
+        "inspection_requirement": "Inspect worker metadata/runtime and external_calls=0; no monkeypatch, mock, or alternate provider.",
+        "probe_file": ""
+      },
+      {
+        "command": "cmd /c python -m pytest -q tests/test_task40_source_caption_translation.py tests/test_external_transcription_vertical_slice.py tests/test_v1_scope_cut_gemini_rejection.py",
+        "criterion": "Existing translation/source-track contract regressions pass.",
+        "criterion_index": 7,
+        "evaluator_type": "command",
+        "expected_output": "passed",
+        "inspection_requirement": "",
+        "probe_file": ""
+      },
+      {
+        "command": "",
+        "criterion": "Provisioned runtime/model remains machine-local unless a small durable config/example/manifest is intentionally required.",
+        "criterion_index": 8,
+        "evaluator_type": "inspection",
+        "expected_output": "",
+        "inspection_requirement": "Inspect Git status and installed paths to verify runtime/model/config are machine-local and excluded from Git.",
+        "probe_file": ""
+      }
+    ],
+    "probe_hashes": {},
+    "revision": 1,
+    "schema_version": 1
+  },
+  "goal_id": "PROVISION_SUPPORTED_OFFLINE_TRANSLATION_RUNTIME",
+  "goal_type": "product",
+  "last_task_id": null,
+  "non_goals": [
+    "Do not invent a translation backend, use fake translations, change AutoSubs, benchmark ASR, work on OCR/layout, introduce cloud translation, train/package models, or refactor unrelated code."
+  ],
+  "outcome": "Provision and validate the translation runtime/model already supported by app.services.offline_translation so a real Chinese source cue produces a real English translation locally.",
+  "risk_ceiling": "R2",
+  "schema_version": 1,
+  "status": "ABORTED",
+  "tasks": {
+    "PROVISION_LOCAL_ARGOS_RUNTIME": {
+      "acceptance": [
+        "Use only documented Argos runtime/package contract and record provenance/license/hash/path outside Git.",
+        "Stop if an existing supported runtime cannot be provisioned without backend redesign."
+      ],
+      "acceptance_contract": {
+        "commands": [
+          "cmd /c python -m pytest -q tests/test_task40_source_caption_translation.py tests/test_external_transcription_vertical_slice.py tests/test_v1_scope_cut_gemini_rejection.py"
+        ],
+        "contract_sha256": "599b35736dd5338d42a3f5f36828b1e8ff3a91fc06371e61d7644d3ad048ad1a",
+        "effective_risk_at_freeze": "R2",
+        "expected_outputs": [
+          "passed"
+        ],
+        "frozen_at": "2026-08-09T07:09:39+00:00",
+        "probe_files": [],
+        "probe_hashes": {}
+      },
+      "agent_role": "WORKER",
+      "artifact_operation": "CREATE_NEW_VERSION",
+      "create": "docs/OFFLINE_TRANSLATION_RUNTIME.md",
+      "data_operation": "READ_ONLY",
+      "delegation": {
+        "action": "MAIN_WORKER",
+        "hard": true,
+        "model_class": "STRONG_WORKER",
+        "reasons": [
+          "delegation policy explicitly disables pre-scouting"
+        ],
+        "summary_token_budget": null
+      },
+      "delegation_policy": "main",
+      "delivery_delta": "EXECUTABLE_CAPABILITY",
+      "depends_on": [],
+      "initial_create_scope": "docs/OFFLINE_TRANSLATION_RUNTIME.md",
+      "initial_modify_scope": "docs/EXTERNAL_RUNTIME.md,docs/AUTOSUBS_ENGINE_CONTRACT.md,app/services/offline_translation.py,tools/offline_translation_worker.py,tests/test_task40_source_caption_translation.py",
+      "initial_scope_count": 11,
+      "initial_scope_footprint": [
+        "PATTERN:app/services/offline_translation.py",
+        "PATTERN:docs/AUTOSUBS_ENGINE_CONTRACT.md",
+        "PATTERN:docs/EXTERNAL_RUNTIME.md",
+        "PATTERN:docs/OFFLINE_TRANSLATION_RUNTIME.md",
+        "PATTERN:tests/test_task40_source_caption_translation.py",
+        "PATTERN:tools/offline_translation_worker.py",
+        "app/services/offline_translation.py",
+        "docs/AUTOSUBS_ENGINE_CONTRACT.md",
+        "docs/EXTERNAL_RUNTIME.md",
+        "tests/test_task40_source_caption_translation.py",
+        "tools/offline_translation_worker.py"
+      ],
+      "last_abort_reason": "task aborted with zero delta",
+      "modify": "docs/EXTERNAL_RUNTIME.md,docs/AUTOSUBS_ENGINE_CONTRACT.md,app/services/offline_translation.py,tools/offline_translation_worker.py,tests/test_task40_source_caption_translation.py",
+      "negative_required": false,
+      "node_id": "PROVISION_LOCAL_ARGOS_RUNTIME",
+      "outcome": "Provision only the existing Argos Translate 1.9.6 and translate-zh_en-1_9 local runtime contract on D:, configure it via an existing supported mechanism, and prove real Chinese-to-English translation through AutoSub service without product redesign.",
+      "replaces": [],
+      "result": null,
+      "review_policy": "none",
+      "risk": "R2",
+      "state_authority": "",
+      "state_dependencies": [],
+      "state_hazard": "S1",
+      "state_invariants": [],
+      "state_signals": [],
+      "state_transitions": [],
+      "status": "PLANNED",
+      "success_criterion": "Existing service discovers the local config and produces non-empty English translations from real Chinese source while retaining source fields unchanged.",
+      "task_id": "PROVISION_SUPPORTED_OFFLINE_TRANSLATION_RUNTIME-PROVISION_LOCAL_ARGOS_RUNTIME"
+    }
+  },
+  "updated_at": "2026-08-09T07:19:35+00:00"
+}

@@ -5,6 +5,7 @@ import math
 import os
 import re
 import subprocess
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,8 @@ from app.providers.asr.base import ASRProvider, ASRSegment
 AUTOSUBS_VERSION = "3.8.0"
 AUTOSUBS_MODEL = "small"
 AUTOSUBS_TIMEOUT_SECONDS = 900
+AUTOSUBS_SECONDS_PER_AUDIO_SECOND = 3.5
+AUTOSUBS_MAX_TIMEOUT_SECONDS = 1800
 
 
 class AutoSubsRuntimeError(RuntimeError):
@@ -122,19 +125,22 @@ class AutoSubsASRProvider(ASRProvider):
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                timeout=self.config.timeout_seconds,
+                timeout=self._transcription_timeout_seconds(audio),
                 env=self._environment(),
                 cwd=str(self.config.binary_path.parent),
             )
         except subprocess.TimeoutExpired as exc:
-            raise AutoSubsRuntimeError("AutoSubs transcription timed out; no fallback engine was used.") from exc
+            raise AutoSubsRuntimeError(
+                "AutoSubs transcription timed out within its bounded duration-aware policy; no fallback engine was used."
+            ) from exc
         except OSError as exc:
             raise AutoSubsRuntimeError("AutoSubs could not be started; verify the bundled executable and FFmpeg dependency.") from exc
         if completed.returncode != 0:
             detail = _safe_detail(completed.stderr or completed.stdout)
             raise AutoSubsRuntimeError(f"AutoSubs transcription failed (exit {completed.returncode}). {detail}")
         payload = _parse_transcript(completed.stdout)
-        segments = _normalize_segments(payload)
+        source_segments, source_field = _source_segments(payload)
+        segments = _normalize_segments(source_segments)
         if not segments:
             raise AutoSubsRuntimeError("AutoSubs returned no usable timestamped source cues.")
         self.last_metadata = {
@@ -146,9 +152,21 @@ class AutoSubsASRProvider(ASRProvider):
             "language": payload.get("language") or language or "unknown",
             "task": "transcribe",
             "fallback_attempts": 0,
-            "raw_segment_count": len(payload["segments"]),
+            "raw_segment_count": len(source_segments),
+            "source_segment_field": source_field,
         }
         return segments
+
+    def _transcription_timeout_seconds(self, audio_path: Path) -> int:
+        """Keep a bounded wall-clock timeout while allowing CPU inference to scale with WAV duration."""
+        duration = _wav_duration_seconds(audio_path)
+        if duration is None:
+            return self.config.timeout_seconds
+        duration_allowance = math.ceil(duration * AUTOSUBS_SECONDS_PER_AUDIO_SECOND)
+        return min(
+            AUTOSUBS_MAX_TIMEOUT_SECONDS,
+            max(self.config.timeout_seconds, duration_allowance),
+        )
 
     def _environment(self) -> dict[str, str]:
         return {
@@ -160,6 +178,17 @@ class AutoSubsASRProvider(ASRProvider):
 def _command_language(language: str | None) -> str:
     normalized = str(language or "").strip().lower()
     return "auto" if not normalized or normalized == "auto" else normalized
+
+
+def _wav_duration_seconds(path: Path) -> float | None:
+    try:
+        with wave.open(str(path), "rb") as handle:
+            frame_rate = handle.getframerate()
+            if frame_rate <= 0:
+                return None
+            return handle.getnframes() / frame_rate
+    except (OSError, EOFError, wave.Error):
+        return None
 
 
 def _reports_exact_version(value: str) -> bool:
@@ -176,9 +205,23 @@ def _parse_transcript(stdout: str) -> dict[str, Any]:
     return payload
 
 
-def _normalize_segments(payload: dict[str, Any]) -> list[ASRSegment]:
+def _source_segments(payload: dict[str, Any]) -> tuple[list[Any], str]:
+    """Choose AutoSubs' unformatted source transcript when it is available.
+
+    ``segments`` is an output-oriented, resegmented view.  AutoSubs v3.8.0
+    also emits ``originalSegments`` for the source transcript; retaining that
+    field avoids presentation-layer zero-duration cues while preserving the
+    engine's source text and timestamps verbatim.
+    """
+    original = payload.get("originalSegments")
+    if isinstance(original, list) and original:
+        return original, "originalSegments"
+    return payload["segments"], "segments"
+
+
+def _normalize_segments(raw_segments: list[Any]) -> list[ASRSegment]:
     normalized: list[ASRSegment] = []
-    for index, raw in enumerate(payload["segments"], start=1):
+    for index, raw in enumerate(raw_segments, start=1):
         if not isinstance(raw, dict):
             raise AutoSubsRuntimeError(f"AutoSubs segment {index} is not an object.")
         start = _seconds(raw.get("start"), index, "start")

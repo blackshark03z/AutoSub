@@ -1,29 +1,29 @@
 # Current State
 
 Updated: 2026-08-09
-State Revision: 22
+State Revision: 29
 
 ## Continuity Fingerprint
 
 - Project ID: tool-autosub
 - Branch: main
-- HEAD: 62602ccc6127ae0b730127a621bd20033969feed
+- HEAD: 8a594d16345112ed35a2a60194869f526a839989
 - Worktree: DIRTY
 - Active Task ID: NONE
-- Last Known Good Commit: 62602ccc6127ae0b730127a621bd20033969feed
+- Last Known Good Commit: 8a594d16345112ed35a2a60194869f526a839989
 - Runtime/Data Fingerprint: NOT_CAPTURED
 
 ## Current Product Position
 
 - Current milestone: M-001
-- Success criterion: Canonical delta matches the externally reconstructed 11 tracked Git blobs and five SHA-verified untracked files; real source-only Chinese smoke and frozen 5/5 acceptance pass.
-- Last demonstrated behavior/capability: AutoSubs v3.8.0 small now provides source-only Chinese timestamped cues through the external provider and source-track resolution, with target-language translation remaining separate.
-- Demo evidence: .ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001/EVIDENCE_INDEX.md
+- Success criterion: The canonical full media completes deterministic bounded source-only AutoSubs transcription through the normal workflow and reaches real Argos translation plus inspected preview/export.
+- Last demonstrated behavior/capability: Canonical full Chinese media completed bounded AutoSubs source transcription, local Argos translation, and inspected MP4 export.
+- Demo evidence: .ai/evidence/AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY/r001/EVIDENCE_INDEX.md
 - Current user-visible limitation: MVP outcome not yet demonstrated
 
 ## Delivery Pulse
 
-- Last completed Task ID: AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP
+- Last completed Task ID: AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY
 - Last Delivery Delta: EXECUTABLE_CAPABILITY
 - Consecutive Non-Shipping Tasks: 0
 - Shipping Circuit Breaker: INACTIVE
@@ -40,11 +40,11 @@ State Revision: 22
 
 ## Completed and Verified
 
-- REAL_MEDIA_SOURCE_ASR_QUALITY_BASELINE/r001: REAL_MEDIA_SOURCE_ASR_QUALITY_BASELINE_BLOCKED_NO_AUTHORITATIVE_REFERENCE | evidence: `.ai/evidence/REAL_MEDIA_SOURCE_ASR_QUALITY_BASELINE/r001`
-- BUILD_OS_V116_ADOPTION/r001: Senior AI Build OS v1.16 adopted and validated with preserved Tool AutoSub project continuity | evidence: `.ai/evidence/BUILD_OS_V116_ADOPTION/r001`
 - AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-EXTERNAL_TRANSCRIPTION_PROVIDER/r001: AutoSub has a replaceable AutoSubs v3.8.0 subprocess provider that verifies the real engine version and cached small model, normalizes timestamped source cues, and fails safely without translation or fallback. | evidence: `.ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-EXTERNAL_TRANSCRIPTION_PROVIDER/r001`
 - AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-ONE_CLICK_EXTERNAL_TRANSCRIPTION_SLICE/r001: One-click Simple Workflow now defaults to AutoSubs local external transcription, preserves the source track, and creates a separate translation track only when languages differ. | evidence: `.ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-ONE_CLICK_EXTERNAL_TRANSCRIPTION_SLICE/r001`
 - AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001: AutoSubs v3.8.0 small now provides source-only Chinese timestamped cues through the external provider and source-track resolution, with target-language translation remaining separate. | evidence: `.ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001`
+- AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-DIAGNOSE_AUTOSUBS_FULL_MEDIA_TIMEOUT/r001: Classified the 900-second full-media failure as normal CPU-bound AutoSubs small-model scaling (root-cause class A), with direct and wrapped evidence; no product files changed. | evidence: `.ai/evidence/AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-DIAGNOSE_AUTOSUBS_FULL_MEDIA_TIMEOUT/r001`
+- AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY/r001: Canonical full Chinese media completed bounded AutoSubs source transcription, local Argos translation, and inspected MP4 export. | evidence: `.ai/evidence/AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY/r001`
 
 ## Current Blocker
 
@@ -60,9 +60,9 @@ State Revision: 22
 
 ## Verification State
 
-- AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001 accepted.
-- Snapshot: `556a51c52ccf67c63fa3f8d12c56f0398b2561393de7cd4c8bceb83198b35bf3`.
-- Evidence: `.ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001`.
+- AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY/r001 accepted.
+- Snapshot: `51c53f7b7ba885e7c61479bbd7ceac3f32a00453847ab758f33b1c709094f73e`.
+- Evidence: `.ai/evidence/AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY/r001`.
 
 ## Process State
 
@@ -74,7 +74,7 @@ State Revision: 22
 ## Cost Efficiency State
 
 - Expected cost range: small until evidence justifies escalation
-- Actual cost signal: ledger:AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP:1
+- Actual cost signal: ledger:AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY:1
 - Marginal value status: ACCEPTED
 - Repeated operations: NONE
 - Economic stop-loss: INACTIVE

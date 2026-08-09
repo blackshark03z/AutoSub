@@ -1,5 +1,5 @@
 {
-  "git_repo_mb": 1.496,
+  "git_repo_mb": 1.606,
   "hard_violations": [],
   "largest_source_file_loc": 2652,
   "largest_source_files": [
@@ -44,13 +44,13 @@
       "path": "app/services/simple_workflow.py"
     }
   ],
-  "product_tree_mb": 761.94,
+  "product_tree_mb": 762.126,
   "runtime_dependencies": 8,
   "schema_version": 2,
   "scoped_source_file_locs": {},
-  "source_bytes": 2766397,
+  "source_bytes": 2771048,
   "source_files": 209,
-  "source_loc": 59865,
-  "tracked_files": 302,
-  "tracked_repo_mb": 2.773
+  "source_loc": 59987,
+  "tracked_files": 307,
+  "tracked_repo_mb": 2.802
 }

@@ -1,0 +1,259 @@
+{
+  "acceptance": [
+    "Use the canonical retained 366.270998-second Chinese video and prove normal full-media AutoSubs source-only transcription completes without fallback or timeout.",
+    "Return non-empty timestamped Chinese source cues; AutoSubs must not translate, diarize, or force-align.",
+    "Keep a bounded, explainable reliability policy that fails a hung provider clearly without removing timeout protection.",
+    "Preserve provider source text and timestamps through normalization and resolved source-track creation.",
+    "Continue the same real application workflow through the existing Argos 1.9.6 translate-zh_en-1_9 runtime to non-empty English translation cues.",
+    "Produce and inspect a real preview/export artifact with populated timeline/layout and source/translation provenance.",
+    "Pass relevant existing regressions plus focused coverage of the evidence-backed reliability fix."
+  ],
+  "acceptance_attempts": 1,
+  "accepted_at": "2026-08-09T09:20:52+00:00",
+  "checks": [
+    {
+      "criterion": "Use the canonical retained 366.270998-second Chinese video and prove normal full-media AutoSubs source-only transcription completes without fallback or timeout.",
+      "criterion_index": 1,
+      "inspected_by": "ffprobe plus visually inspected 10-second rendered MP4 frame",
+      "kind": "declared_inspection",
+      "requirement": "Verify canonical retained media SHA-256, run the normal workflow after the evidence-backed fix, and inspect successful full-media AutoSubs metadata with no timeout or fallback.",
+      "result": "PASS"
+    },
+    {
+      "criterion": "Return non-empty timestamped Chinese source cues; AutoSubs must not translate, diarize, or force-align.",
+      "criterion_index": 2,
+      "inspected_by": "ffprobe plus visually inspected 10-second rendered MP4 frame",
+      "kind": "declared_inspection",
+      "requirement": "Inspect non-empty timestamped Chinese source cues, detected source language, and effective source-only command with no translation, diarization, or forced alignment.",
+      "result": "PASS"
+    },
+    {
+      "criterion": "Keep a bounded, explainable reliability policy that fails a hung provider clearly without removing timeout protection.",
+      "criterion_index": 3,
+      "inspected_by": "ffprobe plus visually inspected 10-second rendered MP4 frame",
+      "kind": "declared_inspection",
+      "requirement": "Inspect evidence-backed bounded timeout/inactivity policy and focused tests proving a hung or stalled provider still fails clearly.",
+      "result": "PASS"
+    },
+    {
+      "criterion": "Preserve provider source text and timestamps through normalization and resolved source-track creation.",
+      "criterion_index": 4,
+      "inspected_by": "ffprobe plus visually inspected 10-second rendered MP4 frame",
+      "kind": "declared_inspection",
+      "requirement": "Compare provider cues, normalized source cues, and resolved source-track fields to verify source text semantics and timestamps are preserved.",
+      "result": "PASS"
+    },
+    {
+      "criterion": "Continue the same real application workflow through the existing Argos 1.9.6 translate-zh_en-1_9 runtime to non-empty English translation cues.",
+      "criterion_index": 5,
+      "inspected_by": "ffprobe plus visually inspected 10-second rendered MP4 frame",
+      "kind": "declared_inspection",
+      "requirement": "Inspect the same real workflow invocation of machine-local Argos 1.9.6 translate-zh_en-1_9 and representative non-empty English translation cues.",
+      "result": "PASS"
+    },
+    {
+      "criterion": "Produce and inspect a real preview/export artifact with populated timeline/layout and source/translation provenance.",
+      "criterion_index": 6,
+      "inspected_by": "ffprobe plus visually inspected 10-second rendered MP4 frame",
+      "kind": "declared_inspection",
+      "requirement": "Inspect the real preview/export artifact for existence, non-trivial size, populated timeline/layout, English presentation, and source/translation provenance.",
+      "result": "PASS"
+    },
+    {
+      "command": "python -m pytest -q tests/test_external_transcription_provider.py tests/test_external_transcription_vertical_slice.py tests/test_task40_source_caption_translation.py tests/test_subtitle_presentation_timeline.py tests/test_task36_one_button_flow.py tests/test_v1_scope_cut_gemini_rejection.py",
+      "completed_at": "2026-08-09T09:20:52+00:00",
+      "criterion": "Pass relevant existing regressions plus focused coverage of the evidence-backed reliability fix.",
+      "criterion_index": 7,
+      "execution_mode": "shell",
+      "exit_code": 0,
+      "expected_output": "passed",
+      "expected_output_matched": true,
+      "id": "EV-001",
+      "inspected_by": "ffprobe plus visually inspected 10-second rendered MP4 frame",
+      "inspection_status": "AGENT_INSPECTED",
+      "kind": "goal_A7",
+      "result": "PASS",
+      "started_at": "2026-08-09T09:20:46+00:00",
+      "stderr": {
+        "original_bytes": 0,
+        "path": "EV-001-goal_A7.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stored_bytes": 0,
+        "truncated": false
+      },
+      "stdout": {
+        "original_bytes": 110,
+        "path": "EV-001-goal_A7.stdout.txt",
+        "sha256": "fa6bffcf58c65403b782652dc876d2d22e5b126c36c95f7a7e672023b75292ff",
+        "stored_bytes": 110,
+        "truncated": false
+      }
+    }
+  ],
+  "codebase_health": {
+    "baseline": {
+      "git_repo_mb": 1.575,
+      "hard_violations": [],
+      "largest_source_file_loc": 2652,
+      "largest_source_files": [
+        {
+          "loc": 2652,
+          "path": "app/services/source_caption_translation.py"
+        },
+        {
+          "loc": 2038,
+          "path": "tools/build_cp13a1_complete_payload_hotfix.py"
+        },
+        {
+          "loc": 1796,
+          "path": "tools/run_cp07_full_canonical_sample.py"
+        },
+        {
+          "loc": 1648,
+          "path": "tools/run_cp06k_tail_audio_alignment_and_residual_repair.py"
+        },
+        {
+          "loc": 1641,
+          "path": "scripts/ai_os.py"
+        },
+        {
+          "loc": 1503,
+          "path": "app/static/operator/app.js"
+        },
+        {
+          "loc": 1395,
+          "path": "tools/run_cp07_downstream_from_gemini_transform.py"
+        },
+        {
+          "loc": 1331,
+          "path": "tools/run_cp06j_source_zone_replacement_subtitle.py"
+        },
+        {
+          "loc": 1328,
+          "path": "app/services/production_golden_path.py"
+        },
+        {
+          "loc": 1300,
+          "path": "app/services/simple_workflow.py"
+        }
+      ],
+      "product_tree_mb": 762.079,
+      "runtime_dependencies": 8,
+      "schema_version": 2,
+      "scoped_source_file_locs": {},
+      "source_bytes": 2766397,
+      "source_files": 209,
+      "source_loc": 59865,
+      "tracked_files": 307,
+      "tracked_repo_mb": 2.797
+    },
+    "current": {
+      "git_repo_mb": 1.606,
+      "hard_violations": [],
+      "largest_source_file_loc": 2652,
+      "largest_source_files": [
+        {
+          "loc": 2652,
+          "path": "app/services/source_caption_translation.py"
+        },
+        {
+          "loc": 2038,
+          "path": "tools/build_cp13a1_complete_payload_hotfix.py"
+        },
+        {
+          "loc": 1796,
+          "path": "tools/run_cp07_full_canonical_sample.py"
+        },
+        {
+          "loc": 1648,
+          "path": "tools/run_cp06k_tail_audio_alignment_and_residual_repair.py"
+        },
+        {
+          "loc": 1641,
+          "path": "scripts/ai_os.py"
+        },
+        {
+          "loc": 1503,
+          "path": "app/static/operator/app.js"
+        },
+        {
+          "loc": 1395,
+          "path": "tools/run_cp07_downstream_from_gemini_transform.py"
+        },
+        {
+          "loc": 1331,
+          "path": "tools/run_cp06j_source_zone_replacement_subtitle.py"
+        },
+        {
+          "loc": 1328,
+          "path": "app/services/production_golden_path.py"
+        },
+        {
+          "loc": 1300,
+          "path": "app/services/simple_workflow.py"
+        }
+      ],
+      "product_tree_mb": 762.126,
+      "runtime_dependencies": 8,
+      "schema_version": 2,
+      "scoped_source_file_locs": {},
+      "source_bytes": 2771048,
+      "source_files": 209,
+      "source_loc": 59987,
+      "tracked_files": 307,
+      "tracked_repo_mb": 2.802
+    },
+    "warnings": []
+  },
+  "final_verdict": "PASS",
+  "goal_acceptance_contract_sha256": "58be69b32e26c47f2f108965e857584638b13e7d25a253b4536f4213989e7dd3",
+  "goal_first_pass_accepted": true,
+  "goal_id": "AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY",
+  "inspected_by": "ffprobe plus visually inspected 10-second rendered MP4 frame",
+  "known_limits": "Retained media is a product smoke fixture with no authoritative transcript; no CER was claimed.",
+  "metrics": {
+    "accepted_task_revisions": 2,
+    "coordination_input_tokens": null,
+    "cost_telemetry_rows": 1,
+    "delegation_auto_scout_nodes": 0,
+    "delegation_input_tokens": null,
+    "delegation_output_tokens": null,
+    "delegation_provider_cost": null,
+    "delegation_read_only_nodes": 0,
+    "delegation_scout_nodes": 0,
+    "delegation_wall_minutes": null,
+    "estimated_ai_cost": 0.0,
+    "goal_cycle_minutes": 88.6,
+    "human_review_minutes": 0.0,
+    "human_time_telemetry_rows": 1,
+    "human_wait_minutes": 0.0,
+    "implementation_input_tokens": null,
+    "output_tokens": null,
+    "provider_cost": 0.0,
+    "token_telemetry_rows": 0
+  },
+  "outcome": "Make the retained 366.270998-second Chinese video complete source-only AutoSubs transcription through the normal AutoSub workflow with bounded, explainable reliability semantics, then complete existing local Argos translation and preview/export.",
+  "schema_version": 4,
+  "task_results": {
+    "DIAGNOSE_AUTOSUBS_FULL_MEDIA_TIMEOUT": {
+      "completed_at": "2026-08-09T08:09:55+00:00",
+      "delivery_delta": "NO_DELTA",
+      "evidence_bundle": ".ai/evidence/AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-DIAGNOSE_AUTOSUBS_FULL_MEDIA_TIMEOUT/r001",
+      "first_pass_accepted": "yes",
+      "outcome": "Classified the 900-second full-media failure as normal CPU-bound AutoSubs small-model scaling (root-cause class A), with direct and wrapped evidence; no product files changed.",
+      "risk_tier": "R2",
+      "task_id": "AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-DIAGNOSE_AUTOSUBS_FULL_MEDIA_TIMEOUT",
+      "task_revision": 1
+    },
+    "FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY": {
+      "completed_at": "2026-08-09T09:20:31+00:00",
+      "delivery_delta": "EXECUTABLE_CAPABILITY",
+      "evidence_bundle": ".ai/evidence/AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY/r001",
+      "first_pass_accepted": "no",
+      "outcome": "Canonical full Chinese media completed bounded AutoSubs source transcription, local Argos translation, and inspected MP4 export.",
+      "risk_tier": "R2",
+      "task_id": "AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY",
+      "task_revision": 1
+    }
+  }
+}

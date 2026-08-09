@@ -1,0 +1,47 @@
+{
+  "attention_required": [
+    {
+      "at": "2026-08-09T07:53:07+00:00",
+      "confidence": 1.0,
+      "decision": "Owner authorized a two-task R2 reliability Goal: bounded diagnosis first, then only an evidence-backed minimal fix; no arbitrary timeout increase.",
+      "owner_impact": "HIGH",
+      "reason": "Attached Owner directive e91e4ae4-92d0-41bb-85be-4d5507b11f15",
+      "reversibility": "LOW",
+      "type": "OWNER_DECISION"
+    },
+    {
+      "at": "2026-08-09T07:53:08+00:00",
+      "confidence": 1.0,
+      "decision": "MVP lean governance permits A1 and review_policy=none for the bounded R2 implementation task when predeclared; no A2 claim.",
+      "owner_impact": "MEDIUM",
+      "reason": "Attached Owner directive e91e4ae4-92d0-41bb-85be-4d5507b11f15",
+      "reversibility": "LOW",
+      "type": "POLICY_EXCEPTION"
+    }
+  ],
+  "counts": {
+    "OWNER_DECISION": 1,
+    "POLICY_EXCEPTION": 1
+  },
+  "recent": [
+    {
+      "at": "2026-08-09T07:53:07+00:00",
+      "confidence": 1.0,
+      "decision": "Owner authorized a two-task R2 reliability Goal: bounded diagnosis first, then only an evidence-backed minimal fix; no arbitrary timeout increase.",
+      "owner_impact": "HIGH",
+      "reason": "Attached Owner directive e91e4ae4-92d0-41bb-85be-4d5507b11f15",
+      "reversibility": "LOW",
+      "type": "OWNER_DECISION"
+    },
+    {
+      "at": "2026-08-09T07:53:08+00:00",
+      "confidence": 1.0,
+      "decision": "MVP lean governance permits A1 and review_policy=none for the bounded R2 implementation task when predeclared; no A2 claim.",
+      "owner_impact": "MEDIUM",
+      "reason": "Attached Owner directive e91e4ae4-92d0-41bb-85be-4d5507b11f15",
+      "reversibility": "LOW",
+      "type": "POLICY_EXCEPTION"
+    }
+  ],
+  "records": 2
+}

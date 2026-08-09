@@ -2,22 +2,22 @@
 
 Task Status: COMPLETED
 Task Mode: STANDARD
-Task ID: AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP
+Task ID: AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY
 Task Revision: 1
 Created: 2026-08-09
 Owner Authorization: APPROVED
-Authorization Reference: OWNER DECISION FINAL RECOVERY/SHIP PATH C:\Users\ADMIN\.codex\attachments\d8c7582a-ece9-4fd9-a308-393080d87cf0\pasted-text.txt
+Authorization Reference: Owner directive e91e4ae4-92d0-41bb-85be-4d5507b11f15; Task 1 class A diagnosis
 
 ## Single Outcome
 
-Materialize the externally Git-verified AutoSubs MVP, run real Chinese-media source-only AutoSubs acceptance and the frozen 5/5 suite, then ship the intentional product delta without redesign.
+Implement only the smallest AutoSubs full-media reliability fix supported by Task 1, preserve source-only timestamp semantics, then prove the full normal workflow through existing Argos translation and preview/export.
 
 ## Product Link
 
 - Milestone ID: M-001
-- Success Criterion: Canonical delta matches the externally reconstructed 11 tracked Git blobs and five SHA-verified untracked files; real source-only Chinese smoke and frozen 5/5 acceptance pass.
-- Goal ID: AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP
-- Goal Node: SHIP_EXTERNAL_TRANSCRIPTION_MVP
+- Success Criterion: The canonical full media completes deterministic bounded source-only AutoSubs transcription through the normal workflow and reaches real Argos translation plus inspected preview/export.
+- Goal ID: AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY
+- Goal Node: FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY
 - Delivery Delta: EXECUTABLE_CAPABILITY
 - Demonstrable Result: runtime/output evidence listed in task evidence index
 - Unlocks: next ready Goal node
@@ -29,42 +29,42 @@ Materialize the externally Git-verified AutoSubs MVP, run real Chinese-media sou
 - Risk Tier: R2
 - Declared Risk Tier: R2
 - Risk Floor: R2
-- Risk Floor Reason: R2:shared/API/data/security/background surface
+- Risk Floor Reason: R2:persistent data version creation
 - Negative path required: no
 - Execution Profile: STANDARD
 - Human review required: trigger-based
 - Specialist reviewer trigger: UNSET
 - Full suite required: only-if-gate-requires
 - Review policy: none
-- Acceptance Contract SHA256: 3beb89b353f6f5ffa0b4496242f38a3b3da0ace8db1c789bb4c14ceb7f61d5ae
-- Acceptance Contract JSON: {"commands":["cmd /c python -m pytest -q tests/test_external_transcription_provider.py tests/test_external_transcription_vertical_slice.py tests/test_task35_offline_transcription.py tests/test_task40_source_caption_translation.py tests/test_cp10b_simple_workflow.py"],"expected_outputs":["passed"],"probe_files":[],"probe_hashes":{},"effective_risk_at_freeze":"R2","frozen_at":"2026-08-09T05:30:56+00:00","contract_sha256":"3beb89b353f6f5ffa0b4496242f38a3b3da0ace8db1c789bb4c14ceb7f61d5ae"}
-- State Hazard Level: S0
-- State Hazard Signals: NONE
-- State Contract SHA256: 11ed7156957cf0604a027304d0b6da0f59313d984d1506f34d4fe3ecf8bb720e
-- State Contract JSON: {"schema_version":1,"level":"S0","authority":"","transitions":[],"invariants":[],"dependencies":["app/api/routes.py","app/services/asr_models.py","app/services/operator_ui.py","app/services/simple_workflow.py","app/services/source_caption_translation.py","app/services/subtitle_tracks.py","app/static/simple/app.js","app/static/simple/index.html","tests/test_task38s_small_model_policy.py","tests/test_task40_source_caption_translation.py","tests/test_v1_scope_cut_gemini_rejection.py","app/providers/asr/autosubs_provider.py","app/services/external_transcription.py","docs/AUTOSUBS_ENGINE_CONTRACT.md","tests/test_external_transcription_provider.py","tests/test_external_transcription_vertical_slice.py"],"signals":[],"contract_sha256":"11ed7156957cf0604a027304d0b6da0f59313d984d1506f34d4fe3ecf8bb720e"}
+- Acceptance Contract SHA256: 948a48d3857c14ec5d8223d4ed68baf842fc3d8c99e8588c3d4f0cb5397420f3
+- Acceptance Contract JSON: {"commands":["python -m pytest -q tests/test_external_transcription_provider.py tests/test_external_transcription_vertical_slice.py tests/test_task40_source_caption_translation.py tests/test_subtitle_presentation_timeline.py tests/test_task36_one_button_flow.py tests/test_v1_scope_cut_gemini_rejection.py"],"expected_outputs":["passed"],"probe_files":[],"probe_hashes":{},"effective_risk_at_freeze":"R2","frozen_at":"2026-08-09T08:10:06+00:00","contract_sha256":"948a48d3857c14ec5d8223d4ed68baf842fc3d8c99e8588c3d4f0cb5397420f3"}
+- State Hazard Level: S1
+- State Hazard Signals: explicit:S1, isolated D: workflow run and preview/export artifacts
+- State Contract SHA256: 3cfedf07ed8c7de26111378ea4d752cf5b52d69569bca6af3594ac4a7a70dc72
+- State Contract JSON: {"schema_version":1,"level":"S1","authority":"","transitions":[],"invariants":[],"dependencies":["app/providers/asr/autosubs_provider.py,app/services/external_transcription.py,app/services/simple_workflow.py,app/services/offline_translation.py,app/services/subtitle_tracks.py"],"signals":["explicit:S1","isolated D: workflow run and preview/export artifacts"],"contract_sha256":"3cfedf07ed8c7de26111378ea4d752cf5b52d69569bca6af3594ac4a7a70dc72"}
 
 ## Continuity Fingerprint at Authorization
 
 - Project ID: tool-autosub
 - Branch: main
-- HEAD: 62602ccc6127ae0b730127a621bd20033969feed
-- Worktree: DIRTY
-- Starting Snapshot SHA256: 41541b5e3b7152f34f3b547dbf1acf03be17587b5fb91f0a4b2336ba54d7cb25
-- Verified Snapshot SHA256: 556a51c52ccf67c63fa3f8d12c56f0398b2561393de7cd4c8bceb83198b35bf3
-- State Revision: 21
-- Context Capsule Revision: 31
+- HEAD: 8a594d16345112ed35a2a60194869f526a839989
+- Worktree: CLEAN
+- Starting Snapshot SHA256: 1ae36ab8834161a73f7d75f03778b39ad1e8c9a1564803901cf293f659dede12
+- Verified Snapshot SHA256: 51c53f7b7ba885e7c61479bbd7ceac3f32a00453847ab758f33b1c709094f73e
+- State Revision: 28
+- Context Capsule Revision: 41
 
 ## Permission Matrix
 
 ### Allowed
 
 - Read: task-relevant repository files
-- Modify: app/api/routes.py,app/services/asr_models.py,app/services/operator_ui.py,app/services/simple_workflow.py,app/services/source_caption_translation.py,app/services/subtitle_tracks.py,app/static/simple/app.js,app/static/simple/index.html,tests/test_task38s_small_model_policy.py,tests/test_task40_source_caption_translation.py,tests/test_v1_scope_cut_gemini_rejection.py
-- Create: app/providers/asr/autosubs_provider.py,app/services/external_transcription.py,docs/AUTOSUBS_ENGINE_CONTRACT.md,tests/test_external_transcription_provider.py,tests/test_external_transcription_vertical_slice.py
+- Modify: app/providers/asr/autosubs_provider.py,app/services/external_transcription.py,tests/test_external_transcription_provider.py,tests/test_external_transcription_vertical_slice.py
+- Create: NONE
 - Commands: focused checks and task-authorized commands
 - Local services: NONE
 - External calls: NONE
-- Data operation: READ_ONLY
+- Data operation: CREATE_NEW_VERSION
 - Artifact operation: CREATE_NEW_VERSION
 - Git: status/diff/log; commit only if explicitly authorized
 
@@ -74,8 +74,9 @@ Materialize the externally Git-verified AutoSubs MVP, run real Chinese-media sou
 
 ## Acceptance Criteria
 
-- [ ] Run AutoSubs v3.8.0 small zh source-only against retained canonical Chinese media and inspect JSON cues.
-- [ ] Run frozen acceptance unchanged and inspect provider/source/translation/preview output.
+- [ ] Implement no arbitrary timeout increase; retain bounded clear failure behavior and add focused regression coverage.
+- [ ] If chunking is justified, preserve absolute timestamps, source semantics, provenance, and prevent overlap duplicates.
+- [ ] Run full retained-media normal workflow, real Argos translation, preview/export, and frozen regression bundle.
 
 ## Verification Plan
 
@@ -125,33 +126,28 @@ Materialize the externally Git-verified AutoSubs MVP, run real Chinese-media sou
 
 - Lease Status: RELEASED
 - Writer Role: WORKER
-- Platform: windows
+- Platform: ChatGPT
 - Model Claimed: UNSPECIFIED
 - Identity Verification: VERIFIED
-- Session Label: autosubs-ship-worker
-- Claimed At: 2026-08-09T05:30:56+00:00
-- Last Heartbeat: 2026-08-09T05:49:35+00:00
-- Released At: 2026-08-09T05:49:35+00:00
+- Session Label: autosub-full-media-reliability-worker
+- Claimed At: 2026-08-09T08:10:07+00:00
+- Last Heartbeat: 2026-08-09T09:20:30+00:00
+- Released At: 2026-08-09T09:20:30+00:00
 - Takeover From: NONE
 
 ## Lifecycle Timing
 
-- Started At: 2026-08-09T05:30:56+00:00
+- Started At: 2026-08-09T08:10:07+00:00
 - First Runnable At: NONE
 - First Runnable Evidence: NONE
-- Completed At: 2026-08-09T05:49:35+00:00
+- Completed At: 2026-08-09T09:20:30+00:00
 
 ## Completion
 
-- Outcome: AutoSubs v3.8.0 small now provides source-only Chinese timestamped cues through the external provider and source-track resolution, with target-language translation remaining separate.
-- Evidence index: .ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001/EVIDENCE_INDEX.md
-- Evidence Bundle: .ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001
-- Worker report: .ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001/WORKER_REPORT.md
+- Outcome: Canonical full Chinese media completed bounded AutoSubs source transcription, local Argos translation, and inspected MP4 export.
+- Evidence index: .ai/evidence/AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY/r001/EVIDENCE_INDEX.md
+- Evidence Bundle: .ai/evidence/AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY/r001
+- Worker report: .ai/evidence/AUTOSUB_FULL_MEDIA_TRANSCRIPTION_RELIABILITY-FIX_AUTOSUBS_FULL_MEDIA_RELIABILITY/r001/WORKER_REPORT.md
 - Review report: NONE
-- Ending HEAD: 62602ccc6127ae0b730127a621bd20033969feed
+- Ending HEAD: 8a594d16345112ed35a2a60194869f526a839989
 - Lease release: RELEASED
-
-## Revision Stop-Loss Acknowledgement
-
-- Prior failed-first-pass revisions: 0
-- Changed root-cause hypothesis: Stop for material redesign, unreconstructable intended Git product state, or origin divergence; do not use prohibited alignment assets.
