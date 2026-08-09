@@ -1,0 +1,321 @@
+{
+  "acceptance": [
+    "Approved local external engine transcribes representative Chinese local-speech video into deterministic timestamped Chinese source cues.",
+    "Normalized external transcript enters source-track resolution without downstream semantic mutation.",
+    "Chinese-to-English translation is separate from the Chinese source track, and same-language behavior does not translate.",
+    "One-click local video plus target language reaches external transcription, source track, translation, existing layout/timeline, and preview/export with actionable runtime/model failures.",
+    "Accepted subtitle presentation/layout/timeline and source/translation regressions remain intact."
+  ],
+  "acceptance_attempts": 1,
+  "accepted_at": "2026-08-09T05:50:01+00:00",
+  "checks": [
+    {
+      "command": "cmd /c python -m pytest -q tests/test_external_transcription_provider.py -k normalizes_autosubs_timestamped_chinese_source",
+      "completed_at": "2026-08-09T05:49:38+00:00",
+      "criterion": "Approved local external engine transcribes representative Chinese local-speech video into deterministic timestamped Chinese source cues.",
+      "criterion_index": 1,
+      "execution_mode": "shell",
+      "exit_code": 0,
+      "expected_output": "1 passed",
+      "expected_output_matched": true,
+      "id": "EV-001",
+      "inspected_by": "Codex inspected real engine cues, raw-to-source equality, source/translation separation, and preview/export regression output.",
+      "inspection_status": "AGENT_INSPECTED",
+      "kind": "goal_A1",
+      "result": "PASS",
+      "started_at": "2026-08-09T05:49:37+00:00",
+      "stderr": {
+        "original_bytes": 0,
+        "path": "EV-001-goal_A1.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stored_bytes": 0,
+        "truncated": false
+      },
+      "stdout": {
+        "original_bytes": 112,
+        "path": "EV-001-goal_A1.stdout.txt",
+        "sha256": "3509d4be6b9e6296a8c38c1f7537326133652b2f3ef19661e6f24d7cd6339f0b",
+        "stored_bytes": 112,
+        "truncated": false
+      }
+    },
+    {
+      "command": "cmd /c python -m pytest -q tests/test_external_transcription_provider.py -k preserves_source_cues_without_semantic_mutation",
+      "completed_at": "2026-08-09T05:49:39+00:00",
+      "criterion": "Normalized external transcript enters source-track resolution without downstream semantic mutation.",
+      "criterion_index": 2,
+      "execution_mode": "shell",
+      "exit_code": 0,
+      "expected_output": "1 passed",
+      "expected_output_matched": true,
+      "id": "EV-002",
+      "inspected_by": "Codex inspected real engine cues, raw-to-source equality, source/translation separation, and preview/export regression output.",
+      "inspection_status": "AGENT_INSPECTED",
+      "kind": "goal_A2",
+      "result": "PASS",
+      "started_at": "2026-08-09T05:49:38+00:00",
+      "stderr": {
+        "original_bytes": 0,
+        "path": "EV-002-goal_A2.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stored_bytes": 0,
+        "truncated": false
+      },
+      "stdout": {
+        "original_bytes": 112,
+        "path": "EV-002-goal_A2.stdout.txt",
+        "sha256": "e7c306f6077390758554006061bd22d42eae7241ff5e09d4a2f0655d9130d7f8",
+        "stored_bytes": 112,
+        "truncated": false
+      }
+    },
+    {
+      "command": "cmd /c python -m pytest -q tests/test_task35_offline_transcription.py tests/test_task40_source_caption_translation.py",
+      "completed_at": "2026-08-09T05:49:46+00:00",
+      "criterion": "Chinese-to-English translation is separate from the Chinese source track, and same-language behavior does not translate.",
+      "criterion_index": 3,
+      "execution_mode": "shell",
+      "exit_code": 0,
+      "expected_output": "passed",
+      "expected_output_matched": true,
+      "id": "EV-003",
+      "inspected_by": "Codex inspected real engine cues, raw-to-source equality, source/translation separation, and preview/export regression output.",
+      "inspection_status": "AGENT_INSPECTED",
+      "kind": "goal_A3",
+      "result": "PASS",
+      "started_at": "2026-08-09T05:49:40+00:00",
+      "stderr": {
+        "original_bytes": 0,
+        "path": "EV-003-goal_A3.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stored_bytes": 0,
+        "truncated": false
+      },
+      "stdout": {
+        "original_bytes": 99,
+        "path": "EV-003-goal_A3.stdout.txt",
+        "sha256": "4248d5089c76ba02300eb492fc7996546a3f6518b8f4e50ab57b4f6543a4e2c0",
+        "stored_bytes": 99,
+        "truncated": false
+      }
+    },
+    {
+      "command": "cmd /c python -m pytest -q tests/test_external_transcription_vertical_slice.py",
+      "completed_at": "2026-08-09T05:49:51+00:00",
+      "criterion": "One-click local video plus target language reaches external transcription, source track, translation, existing layout/timeline, and preview/export with actionable runtime/model failures.",
+      "criterion_index": 4,
+      "execution_mode": "shell",
+      "exit_code": 0,
+      "expected_output": "passed",
+      "expected_output_matched": true,
+      "id": "EV-004",
+      "inspected_by": "Codex inspected real engine cues, raw-to-source equality, source/translation separation, and preview/export regression output.",
+      "inspection_status": "AGENT_INSPECTED",
+      "kind": "goal_A4",
+      "result": "PASS",
+      "started_at": "2026-08-09T05:49:46+00:00",
+      "stderr": {
+        "original_bytes": 0,
+        "path": "EV-004-goal_A4.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stored_bytes": 0,
+        "truncated": false
+      },
+      "stdout": {
+        "original_bytes": 98,
+        "path": "EV-004-goal_A4.stdout.txt",
+        "sha256": "d173bcc58c4ca7e8eab98a96f45beb1bb055f8c076e2c43814b345b4786554b4",
+        "stored_bytes": 98,
+        "truncated": false
+      }
+    },
+    {
+      "command": "cmd /c python -m pytest -q tests/test_task35_offline_transcription.py tests/test_task40_source_caption_translation.py tests/test_cp10b_simple_workflow.py",
+      "completed_at": "2026-08-09T05:50:01+00:00",
+      "criterion": "Accepted subtitle presentation/layout/timeline and source/translation regressions remain intact.",
+      "criterion_index": 5,
+      "execution_mode": "shell",
+      "exit_code": 0,
+      "expected_output": "passed",
+      "expected_output_matched": true,
+      "id": "EV-005",
+      "inspected_by": "Codex inspected real engine cues, raw-to-source equality, source/translation separation, and preview/export regression output.",
+      "inspection_status": "AGENT_INSPECTED",
+      "kind": "goal_A5",
+      "result": "PASS",
+      "started_at": "2026-08-09T05:49:52+00:00",
+      "stderr": {
+        "original_bytes": 0,
+        "path": "EV-005-goal_A5.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stored_bytes": 0,
+        "truncated": false
+      },
+      "stdout": {
+        "original_bytes": 99,
+        "path": "EV-005-goal_A5.stdout.txt",
+        "sha256": "5e1087218809d207e409788eda1b2eb678bc026974c9530bdcc1108a1e40d45f",
+        "stored_bytes": 99,
+        "truncated": false
+      }
+    }
+  ],
+  "codebase_health": {
+    "baseline": {
+      "git_repo_mb": 1.496,
+      "hard_violations": [],
+      "largest_source_file_loc": 2640,
+      "largest_source_files": [
+        {
+          "loc": 2640,
+          "path": "app/services/source_caption_translation.py"
+        },
+        {
+          "loc": 2038,
+          "path": "tools/build_cp13a1_complete_payload_hotfix.py"
+        },
+        {
+          "loc": 1796,
+          "path": "tools/run_cp07_full_canonical_sample.py"
+        },
+        {
+          "loc": 1648,
+          "path": "tools/run_cp06k_tail_audio_alignment_and_residual_repair.py"
+        },
+        {
+          "loc": 1641,
+          "path": "scripts/ai_os.py"
+        },
+        {
+          "loc": 1503,
+          "path": "app/static/operator/app.js"
+        },
+        {
+          "loc": 1395,
+          "path": "tools/run_cp07_downstream_from_gemini_transform.py"
+        },
+        {
+          "loc": 1331,
+          "path": "tools/run_cp06j_source_zone_replacement_subtitle.py"
+        },
+        {
+          "loc": 1328,
+          "path": "app/services/production_golden_path.py"
+        },
+        {
+          "loc": 1268,
+          "path": "app/providers/translation/gemini.py"
+        }
+      ],
+      "product_tree_mb": 761.904,
+      "runtime_dependencies": 8,
+      "schema_version": 2,
+      "scoped_source_file_locs": {},
+      "source_bytes": 2734478,
+      "source_files": 205,
+      "source_loc": 59179,
+      "tracked_files": 302,
+      "tracked_repo_mb": 2.765
+    },
+    "current": {
+      "git_repo_mb": 1.496,
+      "hard_violations": [],
+      "largest_source_file_loc": 2652,
+      "largest_source_files": [
+        {
+          "loc": 2652,
+          "path": "app/services/source_caption_translation.py"
+        },
+        {
+          "loc": 2038,
+          "path": "tools/build_cp13a1_complete_payload_hotfix.py"
+        },
+        {
+          "loc": 1796,
+          "path": "tools/run_cp07_full_canonical_sample.py"
+        },
+        {
+          "loc": 1648,
+          "path": "tools/run_cp06k_tail_audio_alignment_and_residual_repair.py"
+        },
+        {
+          "loc": 1641,
+          "path": "scripts/ai_os.py"
+        },
+        {
+          "loc": 1503,
+          "path": "app/static/operator/app.js"
+        },
+        {
+          "loc": 1395,
+          "path": "tools/run_cp07_downstream_from_gemini_transform.py"
+        },
+        {
+          "loc": 1331,
+          "path": "tools/run_cp06j_source_zone_replacement_subtitle.py"
+        },
+        {
+          "loc": 1328,
+          "path": "app/services/production_golden_path.py"
+        },
+        {
+          "loc": 1300,
+          "path": "app/services/simple_workflow.py"
+        }
+      ],
+      "product_tree_mb": 761.94,
+      "runtime_dependencies": 8,
+      "schema_version": 2,
+      "scoped_source_file_locs": {},
+      "source_bytes": 2766397,
+      "source_files": 209,
+      "source_loc": 59865,
+      "tracked_files": 302,
+      "tracked_repo_mb": 2.773
+    },
+    "warnings": [
+      "largest source file reached 2652 LOC; prefer bounded extraction only if this area is becoming a hotspot"
+    ]
+  },
+  "final_verdict": "PASS",
+  "goal_acceptance_contract_sha256": "49c8056e08cce1e98ff61e4b1c177b9153d7b828b5474409213a2b9880074485",
+  "goal_first_pass_accepted": true,
+  "goal_id": "AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP",
+  "inspected_by": "Codex inspected real engine cues, raw-to-source equality, source/translation separation, and preview/export regression output.",
+  "known_limits": "No CER/WER for unlabeled retained media; A1 accepted by Owner for this MVP.",
+  "metrics": {
+    "accepted_task_revisions": 1,
+    "coordination_input_tokens": null,
+    "cost_telemetry_rows": 0,
+    "delegation_auto_scout_nodes": 0,
+    "delegation_input_tokens": null,
+    "delegation_output_tokens": null,
+    "delegation_provider_cost": null,
+    "delegation_read_only_nodes": 0,
+    "delegation_scout_nodes": 0,
+    "delegation_wall_minutes": null,
+    "estimated_ai_cost": null,
+    "goal_cycle_minutes": 19.68,
+    "human_review_minutes": null,
+    "human_time_telemetry_rows": 0,
+    "human_wait_minutes": null,
+    "implementation_input_tokens": null,
+    "output_tokens": null,
+    "provider_cost": null,
+    "token_telemetry_rows": 0
+  },
+  "outcome": "Validate and ship the preserved AutoSubs external-transcription MVP using the already verified Git-object reconstruction, real Chinese-media execution, and frozen product acceptance.",
+  "schema_version": 4,
+  "task_results": {
+    "SHIP_EXTERNAL_TRANSCRIPTION_MVP": {
+      "completed_at": "2026-08-09T05:49:36+00:00",
+      "delivery_delta": "EXECUTABLE_CAPABILITY",
+      "evidence_bundle": ".ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001",
+      "first_pass_accepted": "no",
+      "outcome": "AutoSubs v3.8.0 small now provides source-only Chinese timestamped cues through the external provider and source-track resolution, with target-language translation remaining separate.",
+      "risk_tier": "R2",
+      "task_id": "AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP",
+      "task_revision": 1
+    }
+  }
+}

@@ -252,6 +252,7 @@ function renderCompleted(run) {
 
 function friendlyFailureMessage(run, fallback = "") {
   if (fallback) return fallback;
+  if (run?.failure_detail?.message) return run.failure_detail.message;
   const messages = {
     subtitle_source_unavailable: "Không tìm thấy nguồn phiên âm khả dụng cho video này.",
     insufficient_disk_space: "Không đủ dung lượng trống để xử lý video.",

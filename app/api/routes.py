@@ -21,13 +21,7 @@ from app.services.cp02_pipeline import run_cp02_vertical_slice
 from app.services.content_transform import transform_latest_timeline
 from app.services.ingest import import_local_source
 from app.services.ocr_runtime import get_ocr_runtime_status
-from app.services.asr_models import (
-    SIMPLE_UI_MODEL_ID,
-    SIMPLE_UI_MODEL_NAME,
-    SIMPLE_UI_MODEL_POLICY,
-    SIMPLE_UI_MODEL_SOURCE,
-    simple_ui_model_path,
-)
+from app.providers.asr.autosubs_provider import AUTOSUBS_MODEL, AUTOSUBS_VERSION
 from app.services.operator_ui import (
     accepted_preview_path,
     apply_cjk_cleanup_action,
@@ -241,13 +235,12 @@ def simple_capabilities() -> dict:
         "provider_calls_on_ui_load": {"gemini": 0, "elevenlabs": 0, "youtube": 0},
         "gemini_translation": gemini_credential_status(),
         "automatic_transcription": {
-            "provider": "faster_whisper",
-            "model": SIMPLE_UI_MODEL_NAME,
-            "model_id": SIMPLE_UI_MODEL_ID,
-            "model_path": str(simple_ui_model_path()),
-            "model_source": SIMPLE_UI_MODEL_SOURCE,
-            "model_policy": SIMPLE_UI_MODEL_POLICY,
-            "local_files_only": True,
+            "provider": "autosubs",
+            "engine_version": AUTOSUBS_VERSION,
+            "model": AUTOSUBS_MODEL,
+            "model_source": "AutoSubs managed local cache",
+            "model_policy": "preflight_requires_cached_small_model",
+            "local_inference": True,
             "fallback_enabled": False,
             "implicit_download_enabled": False,
         },

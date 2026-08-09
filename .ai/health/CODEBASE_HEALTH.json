@@ -1,10 +1,10 @@
 {
-  "git_repo_mb": 1.129,
+  "git_repo_mb": 1.496,
   "hard_violations": [],
-  "largest_source_file_loc": 2640,
+  "largest_source_file_loc": 2652,
   "largest_source_files": [
     {
-      "loc": 2640,
+      "loc": 2652,
       "path": "app/services/source_caption_translation.py"
     },
     {
@@ -40,17 +40,17 @@
       "path": "app/services/production_golden_path.py"
     },
     {
-      "loc": 1268,
-      "path": "app/providers/translation/gemini.py"
+      "loc": 1300,
+      "path": "app/services/simple_workflow.py"
     }
   ],
-  "product_tree_mb": 469.527,
+  "product_tree_mb": 761.94,
   "runtime_dependencies": 8,
   "schema_version": 2,
   "scoped_source_file_locs": {},
-  "source_bytes": 2690908,
-  "source_files": 204,
-  "source_loc": 57971,
-  "tracked_files": 256,
-  "tracked_repo_mb": 2.479
+  "source_bytes": 2766397,
+  "source_files": 209,
+  "source_loc": 59865,
+  "tracked_files": 302,
+  "tracked_repo_mb": 2.773
 }

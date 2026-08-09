@@ -568,6 +568,48 @@ def create_source_caption_translation_track(
     return get_track(run_id, track_id)
 
 
+def create_provider_translation_track(
+    run_id: str,
+    *,
+    source_cues: list[dict[str, Any]],
+    translated_texts: list[str],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Create a translation track while retaining the already-persisted source track."""
+    if len(source_cues) != len(translated_texts):
+        raise SubtitleContentUnavailableError("Local translation did not return one result for every source cue.")
+    usable = []
+    for cue, translation in zip(source_cues, translated_texts):
+        source_text = str(cue.get("text") or "")
+        text = str(translation or "").strip()
+        start_ms = int(cue.get("start_ms") or 0)
+        end_ms = int(cue.get("end_ms") or 0)
+        if not source_text.strip() or not text or end_ms <= start_ms:
+            raise SubtitleContentUnavailableError("Local translation returned an empty or invalid subtitle cue.")
+        usable.append({"cue_id": str(cue["cue_id"]), "start_ms": start_ms, "end_ms": end_ms, "source_text": source_text, "text": text})
+    now = datetime.now(timezone.utc)
+    track_id = f"track_provider_translation_{uuid4().hex[:10]}"
+    track_metadata = {"schema_version": 1, "subtitle_provenance": "provider_transcription", "cues": usable, **metadata}
+    with session_scope() as session:
+        row = _get_run(session, run_id)
+        for track in session.query(SubtitleTrack).filter(SubtitleTrack.run_id == run_id).all():
+            track.active = False
+            track.updated_at = now
+        session.add(SubtitleTrack(
+            track_id=track_id, project_id=row.project_id, run_id=run_id, track_type="translation",
+            display_name="Local translation from AutoSubs source", source_type="provider_transcription",
+            source_filename=metadata.get("audio_filename"), source_sha256=metadata.get("audio_sha256"), active=True,
+            review_state="canonical", fallback_policy="block_render", metadata_json=json.dumps(track_metadata, ensure_ascii=False),
+            created_at=now, updated_at=now,
+        ))
+        for cue in usable:
+            session.add(SubtitleTrackItem(
+                item_id=f"item_{uuid4().hex[:12]}", track_id=track_id, cue_id=cue["cue_id"], text=cue["text"],
+                status="ready", warning_codes="[]", created_at=now, updated_at=now,
+            ))
+    return get_track(run_id, track_id)
+
+
 def resolved_cues(run_id: str) -> dict[str, Any]:
     _ensure_translation_track(run_id)
     with session_scope() as session:
@@ -591,6 +633,7 @@ def resolved_cues(run_id: str) -> dict[str, Any]:
     if active is None:
         raise SubtitleContentUnavailableError(USER_CONTENT_ERROR)
     source_caption_provenance = {
+        "provider_transcription",
         "source_caption_ocr_translation",
         "source_caption_gemini_translation",
         "source_caption_gemini_translation_with_human_review",

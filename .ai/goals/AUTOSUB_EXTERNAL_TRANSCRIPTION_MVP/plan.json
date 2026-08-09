@@ -1,0 +1,389 @@
+{
+  "abort_reason": "CONTROL_PLANE_BUDGET_SPLIT: all three original implementation nodes completed; max_tasks=3 is exhausted; final executable verification/recovery requires one additional task; Build OS v1.16 exposes no supported live max_tasks amendment; Owner authorized a new tightly bounded finalization Goal rather than mutating control-plane state. This is not a product failure.",
+  "acceptance": [
+    "Approved local external engine transcribes representative Chinese local-speech video into deterministic timestamped Chinese source cues.",
+    "Normalized external transcript enters source-track resolution without downstream semantic mutation.",
+    "Chinese-to-English translation is separate from the Chinese source track, and same-language behavior does not translate.",
+    "One-click local video plus target language reaches external transcription, source track, translation, existing layout/timeline, and preview/export with actionable runtime/model failures.",
+    "Accepted subtitle presentation/layout/timeline and source/translation regressions remain intact."
+  ],
+  "acceptance_attempts": 0,
+  "acceptance_quality_warnings": [],
+  "budget": {
+    "max_auto_scouts": 1,
+    "max_non_shipping_tasks": 2,
+    "max_parallel": 1,
+    "max_revisions_per_task": 2,
+    "max_tasks": 3,
+    "scope_growth_limit_percent": 30,
+    "scout_input_token_budget": 12000,
+    "scout_provider_cost_budget": 0.0,
+    "scout_summary_token_budget": 350,
+    "scout_wall_minutes_budget": 20.0
+  },
+  "codebase_health_baseline": {
+    "git_repo_mb": 1.153,
+    "hard_violations": [],
+    "largest_source_file_loc": 2640,
+    "largest_source_files": [
+      {
+        "loc": 2640,
+        "path": "app/services/source_caption_translation.py"
+      },
+      {
+        "loc": 2038,
+        "path": "tools/build_cp13a1_complete_payload_hotfix.py"
+      },
+      {
+        "loc": 1796,
+        "path": "tools/run_cp07_full_canonical_sample.py"
+      },
+      {
+        "loc": 1648,
+        "path": "tools/run_cp06k_tail_audio_alignment_and_residual_repair.py"
+      },
+      {
+        "loc": 1641,
+        "path": "scripts/ai_os.py"
+      },
+      {
+        "loc": 1503,
+        "path": "app/static/operator/app.js"
+      },
+      {
+        "loc": 1395,
+        "path": "tools/run_cp07_downstream_from_gemini_transform.py"
+      },
+      {
+        "loc": 1331,
+        "path": "tools/run_cp06j_source_zone_replacement_subtitle.py"
+      },
+      {
+        "loc": 1328,
+        "path": "app/services/production_golden_path.py"
+      },
+      {
+        "loc": 1268,
+        "path": "app/providers/translation/gemini.py"
+      }
+    ],
+    "product_tree_mb": 469.561,
+    "runtime_dependencies": 8,
+    "schema_version": 2,
+    "scoped_source_file_locs": {},
+    "source_bytes": 2690908,
+    "source_files": 204,
+    "source_loc": 57971,
+    "tracked_files": 302,
+    "tracked_repo_mb": 2.765
+  },
+  "completed_non_shipping_streak": 0,
+  "created_at": "2026-08-09T04:07:26+00:00",
+  "decisions_required": [
+    {
+      "at": "2026-08-09T05:06:44+00:00",
+      "reason": "Owner-directed FINALIZE_EXTERNAL_TRANSCRIPTION_MVP cannot be materialized because the existing Goal has Maximum tasks: 3 and all three nodes are DONE. The supported goal add-task lifecycle rejects a fourth node; no lifecycle command exists to amend the task budget. Preserved dirty implementation remains untouched."
+    }
+  ],
+  "discoveries": [
+    {
+      "affected_files": [],
+      "at": "2026-08-09T04:09:36+00:00",
+      "risk_signals": [
+        "AutoSubs optional MMS forced alignment is CC-BY-NC-4.0; reject it. External executable/model cache are absent locally, so installation/runtime smoke remains a Worker preflight, not a Scout write."
+      ],
+      "summary": "SELECT_AUTOSUBS. Pin AutoSubs v3.8.0 (tmoroney/auto-subs, MIT) Windows x86_64 release. Headless interface: autosubs <input> --model small --lang zh --no-gpu --format json; exit 0/1/2; stdout JSON only, stderr progress/errors. JSON Transcript={processing_time_sec,language,segments:[{start,end,text,speaker_id?,words?}],originalSegments,speakers}; normalize seconds to existing cue_id/start_ms/end_ms/text. Whisper GGML multilingual small is 480MB/2GB RAM; code/model path MIT; prohibit --forced-alignment (MMS CC-BY-NC) and model families whose licenses are not independently approved. Auto-download/cache and missing binary/model, ffmpeg, malformed/zero cues, nonzero exit, timeout are actionable failures. Vibe v3.0.23 MIT is not selected: its CLI blindly forwards args to bundled opaque sona.exe and its documented model setup is manual/GUI; no installed executable. Internal control is Faster-Whisper 1.2.1 + bundled Systran/faster-whisper-small (MIT, 483.5MB), CPU int8/local-only, but not external. Worker: build a subprocess-only provider adapter; explicit binary/version/model-cache preflight, bounded timeout/cancel, temp JSON parse/validate, no translation flag/download fallback, preserve source track, integration tests."
+    }
+  ],
+  "goal_acceptance_contract": {
+    "contract_sha256": "1acbb0333a53b553903cb726a5c4a7220668465eea6a04653f5358d30f5de37d",
+    "frozen_at": "2026-08-09T04:10:08+00:00",
+    "mappings": [
+      {
+        "command": "cmd /c python -m pytest -q tests/test_external_transcription_provider.py -k normalizes_autosubs_timestamped_chinese_source",
+        "criterion": "Approved local external engine transcribes representative Chinese local-speech video into deterministic timestamped Chinese source cues.",
+        "criterion_index": 1,
+        "evaluator_type": "command",
+        "expected_output": "1 passed",
+        "inspection_requirement": "",
+        "probe_file": ""
+      },
+      {
+        "command": "cmd /c python -m pytest -q tests/test_external_transcription_provider.py -k preserves_source_cues_without_semantic_mutation",
+        "criterion": "Normalized external transcript enters source-track resolution without downstream semantic mutation.",
+        "criterion_index": 2,
+        "evaluator_type": "command",
+        "expected_output": "1 passed",
+        "inspection_requirement": "",
+        "probe_file": ""
+      },
+      {
+        "command": "cmd /c python -m pytest -q tests/test_task35_offline_transcription.py tests/test_task40_source_caption_translation.py",
+        "criterion": "Chinese-to-English translation is separate from the Chinese source track, and same-language behavior does not translate.",
+        "criterion_index": 3,
+        "evaluator_type": "command",
+        "expected_output": "passed",
+        "inspection_requirement": "",
+        "probe_file": ""
+      },
+      {
+        "command": "cmd /c python -m pytest -q tests/test_external_transcription_vertical_slice.py",
+        "criterion": "One-click local video plus target language reaches external transcription, source track, translation, existing layout/timeline, and preview/export with actionable runtime/model failures.",
+        "criterion_index": 4,
+        "evaluator_type": "command",
+        "expected_output": "passed",
+        "inspection_requirement": "",
+        "probe_file": ""
+      },
+      {
+        "command": "cmd /c python -m pytest -q tests/test_task35_offline_transcription.py tests/test_task40_source_caption_translation.py tests/test_cp10b_simple_workflow.py",
+        "criterion": "Accepted subtitle presentation/layout/timeline and source/translation regressions remain intact.",
+        "criterion_index": 5,
+        "evaluator_type": "command",
+        "expected_output": "passed",
+        "inspection_requirement": "",
+        "probe_file": ""
+      }
+    ],
+    "probe_hashes": {},
+    "revision": 1,
+    "schema_version": 1
+  },
+  "goal_id": "AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP",
+  "goal_type": "product",
+  "last_task_id": "AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-ONE_CLICK_EXTERNAL_TRANSCRIPTION_SLICE",
+  "non_goals": [
+    "Do not rebuild ASR, enable cloud ASR, use noncommercial alignment assets, delete Faster-Whisper, improve OCR, add diarization, or redesign the UI."
+  ],
+  "outcome": "User selects a local video and target language; AutoSub obtains a timestamped source-language transcript through an approved local external transcription engine, preserves it as the source track, produces the requested translation through existing semantics, and reaches preview/export without manual ASR configuration.",
+  "risk_ceiling": "R2",
+  "schema_version": 1,
+  "status": "ABORTED",
+  "tasks": {
+    "ENGINE_SELECTION_SCOUT": {
+      "acceptance": [
+        "Compare AutoSubs, Vibe, and the internal Faster-Whisper control on actual interface, licensing, and representative Chinese/English behavior."
+      ],
+      "acceptance_contract": {
+        "commands": [],
+        "contract_sha256": "",
+        "expected_outputs": [],
+        "frozen_at": null,
+        "probe_files": [],
+        "probe_hashes": {}
+      },
+      "agent_role": "SCOUT",
+      "artifact_operation": "READ_ONLY",
+      "create": "NONE",
+      "data_operation": "READ_ONLY",
+      "delegation": {
+        "action": "SPAWN_SCOUT",
+        "hard": true,
+        "model_class": "CHEAP_FAST_READ_ONLY",
+        "reasons": [
+          "node is explicitly read-only"
+        ],
+        "summary_token_budget": 350
+      },
+      "delegation_policy": "main",
+      "delivery_delta": "RISK_RETIREMENT",
+      "depends_on": [],
+      "modify": "NONE",
+      "negative_required": false,
+      "node_id": "ENGINE_SELECTION_SCOUT",
+      "outcome": "Select a commercially viable local external transcription engine with real executable evidence and an integration boundary.",
+      "replaces": [],
+      "result": {
+        "affected_files": [],
+        "completed_at": "2026-08-09T04:09:36+00:00",
+        "confidence": "HIGH",
+        "delegation_usage": {
+          "input_tokens": 11200,
+          "output_tokens": 330,
+          "provider_cost": 0.0,
+          "wall_minutes": 18.0
+        },
+        "entry_point": "AutoSubs CLI.md; AutoSubs-App/src-tauri/src/cli.rs; app/providers/asr/base.py; app/services/local_transcription.py",
+        "invariants": [
+          "External source cues must be timestamped original-language text; never invoke engine translation or silently fall back/regenerate."
+        ],
+        "recommended_scope": [
+          "Add a replaceable AutoSubs v3.8.0 subprocess provider only, with version/model-cache preflight, structured runtime/model errors, JSON cue normalization, timeout/cancellation, and focused tests; retain Faster-Whisper unchanged as the control."
+        ],
+        "risk_signals": [
+          "AutoSubs optional MMS forced alignment is CC-BY-NC-4.0; reject it. External executable/model cache are absent locally, so installation/runtime smoke remains a Worker preflight, not a Scout write."
+        ],
+        "summary": "SELECT_AUTOSUBS. Pin AutoSubs v3.8.0 (tmoroney/auto-subs, MIT) Windows x86_64 release. Headless interface: autosubs <input> --model small --lang zh --no-gpu --format json; exit 0/1/2; stdout JSON only, stderr progress/errors. JSON Transcript={processing_time_sec,language,segments:[{start,end,text,speaker_id?,words?}],originalSegments,speakers}; normalize seconds to existing cue_id/start_ms/end_ms/text. Whisper GGML multilingual small is 480MB/2GB RAM; code/model path MIT; prohibit --forced-alignment (MMS CC-BY-NC) and model families whose licenses are not independently approved. Auto-download/cache and missing binary/model, ffmpeg, malformed/zero cues, nonzero exit, timeout are actionable failures. Vibe v3.0.23 MIT is not selected: its CLI blindly forwards args to bundled opaque sona.exe and its documented model setup is manual/GUI; no installed executable. Internal control is Faster-Whisper 1.2.1 + bundled Systran/faster-whisper-small (MIT, 483.5MB), CPU int8/local-only, but not external. Worker: build a subprocess-only provider adapter; explicit binary/version/model-cache preflight, bounded timeout/cancel, temp JSON parse/validate, no translation flag/download fallback, preserve source track, integration tests."
+      },
+      "review_policy": "auto",
+      "risk": "R1",
+      "state_authority": "",
+      "state_dependencies": [],
+      "state_hazard": "auto",
+      "state_invariants": [],
+      "state_signals": [],
+      "state_transitions": [],
+      "status": "DONE",
+      "success_criterion": "SC-001",
+      "task_id": "AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-ENGINE_SELECTION_SCOUT"
+    },
+    "EXTERNAL_TRANSCRIPTION_PROVIDER": {
+      "acceptance": [
+        "Provider returns detected/source language, timestamped source segments, provenance, and actionable diagnostics."
+      ],
+      "acceptance_contract": {
+        "commands": [
+          "cmd /c python -m pytest -q tests/test_external_transcription_provider.py"
+        ],
+        "contract_sha256": "d5fe6d4c50e59be7f1f462b20e3ae0be09d80a445d774dd5be3500e16ef51126",
+        "effective_risk_at_freeze": "R2",
+        "expected_outputs": [],
+        "frozen_at": "2026-08-09T04:10:08+00:00",
+        "probe_files": [],
+        "probe_hashes": {}
+      },
+      "agent_role": "WORKER",
+      "artifact_operation": "CREATE_NEW_VERSION",
+      "create": "app/**,tests/**,tools/**,docs/**",
+      "data_operation": "READ_ONLY",
+      "delegation": {
+        "action": "WORKER_AFTER_SCOUT",
+        "hard": true,
+        "model_class": "STRONG_WORKER",
+        "reasons": [
+          "read-only Scout dependency already isolates discovery context"
+        ],
+        "summary_token_budget": null
+      },
+      "delegation_policy": "auto",
+      "delivery_delta": "EXECUTABLE_CAPABILITY",
+      "depends_on": [
+        "ENGINE_SELECTION_SCOUT"
+      ],
+      "initial_create_scope": "app/**,tests/**,tools/**,docs/**",
+      "initial_modify_scope": "Add a replaceable AutoSubs v3.8.0 subprocess provider only, with version/model-cache preflight, structured runtime/model errors, JSON cue normalization, timeout/cancellation, and focused tests; retain Faster-Whisper unchanged as the control.",
+      "initial_scope_count": 11,
+      "initial_scope_footprint": [
+        "PATTERN:Add a replaceable AutoSubs v3.8.0 subprocess provider only",
+        "PATTERN:JSON cue normalization",
+        "PATTERN:and focused tests",
+        "PATTERN:app/**",
+        "PATTERN:docs/**",
+        "PATTERN:retain Faster-Whisper unchanged as the control.",
+        "PATTERN:structured runtime/model errors",
+        "PATTERN:tests/**",
+        "PATTERN:timeout/cancellation",
+        "PATTERN:tools/**",
+        "PATTERN:with version/model-cache preflight"
+      ],
+      "modify": "Add a replaceable AutoSubs v3.8.0 subprocess provider only, with version/model-cache preflight, structured runtime/model errors, JSON cue normalization, timeout/cancellation, and focused tests; retain Faster-Whisper unchanged as the control.",
+      "negative_required": true,
+      "node_id": "EXTERNAL_TRANSCRIPTION_PROVIDER",
+      "outcome": "AutoSub obtains normalized timestamped source cues from the selected external transcription engine through a replaceable provider boundary.",
+      "replaces": [],
+      "result": {
+        "completed_at": "2026-08-09T04:17:39+00:00",
+        "delivery_delta": "EXECUTABLE_CAPABILITY",
+        "evidence_bundle": ".ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-EXTERNAL_TRANSCRIPTION_PROVIDER/r001",
+        "first_pass_accepted": "no",
+        "outcome": "AutoSub has a replaceable AutoSubs v3.8.0 subprocess provider that verifies the real engine version and cached small model, normalizes timestamped source cues, and fails safely without translation or fallback.",
+        "risk_tier": "R2",
+        "task_id": "AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-EXTERNAL_TRANSCRIPTION_PROVIDER",
+        "task_revision": 1
+      },
+      "review_policy": "auto",
+      "risk": "R2",
+      "scope_narrowed_by_scout": true,
+      "scope_narrowed_from": "app/**,tests/**,tools/**,requirements*.txt,docs/**",
+      "started_at": "2026-08-09T04:10:10+00:00",
+      "state_authority": "",
+      "state_dependencies": [],
+      "state_hazard": "auto",
+      "state_invariants": [],
+      "state_signals": [],
+      "state_transitions": [],
+      "status": "DONE",
+      "success_criterion": "SC-001",
+      "task_id": "AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-EXTERNAL_TRANSCRIPTION_PROVIDER",
+      "task_revision": 1
+    },
+    "ONE_CLICK_EXTERNAL_TRANSCRIPTION_SLICE": {
+      "acceptance": [
+        "One-click vertical-slice behavior preserves source/translation semantics and shows actionable engine/runtime failure behavior."
+      ],
+      "acceptance_contract": {
+        "commands": [
+          "cmd /c python -m pytest -q tests/test_external_transcription_vertical_slice.py"
+        ],
+        "contract_sha256": "c22be6513bcc6709fef4c36638bf0ce490a503740d4431fa4c9ceb1783cd4bfe",
+        "effective_risk_at_freeze": "R2",
+        "expected_outputs": [],
+        "frozen_at": "2026-08-09T04:17:48+00:00",
+        "probe_files": [],
+        "probe_hashes": {}
+      },
+      "agent_role": "WORKER",
+      "artifact_operation": "CREATE_NEW_VERSION",
+      "create": "app/**,tests/**,tools/**,docs/**",
+      "data_operation": "READ_ONLY",
+      "delegation": {
+        "action": "MAIN_WORKER_BUDGET_FALLBACK",
+        "auto_inserted": false,
+        "budget_blocked": true,
+        "hard": true,
+        "model_class": "STRONG_WORKER",
+        "reasons": [
+          "outcome indicates diagnosis/root-cause uncertainty",
+          "declared write scope is broad",
+          "scope spans multiple top-level surfaces",
+          "R2 work benefits from reducing expensive Worker discovery",
+          "Scout benefit detected but Goal delegation budget is exhausted"
+        ],
+        "summary_token_budget": null
+      },
+      "delegation_policy": "auto",
+      "delivery_delta": "USER_VISIBLE_BEHAVIOR",
+      "depends_on": [
+        "EXTERNAL_TRANSCRIPTION_PROVIDER"
+      ],
+      "initial_create_scope": "app/**,tests/**,tools/**,docs/**",
+      "initial_modify_scope": "app/**,tests/**,tools/**,docs/**",
+      "initial_scope_count": 4,
+      "initial_scope_footprint": [
+        "PATTERN:app/**",
+        "PATTERN:docs/**",
+        "PATTERN:tests/**",
+        "PATTERN:tools/**"
+      ],
+      "modify": "app/**,tests/**,tools/**,docs/**",
+      "negative_required": true,
+      "node_id": "ONE_CLICK_EXTERNAL_TRANSCRIPTION_SLICE",
+      "outcome": "The real AutoSub workflow turns local video plus target language into external source transcript, separate translation, existing subtitle layout/timeline, and preview/export.",
+      "replaces": [],
+      "result": {
+        "completed_at": "2026-08-09T04:30:01+00:00",
+        "delivery_delta": "USER_VISIBLE_BEHAVIOR",
+        "evidence_bundle": ".ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-ONE_CLICK_EXTERNAL_TRANSCRIPTION_SLICE/r001",
+        "first_pass_accepted": "no",
+        "outcome": "One-click Simple Workflow now defaults to AutoSubs local external transcription, preserves the source track, and creates a separate translation track only when languages differ.",
+        "risk_tier": "R2",
+        "task_id": "AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-ONE_CLICK_EXTERNAL_TRANSCRIPTION_SLICE",
+        "task_revision": 1
+      },
+      "review_policy": "auto",
+      "risk": "R2",
+      "started_at": "2026-08-09T04:17:50+00:00",
+      "state_authority": "",
+      "state_dependencies": [],
+      "state_hazard": "auto",
+      "state_invariants": [],
+      "state_signals": [],
+      "state_transitions": [],
+      "status": "DONE",
+      "success_criterion": "SC-001",
+      "task_id": "AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-ONE_CLICK_EXTERNAL_TRANSCRIPTION_SLICE",
+      "task_revision": 1
+    }
+  },
+  "updated_at": "2026-08-09T05:12:12+00:00"
+}

@@ -64,13 +64,13 @@ def test_defensive_guard_retained():
     assert "SOURCE_CAPTION_GEMINI_MODE" in accept_fn or "V1 SCOPE-CUT" in accept_fn
 
 
-def test_default_settings_use_ocr_mode():
-    """DEFAULT_SETTINGS should use OCR mode, not LOCAL_AUDIO_MODE or Gemini."""
+def test_default_settings_use_external_local_transcription_mode():
+    """DEFAULT_SETTINGS should use the approved external local engine, not OCR or Gemini."""
     workflow_file = Path("app/services/simple_workflow.py").read_text(encoding="utf-8")
     
     default_settings = workflow_file.split("DEFAULT_SETTINGS = {")[1].split("}")[0]
     assert "caption_mode" in default_settings
-    assert "SOURCE_CAPTION_MODE" in default_settings
+    assert "EXTERNAL_AUDIO_MODE" in default_settings
     # Should not default to local audio or Gemini
     assert '"caption_mode": LOCAL_AUDIO_MODE' not in default_settings
     assert "SOURCE_CAPTION_GEMINI_MODE" not in default_settings.split("caption_mode")[1].split("\n")[0]

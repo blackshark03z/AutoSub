@@ -1,0 +1,35 @@
+{
+  "acceptance_contract_sha256": "d5fe6d4c50e59be7f1f462b20e3ae0be09d80a445d774dd5be3500e16ef51126",
+  "actual_risk_floor": "R2",
+  "actual_risk_reasons": [
+    "R2:project R2 surface app/providers/asr/autosubs_provider.py",
+    "R2:project R2 surface tests/test_external_transcription_provider.py"
+  ],
+  "breaker_override": false,
+  "breaker_override_reason": "",
+  "completed_at": "2026-08-09T04:17:38+00:00",
+  "delivery_delta": "EXECUTABLE_CAPABILITY",
+  "evidence_bundle": ".ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-EXTERNAL_TRANSCRIPTION_PROVIDER/r001",
+  "evidence_manifest_sha256": "610853d2fb7f22c79f2a0286c3b5fb0995b3819a0cb5c40abbc2965649161611",
+  "first_pass_accepted": "no",
+  "goal_id": "AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP",
+  "goal_node": "EXTERNAL_TRANSCRIPTION_PROVIDER",
+  "outcome": "AutoSub has a replaceable AutoSubs v3.8.0 subprocess provider that verifies the real engine version and cached small model, normalizes timestamped source cues, and fails safely without translation or fallback.",
+  "quality_reconciliation": {
+    "escaped_defect": "unknown",
+    "later_rework": "unknown",
+    "rollback_required": "no"
+  },
+  "review_reasons": [
+    "first pass was not accepted",
+    "project-declared sensitive boundary detected in actual delta"
+  ],
+  "review_required": true,
+  "risk_tier": "R2",
+  "schema_version": 1,
+  "state_contract_sha256": "7808b64ebb06bffb2c4685a489fdaa1ecabb5f79dea39eda23ddf61f02cf020a",
+  "state_hazard_level": "S1",
+  "task_id": "AUTOSUB_EXTERNAL_TRANSCRIPTION_MVP-EXTERNAL_TRANSCRIPTION_PROVIDER",
+  "task_revision": 1,
+  "verified_snapshot_sha256": "f30062d26790ccfaccf59e1e91a8a6d316e3396083f5e2bf7b9dd256c6ffbaf0"
+}

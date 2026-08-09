@@ -59,6 +59,7 @@ SOURCE_CAPTION_MODES = {
 }
 SOURCE_CAPTION_EVIDENCE_FILENAME = "source_caption_gemini_translation.json"
 LOCAL_AUDIO_MODE = "local_audio_transcription"
+EXTERNAL_AUDIO_MODE = "external_audio_transcription"
 SOURCE_CAPTION_BLOCK_MESSAGE = (
     "Không thể đọc và dịch phụ đề có sẵn trong video này. "
     "Video chưa được xuất để tránh tạo kết quả sai."
@@ -2092,6 +2093,17 @@ def build_source_caption_render_plan(
                 cue_start=max(0.0, start - REPLACEMENT_TEXT_PREROLL_SECONDS),
                 cue_end=end,
             )
+            # An upper-third embedded caption must be replaced in place.  The
+            # general subtitle helper deliberately uses a lower-third anchor,
+            # but stretching one union plate between a top source caption and a
+            # lower replacement creates an opaque full-height column.
+            bbox_center_y = (int(bbox["top_y"]) + int(bbox["bottom_y"])) // 2
+            if bbox_center_y < height * 0.4:
+                plate = layout["plate"]
+                plate_y = max(0, min(height - int(plate["height"]), bbox_center_y - int(plate["height"]) // 2))
+                plate["y"] = plate_y
+                plate["bottom_y"] = plate_y + int(plate["height"]) - 1
+                layout["anchor_y"] = bbox_center_y
             plate = layout["plate"]
             union_x = min(layout_interval["x"], int(plate["x"]))
             union_y = min(layout_interval["y"], int(plate["y"]))

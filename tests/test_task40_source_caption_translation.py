@@ -290,9 +290,8 @@ def test_ocr_render_plan_masks_detected_top_region_and_scales(monkeypatch):
 def test_ui_wording_and_separate_modes_keep_one_button_contract():
     html = Path("app/static/simple/index.html").read_text(encoding="utf-8")
     js = Path("app/static/simple/app.js").read_text(encoding="utf-8")
-    assert "Dịch và thay phụ đề có sẵn (Gemini free tier)" in html
-    assert "Phần chữ phụ đề được gửi tới Gemini bằng credential an toàn. Video không được tải lên." in html
-    assert "Cần cấu hình Gemini free tier trước khi tạo video." in js
+    assert "Tự nhận dạng lời nói cục bộ" in html
+    assert "AutoSubs" in html
     assert "Che phụ đề gốc phía dưới" not in html
     assert 'id="startBtn"' in html
     assert 'caption_mode: $("cleanupMode").value' in js

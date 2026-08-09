@@ -149,8 +149,9 @@ def test_simple_run_metadata_ignores_client_tiny_override(monkeypatch, tmp_path)
         assert response.status_code == 200
         settings = response.json()["run"]["settings"]
         assert settings["asr_model"] == "small"
-        assert settings["asr_model_source"] == "bundled"
-        assert settings["asr_model_policy"] == "simple_ui_quality_model"
+        assert settings["asr_provider"] == "autosubs"
+        assert settings["asr_model_source"] == "autosubs_local_cache"
+        assert settings["asr_model_policy"] == "autosubs_cached_model_preflight"
         assert "whisper_model" not in settings
         assert "model" not in settings["asr"]
 

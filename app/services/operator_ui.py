@@ -58,9 +58,13 @@ def list_operator_projects() -> dict[str, Any]:
     repair_legacy_test_fixture_projects()
     projects: list[dict[str, Any]] = []
     seen = set()
-    cp07_summary = build_operator_project_summary(CP07_PROJECT_ID)
-    projects.append(_project_picker_entry(CP07_PROJECT_ID, "CP07A Accepted Full Preview", cp07_summary["overall_status"], cp07_summary["artifact"]["filename"], canonical_name="CP07A Accepted Full Preview", scope="dialogue_subtitles_only", readiness="Accepted preview"))
-    seen.add(CP07_PROJECT_ID)
+    try:
+        cp07_summary = build_operator_project_summary(CP07_PROJECT_ID)
+    except FileNotFoundError:
+        cp07_summary = None
+    if cp07_summary is not None:
+        projects.append(_project_picker_entry(CP07_PROJECT_ID, "CP07A Accepted Full Preview", cp07_summary["overall_status"], cp07_summary["artifact"]["filename"], canonical_name="CP07A Accepted Full Preview", scope="dialogue_subtitles_only", readiness="Accepted preview"))
+        seen.add(CP07_PROJECT_ID)
     cp09_summary = golden_path_summary(CP09_PROJECT_ID)
     if cp09_summary is not None:
         projects.append(

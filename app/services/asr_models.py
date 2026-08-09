@@ -125,15 +125,26 @@ def normalize_simple_ui_settings(settings: dict[str, Any] | None) -> dict[str, A
         normalized["asr"] = asr_copy
     for value in legacy_values:
         normalize_simple_ui_model_name(value)
-    normalized.update(
-        {
-            "asr_provider": "faster_whisper",
-            "asr_model": SIMPLE_UI_MODEL_NAME,
-            "asr_model_path": str(simple_ui_model_path()),
-            "asr_model_source": SIMPLE_UI_MODEL_SOURCE,
-            "asr_model_policy": SIMPLE_UI_MODEL_POLICY,
-        }
-    )
+    if str(normalized.get("caption_mode") or "") == "external_audio_transcription":
+        normalized.pop("asr_model_path", None)
+        normalized.update(
+            {
+                "asr_provider": "autosubs",
+                "asr_model": SIMPLE_UI_MODEL_NAME,
+                "asr_model_source": "autosubs_local_cache",
+                "asr_model_policy": "autosubs_cached_model_preflight",
+            }
+        )
+    else:
+        normalized.update(
+            {
+                "asr_provider": "faster_whisper",
+                "asr_model": SIMPLE_UI_MODEL_NAME,
+                "asr_model_path": str(simple_ui_model_path()),
+                "asr_model_source": SIMPLE_UI_MODEL_SOURCE,
+                "asr_model_policy": SIMPLE_UI_MODEL_POLICY,
+            }
+        )
     return normalized
 
 

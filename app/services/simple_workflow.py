@@ -18,13 +18,16 @@ from app.db.session import session_scope
 from app.domain.models import Project, SimpleWorkflowRun
 from app.services.production_intake import SUPPORTED_VIDEO_EXTENSIONS
 from app.services.local_transcription import ensure_local_transcription_track
+from app.services.external_transcription import ensure_external_transcription_track
 from app.services.asr_models import SIMPLE_UI_MODEL_NAME, normalize_simple_ui_settings
+from app.services.offline_translation import OfflineTranslationError, translate_source_captions
 from app.services.clean_subtitle_render import (
     build_source_replacement_filter,
     build_source_replacement_plan,
     write_clean_subtitles_ass,
 )
 from app.services.source_caption_translation import (
+    EXTERNAL_AUDIO_MODE,
     LOCAL_AUDIO_MODE,
     SOURCE_CAPTION_GEMINI_MODE,
     SOURCE_CAPTION_HUMAN_REVIEW_MODE,
@@ -42,6 +45,7 @@ from app.services.caption_analysis_runtime import (
 from app.services.subtitle_tracks import (
     SubtitleContentUnavailableError,
     active_track_provenance,
+    create_provider_translation_track,
     create_source_caption_translation_track,
     resolved_cues,
     test_fixture_context_enabled,
@@ -64,7 +68,7 @@ DEFAULT_SETTINGS = {
     "include_ass_sidecar": True,
     "subtitle_style": "compact readable plate",
     "output_filename": "final_video.mp4",
-    "caption_mode": SOURCE_CAPTION_MODE,  # V1: Use stable OCR mode, not Gemini
+    "caption_mode": EXTERNAL_AUDIO_MODE,
 }
 PROTECTED_DESTINATION_NAMES = {"windows", "program files", "program files (x86)", "users"}
 INVALID_COMPLETED_RESULT = "invalid_completed_result"
@@ -312,6 +316,21 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                     run_id,
                     str(source_caption["metadata"].get("mode") or SOURCE_CAPTION_GEMINI_MODE),
                 )
+            elif requested_mode == EXTERNAL_AUDIO_MODE:
+                _set_processing_phase(run_id, "Recognize speech")
+                external_result = ensure_external_transcription_track(
+                    run_id,
+                    source_path=source_path,
+                    run_directory=run_directory,
+                    source_duration_seconds=float(source_metadata.get("duration_seconds") or 0),
+                    target_language=str(requested.get("target_language") or "English"),
+                    source_language=requested.get("source_language"),
+                )
+                if external_result.get("status") == "PASS" and not _same_language(
+                    external_result.get("metadata", {}).get("source_language"), requested.get("target_language"),
+                ):
+                    _create_external_translation_track(run_id, external_result, str(requested.get("target_language") or "English"))
+                _persist_resolved_mode(run_id, EXTERNAL_AUDIO_MODE)
             elif requested_mode == LOCAL_AUDIO_MODE:
                 _set_processing_phase(run_id, "Recognize speech")
                 ensure_local_transcription_track(
@@ -354,9 +373,32 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
         except Exception as exc:
             _persist_processing_failure(run_id, "render_failed", "Render video", exc)
             raise ValueError(RENDER_FAILED_MESSAGE) from exc
-    except (SubtitleContentUnavailableError, SourceCaptionUnavailableError):
-        _persist_subtitle_source_block(run_id)
+    except (SubtitleContentUnavailableError, SourceCaptionUnavailableError) as exc:
+        _persist_subtitle_source_block(run_id, exc)
         raise
+
+
+def _same_language(source_language: Any, target_language: Any) -> bool:
+    aliases = {"english": "en", "en-us": "en", "en-gb": "en", "chinese": "zh", "zh-cn": "zh", "zh-hans": "zh"}
+    source = aliases.get(str(source_language or "").strip().lower(), str(source_language or "").strip().lower())
+    target = aliases.get(str(target_language or "").strip().lower(), str(target_language or "").strip().lower())
+    return bool(source and source == target)
+
+
+def _create_external_translation_track(run_id: str, external_result: dict[str, Any], target_language: str) -> dict[str, Any]:
+    source_cues = list(external_result.get("cues") or [])
+    try:
+        translated = translate_source_captions([str(cue.get("text") or "") for cue in source_cues])
+    except OfflineTranslationError as exc:
+        raise SubtitleContentUnavailableError(
+            f"Local translation to {target_language} is unavailable. Install the existing local translation runtime and retry."
+        ) from exc
+    return create_provider_translation_track(
+        run_id,
+        source_cues=source_cues,
+        translated_texts=[str(item.get("translated_text") or "") for item in translated],
+        metadata={**dict(external_result.get("metadata") or {}), "translation_provider": "offline_translation", "target_language": target_language},
+    )
 
 
 def get_run(run_id: str) -> dict[str, Any]:
@@ -815,16 +857,34 @@ def repair_invalid_completed_results() -> dict[str, Any]:
     return {"status": "PASS", "repaired_count": len(repaired), "repaired_run_ids": repaired}
 
 
-def _persist_subtitle_source_block(run_id: str) -> None:
+def _persist_subtitle_source_block(run_id: str, exc: Exception) -> None:
     with session_scope() as session:
         row = _get_run(session, run_id)
+        requested = json.loads(row.requested_settings_json or "{}")
+        is_external_asr = requested.get("caption_mode") == EXTERNAL_AUDIO_MODE
+        failure = {
+            "code": "autosubs_preflight_failed" if is_external_asr else "subtitle_source_unavailable",
+            "message": _safe_user_failure_message(exc),
+        }
         row.failure_category = "real_subtitle_content_unavailable"
         row.internal_state = "blocked"
         row.current_phase = "Create subtitles"
         row.output_path = None
         row.output_hash = None
         row.updated_at = datetime.now(timezone.utc)
+        failure_path = Path(row.run_directory) / "logs" / "subtitle_source_block.json"
+        failure_path.parent.mkdir(parents=True, exist_ok=True)
+        failure_path.write_text(json.dumps(failure, ensure_ascii=False, indent=2), encoding="utf-8")
         _write_manifest(Path(row.run_directory), row, status="blocked")
+
+
+def _safe_user_failure_message(exc: Exception) -> str:
+    message = re.sub(
+        r"(?i)(api[_-]?key|xi-api-key|authorization)\s*[:=]\s*\S+",
+        r"\1=[REDACTED]",
+        " ".join(str(exc).split()),
+    )
+    return message[:500] or "Subtitle source is unavailable. Check the local transcription engine and try again."
 
 
 def _persist_processing_failure(run_id: str, category: str, phase: str, exc: Exception) -> None:
@@ -1056,6 +1116,7 @@ def _serialize_run(row: SimpleWorkflowRun | None, **extra: Any) -> dict[str, Any
     source = json.loads(row.source_metadata_json)
     requested = json.loads(row.requested_settings_json)
     validation = _completed_result_validation(row)
+    failure_detail = _load_failure_detail(Path(row.run_directory))
     output_url = f"/api/simple/runs/{row.run_id}/output" if row.output_path and validation["eligible"] else None
     payload = {
         "run_id": row.run_id,
@@ -1083,6 +1144,7 @@ def _serialize_run(row: SimpleWorkflowRun | None, **extra: Any) -> dict[str, Any
         },
         "approval_state": row.approval_state,
         "failure_category": row.failure_category,
+        "failure_detail": failure_detail,
         "result_validation": validation,
         "result_eligible": validation["eligible"],
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -1096,6 +1158,19 @@ def _serialize_run(row: SimpleWorkflowRun | None, **extra: Any) -> dict[str, Any
     }
     payload.update(extra)
     return payload
+
+
+def _load_failure_detail(run_directory: Path) -> dict[str, str] | None:
+    path = run_directory / "logs" / "subtitle_source_block.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    code = payload.get("code")
+    message = payload.get("message")
+    if not isinstance(code, str) or not isinstance(message, str):
+        return None
+    return {"code": code, "message": message}
 
 
 def _subtitle_track_summary(run_id: str) -> dict[str, Any]:

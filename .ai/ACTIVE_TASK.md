@@ -1,57 +1,67 @@
-# Task Template — DEEP
+# Task Template — STANDARD
 
 Task Status: COMPLETED
-Task Mode: DEEP
-Task ID: BUILD_OS_V116_ADOPTION
+Task Mode: STANDARD
+Task ID: AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP
 Task Revision: 1
 Created: 2026-08-09
 Owner Authorization: APPROVED
-Authorization Reference: Owner attached autonomous execution brief
+Authorization Reference: OWNER DECISION FINAL RECOVERY/SHIP PATH C:\Users\ADMIN\.codex\attachments\d8c7582a-ece9-4fd9-a308-393080d87cf0\pasted-text.txt
 
 ## Single Outcome
 
-Adopt Senior AI Build OS v1.16 while preserving project-specific state and evidence
+Materialize the externally Git-verified AutoSubs MVP, run real Chinese-media source-only AutoSubs acceptance and the frozen 5/5 suite, then ship the intentional product delta without redesign.
 
 ## Product Link
 
-- Milestone ID: DEV_BASELINE_RESET_FINAL
-- Success Criterion: SC-001
-- Delivery Delta: RISK_RETIREMENT
-- Demonstrable Result: v1.16 control plane is operational with preserved Tool AutoSub state
-- Unlocks: Goal routing and governed external-transcription MVP execution
+- Milestone ID: M-001
+- Success Criterion: Canonical delta matches the externally reconstructed 11 tracked Git blobs and five SHA-verified untracked files; real source-only Chinese smoke and frozen 5/5 acceptance pass.
+- Goal ID: AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP
+- Goal Node: SHIP_EXTERNAL_TRANSCRIPTION_MVP
+- Delivery Delta: EXECUTABLE_CAPABILITY
+- Demonstrable Result: runtime/output evidence listed in task evidence index
+- Unlocks: next ready Goal node
 - Consecutive Non-Shipping Tasks Before This Task: 0
 
 ## Risk and Execution Profile
 
-- Risk Tier: R3
+- Risk At Start: R2
+- Risk Tier: R2
 - Declared Risk Tier: R2
-- Risk Floor: R3
-- Risk Floor Reason: R3:files overwritten
-- Negative path required: yes
-- Execution Profile: DEEP
-- Human review required: yes
-- Specialist reviewer trigger: security/data/operations
-- Full suite required: yes
+- Risk Floor: R2
+- Risk Floor Reason: R2:shared/API/data/security/background surface
+- Negative path required: no
+- Execution Profile: STANDARD
+- Human review required: trigger-based
+- Specialist reviewer trigger: UNSET
+- Full suite required: only-if-gate-requires
+- Review policy: none
+- Acceptance Contract SHA256: 3beb89b353f6f5ffa0b4496242f38a3b3da0ace8db1c789bb4c14ceb7f61d5ae
+- Acceptance Contract JSON: {"commands":["cmd /c python -m pytest -q tests/test_external_transcription_provider.py tests/test_external_transcription_vertical_slice.py tests/test_task35_offline_transcription.py tests/test_task40_source_caption_translation.py tests/test_cp10b_simple_workflow.py"],"expected_outputs":["passed"],"probe_files":[],"probe_hashes":{},"effective_risk_at_freeze":"R2","frozen_at":"2026-08-09T05:30:56+00:00","contract_sha256":"3beb89b353f6f5ffa0b4496242f38a3b3da0ace8db1c789bb4c14ceb7f61d5ae"}
+- State Hazard Level: S0
+- State Hazard Signals: NONE
+- State Contract SHA256: 11ed7156957cf0604a027304d0b6da0f59313d984d1506f34d4fe3ecf8bb720e
+- State Contract JSON: {"schema_version":1,"level":"S0","authority":"","transitions":[],"invariants":[],"dependencies":["app/api/routes.py","app/services/asr_models.py","app/services/operator_ui.py","app/services/simple_workflow.py","app/services/source_caption_translation.py","app/services/subtitle_tracks.py","app/static/simple/app.js","app/static/simple/index.html","tests/test_task38s_small_model_policy.py","tests/test_task40_source_caption_translation.py","tests/test_v1_scope_cut_gemini_rejection.py","app/providers/asr/autosubs_provider.py","app/services/external_transcription.py","docs/AUTOSUBS_ENGINE_CONTRACT.md","tests/test_external_transcription_provider.py","tests/test_external_transcription_vertical_slice.py"],"signals":[],"contract_sha256":"11ed7156957cf0604a027304d0b6da0f59313d984d1506f34d4fe3ecf8bb720e"}
 
 ## Continuity Fingerprint at Authorization
 
 - Project ID: tool-autosub
 - Branch: main
-- HEAD: 3aaa138bca9d2a325d8337960b1ef472222d87c0
-- Worktree: CLEAN
-- Starting Snapshot SHA256: 3864822e014aae22ccb199bc8d67cd0f9fe5d8ddc2fbcfb013dcc04d95c297ff
-- Verified Snapshot SHA256: 8b45b901c927a85655e583a02f1a38cb57b80bf98aa4308c2712be6e33b988d7
-- State Revision: 14
-- Context Capsule Revision: 22
+- HEAD: 62602ccc6127ae0b730127a621bd20033969feed
+- Worktree: DIRTY
+- Starting Snapshot SHA256: 41541b5e3b7152f34f3b547dbf1acf03be17587b5fb91f0a4b2336ba54d7cb25
+- Verified Snapshot SHA256: 556a51c52ccf67c63fa3f8d12c56f0398b2561393de7cd4c8bceb83198b35bf3
+- State Revision: 21
+- Context Capsule Revision: 31
 
 ## Permission Matrix
 
 ### Allowed
 
-- Read: repository Build OS files and supplied v1.16 package
-- Modify: AGENTS.md,.github/**,.ai/**,config/**,docs/0*.md,docs/1*.md,docs/2*.md,prompts/**,scripts/**,templates/**,.gitignore
-- Create: .ai/**,config/**,docs/1*.md,docs/2*.md,prompts/**,scripts/**
-- Commands: python -m compileall -q scripts; python scripts/validate_ai_os.py --template; python scripts/self_test.py; python scripts/ai_os.py check --strict; python scripts/ai_os.py assurance
+- Read: task-relevant repository files
+- Modify: app/api/routes.py,app/services/asr_models.py,app/services/operator_ui.py,app/services/simple_workflow.py,app/services/source_caption_translation.py,app/services/subtitle_tracks.py,app/static/simple/app.js,app/static/simple/index.html,tests/test_task38s_small_model_policy.py,tests/test_task40_source_caption_translation.py,tests/test_v1_scope_cut_gemini_rejection.py
+- Create: app/providers/asr/autosubs_provider.py,app/services/external_transcription.py,docs/AUTOSUBS_ENGINE_CONTRACT.md,tests/test_external_transcription_provider.py,tests/test_external_transcription_vertical_slice.py
+- Commands: focused checks and task-authorized commands
 - Local services: NONE
 - External calls: NONE
 - Data operation: READ_ONLY
@@ -64,41 +74,38 @@ Adopt Senior AI Build OS v1.16 while preserving project-specific state and evide
 
 ## Acceptance Criteria
 
-- [ ] v1.16 kernel compiles and passes its bundled self-test
-- [ ] strict validation passes after generated policy and project continuity are reconciled
+- [ ] Run AutoSubs v3.8.0 small zh source-only against retained canonical Chinese media and inspect JSON cues.
+- [ ] Run frozen acceptance unchanged and inspect provider/source/translation/preview output.
 
 ## Verification Plan
 
 1. Cheapest focused check.
-2. Critical negative path.
-3. Affected runtime/integration check.
-4. Rollback rehearsal/proof that leaves final state intact.
-5. Full/critical suite as required.
-6. Inspect final output and task delta; independent review for R3.
+2. Affected runtime/integration check.
+3. Inspect final output and Git diff.
 
 ## Before-Execution Preflight
 
-- Inputs: Owner-supplied v1.16 ZIP and existing repository governance files
-- Outputs: v1.16 kernel, policies, templates, prompts, and preserved project state
-- Files created: v1.16 additive kernel/configuration records only
-- Files overwritten: Build OS kernel/governance files only
+- Inputs: task-relevant source and fixtures
+- Outputs: accepted outcome and evidence
+- Files created: NONE
+- Files overwritten: NONE
 - Data mutated: NONE
 - External/provider calls: NONE
 - Expected provider cost: 0.0
 - Disk requirement: MINIMAL
 - RAM/GPU requirement: MINIMAL
 - Process/port: NONE
-- Cache/artifact lineage: Create new immutable adoption evidence; do not migrate old evidence
-- Rollback: Restore pre-adoption kernel files from Git; preserve product code/state
+- Cache/artifact lineage: source inputs and evidence manifest
+- Rollback: revert task-scoped diff and remove new artifacts
 
 ## Cost Efficiency Plan
 
-- Outcome value: NOT_ESTIMATED
-- Expected cost range: small
-- Primary cost drivers: Local validation only
-- Cheapest evidence-first sequence: Compile, template validation, bundled self-test, strict project validation, assurance
-- Initial execution profile: DEEP
-- Escalation conditions: Stop for incompatibility that cannot be resolved without product-code changes
+- Outcome value: UNSET
+- Expected cost range: small; investigate repeated attempts without evidence
+- Primary cost drivers: implementation, verification and output inspection
+- Cheapest evidence-first sequence: focused → affected regression/runtime → acceptance contract → diff review
+- Initial execution profile: STANDARD
+- Escalation conditions: risk exceeds profile or same approach fails twice
 - Marginal value checkpoint: before repeated expensive operation
 - Continue spending when: next spend buys evidence, lower uncertainty, acceptance or safety proof
 - Split/change strategy when: same approach fails twice or no new evidence
@@ -118,32 +125,33 @@ Adopt Senior AI Build OS v1.16 while preserving project-specific state and evide
 
 - Lease Status: RELEASED
 - Writer Role: WORKER
-- Platform: Codex
+- Platform: windows
 - Model Claimed: UNSPECIFIED
 - Identity Verification: VERIFIED
-- Session Label: BUILD_OS_V116_ADOPTION
-- Claimed At: 2026-08-09T03:40:02+00:00
-- Last Heartbeat: 2026-08-09T04:05:32+00:00
-- Released At: 2026-08-09T04:05:32+00:00
+- Session Label: autosubs-ship-worker
+- Claimed At: 2026-08-09T05:30:56+00:00
+- Last Heartbeat: 2026-08-09T05:49:35+00:00
+- Released At: 2026-08-09T05:49:35+00:00
 - Takeover From: NONE
 
 ## Lifecycle Timing
 
-- Started At: 2026-08-09T03:40:02+00:00
+- Started At: 2026-08-09T05:30:56+00:00
 - First Runnable At: NONE
 - First Runnable Evidence: NONE
-- Completed At: 2026-08-09T04:05:32+00:00
+- Completed At: 2026-08-09T05:49:35+00:00
 
 ## Completion
 
-- Outcome: Senior AI Build OS v1.16 adopted and validated with preserved Tool AutoSub project continuity
-- Evidence index: .ai/evidence/BUILD_OS_V116_ADOPTION/r001/EVIDENCE_INDEX.md
-- Evidence Bundle: .ai/evidence/BUILD_OS_V116_ADOPTION/r001
-- Worker report: .ai/evidence/BUILD_OS_V116_ADOPTION/r001/WORKER_REPORT.md
-- Review report: .ai/evidence/BUILD_OS_V116_ADOPTION/r001/review/BUILD_OS_V116_ADOPTION_REVIEW.md
-- Ending HEAD: 3aaa138bca9d2a325d8337960b1ef472222d87c0
+- Outcome: AutoSubs v3.8.0 small now provides source-only Chinese timestamped cues through the external provider and source-track resolution, with target-language translation remaining separate.
+- Evidence index: .ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001/EVIDENCE_INDEX.md
+- Evidence Bundle: .ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001
+- Worker report: .ai/evidence/AUTOSUB_EXTERNAL_TRANSCRIPTION_SHIP-SHIP_EXTERNAL_TRANSCRIPTION_MVP/r001/WORKER_REPORT.md
+- Review report: NONE
+- Ending HEAD: 62602ccc6127ae0b730127a621bd20033969feed
 - Lease release: RELEASED
 
-## Scope Amendments
+## Revision Stop-Loss Acknowledgement
 
-- 2026-08-09T03:43:45+00:00: v1.16 requires versioned Goal and state records; .ai/.gitignore already excludes runtime artifacts | modify+=.gitignore | create+=NONE | risk R3->R3
+- Prior failed-first-pass revisions: 0
+- Changed root-cause hypothesis: Stop for material redesign, unreconstructable intended Git product state, or origin divergence; do not use prohibited alignment assets.
