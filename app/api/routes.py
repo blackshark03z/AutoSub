@@ -22,6 +22,7 @@ from app.services.content_transform import transform_latest_timeline
 from app.services.ingest import import_local_source
 from app.services.ocr_runtime import get_ocr_runtime_status
 from app.providers.asr.autosubs_provider import AUTOSUBS_MODEL, AUTOSUBS_VERSION
+from app.services.runtime_readiness import RuntimeReadinessError, ensure_product_runtime_ready, runtime_readiness
 from app.services.operator_ui import (
     accepted_preview_path,
     apply_cjk_cleanup_action,
@@ -239,12 +240,25 @@ def simple_capabilities() -> dict:
             "engine_version": AUTOSUBS_VERSION,
             "model": AUTOSUBS_MODEL,
             "model_source": "AutoSubs managed local cache",
-            "model_policy": "preflight_requires_cached_small_model",
+            "model_policy": "managed_runtime_preparation_and_real_probe",
             "local_inference": True,
             "fallback_enabled": False,
-            "implicit_download_enabled": False,
+            "managed_preparation_enabled": True,
         },
     }
+
+
+@router.get("/simple/runtime/readiness")
+def simple_runtime_readiness() -> dict:
+    return runtime_readiness(get_settings().root)
+
+
+@router.post("/simple/runtime/prepare")
+def simple_runtime_prepare() -> dict:
+    try:
+        return ensure_product_runtime_ready(get_settings().root)
+    except RuntimeReadinessError as exc:
+        raise HTTPException(status_code=503, detail={"title": "Local runtime preparation failed", "message": str(exc)}) from exc
 
 
 @router.post("/simple/source/validate")

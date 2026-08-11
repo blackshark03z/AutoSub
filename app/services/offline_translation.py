@@ -29,6 +29,7 @@ def discover_translation_config_path(config_path: Path | None = None) -> Path | 
     if config_path is not None:
         candidates.append(Path(config_path))
     candidates.extend([
+        _managed_translation_config_path(settings.root),
         settings.root / "operator" / "translation_runtime_config.local.json",
         settings.root / "addons" / "translation_runtime" / "operator" / "translation_runtime_config.local.json",
     ])
@@ -39,6 +40,14 @@ def discover_translation_config_path(config_path: Path | None = None) -> Path | 
         if candidate.is_file():
             return candidate.resolve()
     return None
+
+
+def _managed_translation_config_path(root: Path) -> Path:
+    # Imported lazily to keep the compatibility path independent from managed
+    # provisioning during early application startup.
+    from app.services.runtime_readiness import managed_translation_config_path
+
+    return managed_translation_config_path(root)
 
 
 def load_translation_config(config_path: Path | None = None) -> OfflineTranslationConfig:

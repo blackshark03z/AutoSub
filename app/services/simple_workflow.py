@@ -21,6 +21,7 @@ from app.services.local_transcription import ensure_local_transcription_track
 from app.services.external_transcription import ensure_external_transcription_track
 from app.services.asr_models import SIMPLE_UI_MODEL_NAME, normalize_simple_ui_settings
 from app.services.offline_translation import OfflineTranslationError, translate_source_captions
+from app.services.runtime_readiness import RuntimeReadinessError, ensure_product_runtime_ready
 from app.services.clean_subtitle_render import (
     build_source_replacement_filter,
     build_source_replacement_plan,
@@ -86,6 +87,10 @@ RENDER_FAILED_MESSAGE = (
 
 class InvalidCompletedResultError(ValueError):
     pass
+
+
+class RuntimeReadinessBlockedError(SubtitleContentUnavailableError):
+    """The run is already persisted as blocked with a setup-specific reason."""
 
 
 def supported_formats() -> list[str]:
@@ -317,6 +322,14 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                     str(source_caption["metadata"].get("mode") or SOURCE_CAPTION_GEMINI_MODE),
                 )
             elif requested_mode == EXTERNAL_AUDIO_MODE:
+                try:
+                    ensure_product_runtime_ready(
+                        get_settings().root,
+                        progress=lambda _state, message: _set_processing_phase(run_id, message),
+                    )
+                except RuntimeReadinessError as exc:
+                    _persist_runtime_readiness_block(run_id, exc)
+                    raise RuntimeReadinessBlockedError(str(exc)) from exc
                 _set_processing_phase(run_id, "Recognize speech")
                 external_result = ensure_external_transcription_track(
                     run_id,
@@ -373,6 +386,8 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
         except Exception as exc:
             _persist_processing_failure(run_id, "render_failed", "Render video", exc)
             raise ValueError(RENDER_FAILED_MESSAGE) from exc
+    except RuntimeReadinessBlockedError:
+        raise
     except (SubtitleContentUnavailableError, SourceCaptionUnavailableError) as exc:
         _persist_subtitle_source_block(run_id, exc)
         raise
@@ -873,6 +888,22 @@ def _persist_subtitle_source_block(run_id: str, exc: Exception) -> None:
         row.output_hash = None
         row.updated_at = datetime.now(timezone.utc)
         failure_path = Path(row.run_directory) / "logs" / "subtitle_source_block.json"
+        failure_path.parent.mkdir(parents=True, exist_ok=True)
+        failure_path.write_text(json.dumps(failure, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_manifest(Path(row.run_directory), row, status="blocked")
+
+
+def _persist_runtime_readiness_block(run_id: str, exc: Exception) -> None:
+    with session_scope() as session:
+        row = _get_run(session, run_id)
+        failure = {"code": "runtime_readiness_failed", "message": _safe_user_failure_message(exc)}
+        row.failure_category = "runtime_readiness_failed"
+        row.internal_state = "blocked"
+        row.current_phase = "Preparing local runtime"
+        row.output_path = None
+        row.output_hash = None
+        row.updated_at = datetime.now(timezone.utc)
+        failure_path = Path(row.run_directory) / "logs" / "runtime_readiness.json"
         failure_path.parent.mkdir(parents=True, exist_ok=True)
         failure_path.write_text(json.dumps(failure, ensure_ascii=False, indent=2), encoding="utf-8")
         _write_manifest(Path(row.run_directory), row, status="blocked")

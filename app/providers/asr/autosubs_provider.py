@@ -32,16 +32,15 @@ class AutoSubsConfig:
 
 
 def discover_autosubs_config(root: Path) -> AutoSubsConfig:
-    """Locate the portable engine without requiring an operator ASR setting.
-
-    Environment paths are an installer/integration override.  The default is
-    the portable bundle location; this adapter never downloads an engine or a
-    model on the user's behalf.
-    """
+    """Locate AutoSub's managed engine without requiring an operator setting."""
     root = Path(root).resolve()
     binary_value = os.environ.get("TOOL_AUTO_SUB_AUTOSUBS_BINARY", "").strip()
+    if not binary_value:
+        from app.services.runtime_readiness import _discover_autosubs_binary
+
+        binary_value = str(_discover_autosubs_binary(root))
     return AutoSubsConfig(
-        binary_path=(Path(binary_value) if binary_value else root / "addons" / "autosubs" / "autosubs.exe").resolve(),
+        binary_path=Path(binary_value).resolve(),
         timeout_seconds=max(5, int(os.environ.get("TOOL_AUTO_SUB_AUTOSUBS_TIMEOUT_SECONDS", AUTOSUBS_TIMEOUT_SECONDS))),
     )
 

@@ -6,8 +6,17 @@ import pytest
 
 from app.providers.asr.base import ASRSegment
 from app.services import external_transcription
+from app.services.runtime_readiness import RuntimeReadinessError
 from app.services.subtitle_tracks import SubtitleContentUnavailableError, list_tracks
 from tests.test_cp10b_simple_workflow import _make_tiny_video, _with_client, configure_test_root
+
+
+@pytest.fixture(autouse=True)
+def _ready_managed_runtime(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.simple_workflow.ensure_product_runtime_ready",
+        lambda *_args, **_kwargs: {"status": "ready"},
+    )
 
 
 class FakeAutoSubsProvider:
@@ -111,5 +120,32 @@ def test_external_engine_failure_blocks_export_with_actionable_message(monkeypat
         }
         assert failed["settings"]["asr_provider"] == "autosubs"
         assert failed["settings"]["asr_model_policy"] == "autosubs_cached_model_preflight"
+
+    asyncio.run(_with_client(run))
+
+
+def test_managed_runtime_failure_is_actionable_and_does_not_look_hung(monkeypatch, tmp_path):
+    configure_test_root(monkeypatch, tmp_path)
+    monkeypatch.delenv("TOOL_AUTO_SUB_ALLOW_TEST_SUBTITLE_FIXTURES", raising=False)
+    monkeypatch.setattr(
+        "app.services.simple_workflow.ensure_product_runtime_ready",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeReadinessError("AutoSubs download failed. Check the network connection and retry.")),
+    )
+    source = tmp_path / "runtime-missing.mp4"
+    _make_tiny_video(source)
+
+    async def run(client):
+        created = (await client.post(
+            "/api/simple/runs",
+            json={"source_path": str(source), "settings": {"caption_mode": "external_audio_transcription"}},
+        )).json()["run"]
+        await client.post(f"/api/simple/runs/{created['run_id']}/start")
+        failed = (await client.get(f"/api/simple/runs/{created['run_id']}")).json()["run"]
+        assert failed["internal_state"] == "blocked"
+        assert failed["failure_category"] == "runtime_readiness_failed"
+        assert failed["phase"] == "Preparing local runtime"
+        detail = json.loads((Path(failed["run_directory"]) / "logs" / "runtime_readiness.json").read_text(encoding="utf-8"))
+        assert detail["code"] == "runtime_readiness_failed"
+        assert "network connection" in detail["message"]
 
     asyncio.run(_with_client(run))
