@@ -19,6 +19,7 @@ const VIEW_IDS = {
 };
 
 const WORKFLOW_STEPS = [
+  { id: "runtime", label: "Kiểm tra khả năng cục bộ", stages: ["checking_runtime", "downloading_autosubs", "preparing_autosubs_model", "preparing_translation", "runtime_ready"] },
   { id: "prepare", label: "Chuẩn bị âm thanh", stages: ["checking_video"] },
   { id: "recognize", label: "Nhận dạng lời nói", stages: ["analysing_dialogue"] },
   { id: "subtitles", label: "Tạo phụ đề", stages: ["preparing_english_subtitles", "cleaning_dialogue_subtitles"] },
@@ -27,6 +28,11 @@ const WORKFLOW_STEPS = [
 ];
 
 const STAGE_LABELS = {
+  checking_runtime: "Đang kiểm tra khả năng cục bộ",
+  downloading_autosubs: "Đang tải AutoSubs cục bộ",
+  preparing_autosubs_model: "Đang chuẩn bị mô hình AutoSubs small",
+  preparing_translation: "Đang chuẩn bị dịch Trung → Anh ngoại tuyến",
+  runtime_ready: "Khả năng cục bộ đã sẵn sàng",
   checking_video: "Đang chuẩn bị âm thanh",
   analysing_dialogue: "Đang nhận dạng lời nói",
   preparing_english_subtitles: "Đang tạo phụ đề",
@@ -164,6 +170,15 @@ function updateStartAction() {
       : "Hãy chọn một video để tiếp tục.";
 }
 
+function runtimeComponents(readiness) {
+  return [
+    ["AutoSubs", readiness?.autosubs_runtime],
+    ["Mô hình AutoSubs small", readiness?.autosubs_small_model],
+    ["Argos Translate", readiness?.argos_runtime],
+    ["Mô hình Trung → Anh", readiness?.argos_zh_en_model],
+  ];
+}
+
 function clearPreview() {
   const video = $("previewVideo");
   video.pause();
@@ -206,7 +221,9 @@ function renderProcessing(run) {
     : progress.status_label || STAGE_LABELS[currentStage] || "Đang xử lý";
   $("processingDescription").textContent = failed
     ? "Ứng dụng đã dừng an toàn và không công bố kết quả chưa hợp lệ."
-    : "Trạng thái được cập nhật từ tiến trình xử lý thực trên máy.";
+    : currentStage.includes("runtime") || currentStage.includes("autosubs") || currentStage === "preparing_translation"
+      ? "AutoSub đang kiểm tra hoặc chuẩn bị các khả năng cục bộ cần thiết. Bạn không cần tải hay cấu hình thủ công."
+      : "Trạng thái được cập nhật từ tiến trình xử lý thực trên máy.";
   $("processingTechnicalOutput").textContent = JSON.stringify(run || {}, null, 2);
   $("processingStages").innerHTML = WORKFLOW_STEPS.map((step) => {
     const active = step.stages.includes(currentStage);
@@ -269,6 +286,7 @@ function renderError(run, fallbackMessage = "") {
   clearPreview();
   $("errorMessage").textContent = friendlyFailureMessage(run, fallbackMessage);
   $("technicalOutput").textContent = JSON.stringify(run || { message: fallbackMessage }, null, 2);
+  $("retryRuntimeBtn").hidden = run?.failure_category !== "runtime_readiness_failed";
 }
 
 function renderRun(run, options = {}) {
@@ -296,32 +314,17 @@ function readinessCard(label, value, pass = true) {
 
 async function renderReadiness() {
   try {
-    const [payload, capabilities] = await Promise.all([
-      api("/api/health"),
-      api("/api/simple/capabilities"),
-    ]);
-    const ocr = payload.ocr_runtime || {};
-    const gemini = capabilities.gemini_translation || {};
-    const ready = payload.status === "ok";
-    const geminiSource = String(gemini.credential_source || "missing").replace(/_/g, " ");
-    const geminiModel = String(gemini.model || "");
-    $("readinessPill").textContent = ready ? "Sẵn sàng" : "Cần kiểm tra";
+    const readiness = await api("/api/simple/runtime/readiness");
+    const ready = readiness.status === "ready";
+    $("readinessPill").textContent = ready ? "Sẵn sàng" : "Cần chuẩn bị";
     $("readinessPill").classList.toggle("pass", ready);
-    $("readinessSummary").innerHTML = [
-      readinessCard("Ứng dụng", ready ? "Sẵn sàng" : "Chưa sẵn sàng", ready),
-      readinessCard("FFmpeg", ready ? "Có thể sử dụng" : "Cần kiểm tra", ready),
-      readinessCard("OCR tùy chọn", ocr.available ? "Sẵn sàng" : "Không khả dụng", Boolean(ocr.available)),
-      readinessCard("Gemini free tier", gemini.configured ? "Đã xác minh" : "Chưa cấu hình", Boolean(gemini.configured)),
-    ].join("");
-    $("geminiStatus").textContent = gemini.configured
-      ? `Gemini ${geminiModel || "đã chọn"} · ${geminiSource}`
-      : "Cần cấu hình Gemini free tier trước khi tạo video.";
+    $("readinessSummary").innerHTML = runtimeComponents(readiness).map(([label, component]) => {
+      const componentReady = component?.state === "ready";
+      return readinessCard(label, componentReady ? "Sẵn sàng" : component?.message || "Cần chuẩn bị", componentReady);
+    }).join("");
     $("readinessDetails").textContent = JSON.stringify({
-      status: payload.status,
-      ocr_available: Boolean(ocr.available),
-      gemini_configured: Boolean(gemini.configured),
-      gemini_credential_source: gemini.credential_source || "missing",
-      action: ready ? "Chọn video để bắt đầu." : "Khởi động lại ứng dụng bằng launcher chính thức.",
+      status: readiness.status,
+      action: ready ? "Chọn video để bắt đầu." : "Chọn video rồi bấm tạo; AutoSub sẽ chuẩn bị khả năng cục bộ cần thiết.",
     }, null, 2);
   } catch (error) {
     $("readinessPill").textContent = "Cần kiểm tra";
@@ -425,6 +428,7 @@ function schedulePathValidation() {
 
 function collectSettings() {
   return {
+    target_language: $("targetLanguage").value,
     output_filename: $("outputName").value || "final_video.mp4",
     output_destination: $("outputDestination").value || "",
     include_ass_sidecar: $("includeAss").checked,
@@ -482,12 +486,21 @@ async function refreshActiveRun() {
   return run;
 }
 
-async function startProcessing() {
+async function startProcessing({ retryRuntime = false } = {}) {
   if (state.starting || !state.validatedSource) return;
   state.starting = true;
   updateStartAction();
   try {
-    const run = await ensureRun();
+    const run = retryRuntime && state.run?.run_id
+      ? (await api("/api/simple/runs/retry", {
+        method: "POST",
+        body: JSON.stringify({
+          source_path: state.sourcePath,
+          retry_parent_run_id: state.run.run_id,
+          settings: collectSettings(),
+        }),
+      })).run
+      : await ensureRun();
     const provisional = {
       ...run,
       internal_state: "processing",
@@ -826,6 +839,7 @@ function wireEvents() {
     else if (file) uploadAndValidate(file).catch(handleActionError);
   });
   $("startBtn").addEventListener("click", () => startProcessing());
+  $("retryRuntimeBtn").addEventListener("click", () => startProcessing({ retryRuntime: true }));
   $("newVideoBtn").addEventListener("click", () => returnToSetup({ clearSelection: true }));
   $("backToSetupBtn").addEventListener("click", () => returnToSetup({ clearSelection: false }));
   $("latestResultBtn").addEventListener("click", () => {

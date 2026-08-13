@@ -30,7 +30,9 @@ For beta users, extract the CP12B ZIP and double-click `START_TOOL.cmd`.
 
 ## Primary Workflow
 
-The Simple UI is the primary interface. It supports selecting a video, creating dialogue subtitles, previewing the result, saving a copy, and using optional Creative Import.
+The Simple UI is the primary interface. Select a local video, keep **English** as the output language, and choose **Tạo video có phụ đề** once. AutoSub checks the local AutoSubs and offline Chinese-to-English translation capabilities as part of that action. On a first run it shows only the preparation work that is actually needed, then continues automatically into transcription, translation, preview, and export. On later runs it revalidates the cached capabilities without pretending to download or prepare them again.
+
+If local preparation cannot complete, the normal UI explains the problem and offers **Thử chuẩn bị lại** after the underlying condition is corrected. No terminal, environment-variable, JSON, or command-line setup is part of this workflow. Source Chinese text and English translation remain separate subtitle fields and tracks.
 
 Creative Import lets a user export a cue-based template, edit only the subtitle wording outside the tool, import it back, preview validation results, and apply it as a separate Creative or Imported subtitle track. It does not change canonical timing, audio, OCR, source suppression geometry, or source media.
 

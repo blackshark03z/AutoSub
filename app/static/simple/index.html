@@ -56,6 +56,14 @@
             </label>
 
             <label class="field">
+              <span>Ngôn ngữ phụ đề đầu ra</span>
+              <select id="targetLanguage">
+                <option value="English" selected>English</option>
+              </select>
+              <small>Phụ đề tiếng Trung gốc và bản dịch tiếng Anh được giữ tách riêng.</small>
+            </label>
+
+            <label class="field">
               <span>Chế độ phụ đề</span>
               <select id="cleanupMode">
                 <option value="external_audio_transcription" selected>Tự nhận dạng lời nói cục bộ</option>
@@ -228,6 +236,7 @@
           <p id="errorMessage" class="lead"></p>
         </header>
         <section class="surface error-surface">
+          <button id="retryRuntimeBtn" class="primary" type="button" hidden>Thử chuẩn bị lại</button>
           <button id="backToSetupBtn" class="primary" type="button">Quay lại thiết lập</button>
           <details id="errorDetails" class="advanced-disclosure">
             <summary>Chi tiết xử lý lỗi</summary>
@@ -236,6 +245,6 @@
         </section>
       </section>
     </main>
-    <script src="/app.js?v=task36b" defer></script>
+    <script src="/app.js?v=first-run-runtime" defer></script>
   </body>
 </html>

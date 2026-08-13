@@ -18,6 +18,8 @@ Tool Auto Sub is a local FastAPI application with static browser UIs, SQLite sta
 
 The Simple UI at `/` is the default product path for a normal single user.
 
+Its normal external-audio workflow uses the existing `runtime_readiness` service inside the accepted background processing job. Readiness callbacks are persisted as run phases and surfaced through the existing run-status polling contract: checking, actual AutoSubs/model or Argos preparation where needed, ready, and a safe failed state. The browser never invokes a separate provisioning workflow. A readiness failure is recorded as `runtime_readiness_failed` with a redacted user-safe detail; retry creates a normal retry run only after the user chooses the visible recovery action.
+
 The Operator UI at `/operator/` is advanced tooling for project review, diagnostics, release inspection, and recovery.
 
 ## Distribution

@@ -54,6 +54,11 @@ from app.services.subtitle_tracks import (
 )
 
 USER_STAGES = [
+    ("checking_runtime", "Checking local capabilities"),
+    ("downloading_autosubs", "Downloading AutoSubs"),
+    ("preparing_autosubs_model", "Preparing AutoSubs small model"),
+    ("preparing_translation", "Preparing offline Chinese to English translation"),
+    ("runtime_ready", "Local capabilities ready"),
     ("checking_video", "Checking video"),
     ("analysing_dialogue", "Analysing dialogue"),
     ("preparing_english_subtitles", "Preparing English subtitles"),
@@ -325,7 +330,7 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                 try:
                     ensure_product_runtime_ready(
                         get_settings().root,
-                        progress=lambda _state, message: _set_processing_phase(run_id, message),
+                        progress=lambda state, message: _set_runtime_readiness_phase(run_id, state, message),
                     )
                 except RuntimeReadinessError as exc:
                     _persist_runtime_readiness_block(run_id, exc)
@@ -957,6 +962,19 @@ def _set_processing_phase(run_id: str, phase: str) -> None:
         _write_manifest(Path(row.run_directory), row, status="processing")
 
 
+def _set_runtime_readiness_phase(run_id: str, state: str, message: str) -> None:
+    """Persist the existing readiness event so polling UI can render real work."""
+    with session_scope() as session:
+        row = _get_run(session, run_id)
+        row.internal_state = "processing"
+        row.current_phase = f"runtime:{state}"
+        requested = json.loads(row.requested_settings_json or "{}")
+        requested["runtime_readiness_message"] = _safe_user_failure_message(RuntimeError(message))
+        row.requested_settings_json = json.dumps(requested, ensure_ascii=False)
+        row.updated_at = datetime.now(timezone.utc)
+        _write_manifest(Path(row.run_directory), row, status="processing")
+
+
 def _persist_resolved_mode(run_id: str, mode: str) -> None:
     with session_scope() as session:
         row = _get_run(session, run_id)
@@ -1192,16 +1210,16 @@ def _serialize_run(row: SimpleWorkflowRun | None, **extra: Any) -> dict[str, Any
 
 
 def _load_failure_detail(run_directory: Path) -> dict[str, str] | None:
-    path = run_directory / "logs" / "subtitle_source_block.json"
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
-    code = payload.get("code")
-    message = payload.get("message")
-    if not isinstance(code, str) or not isinstance(message, str):
-        return None
-    return {"code": code, "message": message}
+    for name in ("runtime_readiness.json", "subtitle_source_block.json"):
+        try:
+            payload = json.loads((run_directory / "logs" / name).read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        code = payload.get("code")
+        message = payload.get("message")
+        if isinstance(code, str) and isinstance(message, str):
+            return {"code": code, "message": message}
+    return None
 
 
 def _subtitle_track_summary(run_id: str) -> dict[str, Any]:
@@ -1262,17 +1280,44 @@ def _stage_progress(state: str, phase: str | None = None) -> dict[str, Any]:
         completed = [stage_id for stage_id, _ in USER_STAGES]
         status_label = None
     elif state == "processing":
+        runtime_stage_ids = [
+            "checking_runtime",
+            "downloading_autosubs",
+            "preparing_autosubs_model",
+            "preparing_translation",
+            "runtime_ready",
+        ]
+        runtime_phase = str(phase or "").removeprefix("runtime:")
+        runtime_messages = {
+            "checking_runtime": "Đang kiểm tra khả năng cục bộ",
+            "downloading_autosubs": "Đang tải AutoSubs cục bộ",
+            "preparing_autosubs_model": "Đang chuẩn bị mô hình AutoSubs small",
+            "preparing_translation": "Đang chuẩn bị dịch Trung → Anh ngoại tuyến",
+            "runtime_ready": "Khả năng cục bộ đã sẵn sàng",
+        }
+        if runtime_phase in runtime_messages:
+            runtime_stages = [stage_id for stage_id, _label in USER_STAGES]
+            current = runtime_phase
+            completed = runtime_stages[:runtime_stages.index(runtime_phase)]
+            status_label = runtime_messages[runtime_phase]
+            return {
+                "mode": "stage",
+                "current_stage": current,
+                "completed_stages": completed,
+                "percentage": None,
+                "status_label": status_label,
+            }
         phase_map = {
-            "Prepare audio": ("analysing_dialogue", ["checking_video"], "Đang chuẩn bị âm thanh"),
-            "Recognize speech": ("analysing_dialogue", ["checking_video"], "Đang nhận dạng lời nói"),
+            "Prepare audio": ("checking_video", runtime_stage_ids, "Đang chuẩn bị âm thanh"),
+            "Recognize speech": ("analysing_dialogue", runtime_stage_ids + ["checking_video"], "Đang nhận dạng lời nói"),
             "Create subtitles": (
                 "preparing_english_subtitles",
-                ["checking_video", "analysing_dialogue"],
+                runtime_stage_ids + ["checking_video", "analysing_dialogue"],
                 "Đang tạo phụ đề",
             ),
             "Render video": (
                 "rendering_video",
-                ["checking_video", "analysing_dialogue", "preparing_english_subtitles", "cleaning_dialogue_subtitles"],
+                runtime_stage_ids + ["checking_video", "analysing_dialogue", "preparing_english_subtitles", "cleaning_dialogue_subtitles"],
                 "Đang xuất video",
             ),
         }

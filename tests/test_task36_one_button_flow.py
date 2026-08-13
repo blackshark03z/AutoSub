@@ -86,6 +86,9 @@ def test_task36_processing_uses_backend_stage_polling_without_fake_percentage():
         assert label in f"{processing}\n{js}"
     assert 'id="processingStages"' in processing
     assert 'id="processingDetails"' in processing
+    assert "Kiểm tra khả năng cục bộ" in processing + js
+    for stage in ("checking_runtime", "downloading_autosubs", "preparing_autosubs_model", "preparing_translation", "runtime_ready"):
+        assert stage in js
     assert "%" not in processing
     assert "Math.random" not in js
     assert "setTimeout(() => render" not in js
@@ -106,12 +109,15 @@ def test_task36_completed_and_error_views_fail_closed():
     assert "Tạo video mới" in completed
     assert "Phụ đề được tạo tự động" in completed
     assert "Chưa thể tạo video" in error
+    assert 'id="retryRuntimeBtn"' in error
     assert "Quay lại thiết lập" in error
     assert '<details id="errorDetails"' in error
     assert 'run.result_eligible === true' in js
     assert 'run.result_validation?.status !== "FAIL"' in js
     assert '&& run.output?.url' in js
     assert "clearPreview();" in js
+    assert 'run?.failure_category !== "runtime_readiness_failed"' in js
+    assert 'startProcessing({ retryRuntime: true })' in js
 
 
 def test_task36_non_processing_transitions_do_not_start_or_create_runs():
@@ -162,7 +168,7 @@ def test_task36_has_responsive_no_overflow_contract_and_clean_vietnamese():
     assert "@media (max-width: 430px)" in css
     assert "width: 100%;" in css
     assert "overflow-wrap: anywhere;" in css
-    assert "/app.js?v=task36b" in html
+    assert "/app.js?v=first-run-runtime" in html
     assert "/styles.css?v=task36b" in html
     for bad in ("\ufffd", "Ãƒ", "Ã‚", "Táº", "Ä‘"):
         assert bad not in combined

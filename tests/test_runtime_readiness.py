@@ -86,11 +86,13 @@ def test_cached_runtime_is_revalidated_without_downloading_or_preparing(monkeypa
     monkeypatch.setattr(readiness, "_download_autosubs", lambda _root: pytest.fail("cached executable must not redownload"))
     monkeypatch.setattr(readiness, "_prepare_translation", lambda _root: pytest.fail("cached translation runtime must not prepare again"))
 
-    status = readiness.ensure_product_runtime_ready(tmp_path)
+    events = []
+    status = readiness.ensure_product_runtime_ready(tmp_path, progress=lambda state, _message: events.append(state))
 
     assert status["status"] == "ready"
     assert status["autosubs_small_model"]["state"] == "ready"
     assert status["argos_zh_en_model"]["state"] == "ready"
+    assert events == ["checking_runtime", "runtime_ready"]
 
 
 def test_invalid_executable_is_distinguished_from_missing(monkeypatch, tmp_path):
@@ -129,3 +131,13 @@ def test_corrupt_autosubs_download_is_removed_and_actionable(monkeypatch, tmp_pa
 
     assert not readiness.managed_autosubs_binary(tmp_path).exists()
     assert not readiness.managed_autosubs_binary(tmp_path).with_suffix(".exe.partial").exists()
+
+
+def test_controlled_failure_is_limited_to_isolated_test_processes(monkeypatch, tmp_path):
+    monkeypatch.setenv("TOOL_AUTO_SUB_TEST_RUNTIME_FAILURE", "1")
+    monkeypatch.delenv("TOOL_AUTO_SUB_TESTING", raising=False)
+    readiness._raise_controlled_test_failure()
+
+    monkeypatch.setenv("TOOL_AUTO_SUB_TESTING", "1")
+    with pytest.raises(readiness.RuntimeReadinessError, match="could not complete"):
+        readiness._raise_controlled_test_failure()

@@ -10,6 +10,7 @@
 
 - Tool Auto Sub is a local, single-user Windows application for creating dialogue-subtitle videos from local source media.
 - The Simple UI at `/` is the normal path; the Operator UI at `/operator/` is advanced diagnostic and recovery tooling.
+- The Simple UI’s one-click Chinese-to-English external-audio workflow visibly checks local readiness, prepares AutoSubs/Argos dependencies only when missing, automatically continues after success, and offers a user-safe retry when readiness fails.
 - The canonical accepted release is CP12B Full Portable. It uses a bundled, release-local OCR runtime and SQLite project state.
 - Canonical cue timing is independent from wording. Translation, Creative, and Imported subtitle tracks are supported without changing source timing, source-suppression geometry, audio, or source media.
 

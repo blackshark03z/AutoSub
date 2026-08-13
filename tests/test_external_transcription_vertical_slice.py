@@ -7,6 +7,7 @@ import pytest
 from app.providers.asr.base import ASRSegment
 from app.services import external_transcription
 from app.services.runtime_readiness import RuntimeReadinessError
+from app.services.simple_workflow import _stage_progress
 from app.services.subtitle_tracks import SubtitleContentUnavailableError, list_tracks
 from tests.test_cp10b_simple_workflow import _make_tiny_video, _with_client, configure_test_root
 
@@ -144,8 +145,30 @@ def test_managed_runtime_failure_is_actionable_and_does_not_look_hung(monkeypatc
         assert failed["internal_state"] == "blocked"
         assert failed["failure_category"] == "runtime_readiness_failed"
         assert failed["phase"] == "Preparing local runtime"
+        assert failed["failure_detail"] == {
+            "code": "runtime_readiness_failed",
+            "message": "AutoSubs download failed. Check the network connection and retry.",
+        }
         detail = json.loads((Path(failed["run_directory"]) / "logs" / "runtime_readiness.json").read_text(encoding="utf-8"))
         assert detail["code"] == "runtime_readiness_failed"
         assert "network connection" in detail["message"]
 
     asyncio.run(_with_client(run))
+
+
+def test_runtime_readiness_events_are_exposed_as_truthful_processing_progress():
+    expected = {
+        "checking_runtime": "Đang kiểm tra khả năng cục bộ",
+        "downloading_autosubs": "Đang tải AutoSubs cục bộ",
+        "preparing_autosubs_model": "Đang chuẩn bị mô hình AutoSubs small",
+        "preparing_translation": "Đang chuẩn bị dịch Trung → Anh ngoại tuyến",
+        "runtime_ready": "Khả năng cục bộ đã sẵn sàng",
+    }
+    for state, message in expected.items():
+        progress = _stage_progress("processing", f"runtime:{state}")
+        assert progress["current_stage"] == state
+        assert progress["status_label"] == message
+
+    cached = _stage_progress("processing", "runtime:runtime_ready")
+    assert "downloading_autosubs" in cached["completed_stages"]
+    assert "preparing_translation" in cached["completed_stages"]

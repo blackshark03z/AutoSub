@@ -89,7 +89,7 @@ def test_cp10b_default_route_loads_simple_ui_and_operator_route_remains():
     assert 'const explicitNew = params.get("new") === "1"' in js
     assert "/api/simple/source/upload" in js
     assert "uploadAndValidate(file)" in js
-    assert "/app.js?v=task36b" in html
+    assert "/app.js?v=first-run-runtime" in html
     assert "/styles.css?v=task36b" in html
     primary_copy = html.split("<details id=\"advancedOptions\"", 1)[0].lower()
     assert "checkpoint" not in primary_copy

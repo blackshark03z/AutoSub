@@ -87,6 +87,7 @@ def ensure_product_runtime_ready(product_root: Path, *, progress: ProgressCallba
     """Prepare and real-validate all dependencies needed by zh -> en runs."""
     root = Path(product_root).resolve()
     _progress(progress, "checking_runtime", "Checking local runtime")
+    _raise_controlled_test_failure()
     before = runtime_readiness(root)
     binary = _discover_autosubs_binary(root)
     if before["autosubs_runtime"]["state"] != "ready":
@@ -106,6 +107,12 @@ def ensure_product_runtime_ready(product_root: Path, *, progress: ProgressCallba
     _validate_translation(root)
     _progress(progress, "runtime_ready", "Local runtime is ready")
     return runtime_readiness(root, validate_cached=True)
+
+
+def _raise_controlled_test_failure() -> None:
+    """Expose a deterministic readiness failure only in an isolated test process."""
+    if os.environ.get("TOOL_AUTO_SUB_TESTING") == "1" and os.environ.get("TOOL_AUTO_SUB_TEST_RUNTIME_FAILURE") == "1":
+        raise RuntimeReadinessError("Local runtime preparation could not complete. Check the connection and retry.")
 
 
 def _discover_autosubs_binary(product_root: Path) -> Path:
