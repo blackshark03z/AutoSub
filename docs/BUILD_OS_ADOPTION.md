@@ -4,6 +4,12 @@
 
 The sole normal lifecycle executor is the external package resolved by `.buildos-authority.json`. Its immutable Build OS generation and CURRENT pointer remain the lifecycle authority. The Project Lifecycle Kit supplies the Knowledge Pack and the documentation-handoff-continuity sidecar supplies active operational intent; neither replaces frozen-kernel proof.
 
+## Lifecycle-validation task
+
+`BUILD_OS_V122_LIFECYCLE_ADOPTION/r001` is limited to recording and validating
+this control-plane transition. It may update this adoption record and the
+Developer Workflow authority only; it does not change AutoSub product behavior.
+
 ## Legacy cleanup manifest
 
 | Previous path | Previous role | Action | Recovery location / reason |

@@ -23,6 +23,8 @@ Goal worker owns execution until terminal state or a genuine Owner-only blocker.
 
 Treat a large feature as one Codex Goal and keep that Goal in one thread by default. Compact natively before rollover; use a Context Epoch successor only when the governor requires it. Keep detailed worker evidence in files while the active model retains bounded summaries and pointers. Perform a Field Study eligibility check when terminal work ends, before task context is discarded.
 
+The control-plane task `BUILD_OS_V122_LIFECYCLE_ADOPTION/r001` is documentation-only. Its immutable evidence validates the v1.22 transition and does not represent a product behavior change.
+
 ## Avoid
 
 - Do not bypass configured quality gates or copy active state into canonical docs.
