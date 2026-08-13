@@ -1,0 +1,59 @@
+{
+  "schema": "buildos.project-policy.v1.22",
+  "documentation_handoff": {
+    "accepted_ref": "main",
+    "category_authorities": {
+      "USER_BEHAVIOR": "README.md",
+      "ARCHITECTURE_OWNERSHIP_BOUNDARY": "docs/ARCHITECTURE.md",
+      "API_CONFIG_SCHEMA": "docs/PROJECT_STATUS.md",
+      "DEVELOPER_WORKFLOW": "docs/ENGINEERING.md",
+      "FEATURE_PRESET_INVENTORY": "docs/PROJECT_STATUS.md"
+    },
+    "continuity": {
+      "mandatory_operational_skill": "documentation-handoff-continuity",
+      "max_sidecar_bytes": 16384,
+      "field_study": "EXTERNAL_APPEND_ONLY_NON_AUTHORITATIVE"
+    }
+  },
+  "project_lifecycle": {
+    "project_profile": "desktop-app",
+    "project_intent": {
+      "name": "Tool Auto Sub",
+      "purpose": "Create dialogue-subtitle videos from local media through a local Windows workflow.",
+      "intended_use": "Single users process local video into source and optional translated subtitle tracks, then preview or export the result.",
+      "success_definition": "The supported local workflow produces inspectable subtitle and preview/export artifacts while preserving source-media and provider boundaries.",
+      "non_goals": "Cloud publication, paid providers, automatic deletion of user media, and changes to AutoSub product behavior during control-plane adoption.",
+      "constraints": "Windows-first local operation; preserve user media; keep provider calls disabled by default; do not commit runtimes, models, caches, or secrets."
+    },
+    "knowledge_pack": {
+      "readme": "README.md",
+      "project_status": "docs/PROJECT_STATUS.md",
+      "architecture": "docs/ARCHITECTURE.md",
+      "engineering": "docs/ENGINEERING.md",
+      "roadmap": "docs/ROADMAP.md",
+      "changelog": "CHANGELOG.md"
+    },
+    "quality_gates": [
+      {
+        "id": "canonical-docs",
+        "command": "python tools\\validate_canonical_docs.py"
+      }
+    ],
+    "testing_strategy": "Use focused tests for changed behavior and the full pytest suite only after the documented storage preflight; documentation-only control-plane work runs the canonical documentation validator.",
+    "engineering_conventions": "Keep the FastAPI modular monolith, local-only provider boundaries, SQLite project isolation, and explicit runtime readiness/error handling; keep product code separate from Build OS control artifacts.",
+    "safety_boundaries": {
+      "runtime": "Windows x64 local application and machine-local runtimes only; no global PATH, service, or shell-handler changes are part of ordinary work.",
+      "production": "No production deployment or cloud publication is enabled; release packaging and external beta activity require separately authorized work.",
+      "data": "User-selected source media and project data remain local; source media is not mutated and low disk space never authorizes automatic deletion.",
+      "secrets": "Do not commit secrets, API keys, tokens, browser profiles, user media, runtime binaries, models, or caches."
+    },
+    "modules": {
+      "operations": false,
+      "adr": false,
+      "security": false,
+      "migrations": false,
+      "project_closure": false,
+      "project_brief": false
+    }
+  }
+}
