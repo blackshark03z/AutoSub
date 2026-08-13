@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.release
 
 from app.core.hashing import sha256_file
 from app.services.non_dialogue_localization import (

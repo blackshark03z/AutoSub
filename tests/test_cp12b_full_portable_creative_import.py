@@ -4,6 +4,9 @@ import hashlib
 import json
 import re
 import zipfile
+import pytest
+
+pytestmark = pytest.mark.release
 from pathlib import Path
 
 import pytest

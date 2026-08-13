@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.release
+
 from tools import build_cp13a1_complete_payload_hotfix as hotfix
 
 

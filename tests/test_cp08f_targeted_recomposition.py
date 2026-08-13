@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.release
 
 from tools.run_cp08f_targeted_recomposition import (
     BASE_ARTIFACT_SHA,

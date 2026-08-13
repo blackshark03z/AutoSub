@@ -10,6 +10,15 @@ Use focused tests for changed behavior and the full pytest suite only after the 
 
 Run validation as a coherent slice: inspect, implement, focused tests, fix relevant failures, integrated relevant validation, and one final acceptance pass. Persist detailed command output once, then retain a short summary and pointer.
 
+### Normal versus release validation
+
+Normal product regression is `python -m pytest -q` and excludes tests marked
+`release`. Release/package and retained historical-fixture validation remains
+explicitly executable with `python -m pytest -m release`; run the applicable
+CP08F/CP09, CP12B, or CP13A generation/bootstrap command first. The marker does
+not skip or weaken assertions; it keeps release-only checks out of the normal
+product suite while preserving a separately runnable gate.
+
 ## Safety boundaries
 
 - **Runtime:** Windows x64 local application and machine-local runtimes only; no global PATH, service, or shell-handler changes are ordinary work.

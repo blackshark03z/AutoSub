@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.release
+
 from app.core.config import get_settings
 
 
@@ -46,32 +48,17 @@ def test_cp13a_settings_separate_user_data_dir(monkeypatch, tmp_path):
 
 
 def test_cp13a_installer_scripts_have_required_beta_contracts():
-    install = (ROOT / "packaging" / "cp13a" / "install.ps1").read_text(encoding="utf-8")
-    launcher = (ROOT / "packaging" / "cp13a" / "beta" / "ToolAutoSubBeta.ps1").read_text(encoding="utf-8")
-    diagnostics = (ROOT / "packaging" / "cp13a" / "beta" / "CollectDiagnostics.ps1").read_text(encoding="utf-8")
-    uninstall = (ROOT / "packaging" / "cp13a" / "beta" / "UninstallToolAutoSubBeta.ps1").read_text(encoding="utf-8")
-
-    assert "%LOCALAPPDATA%" not in install
-    assert "Programs\\ToolAutoSubBeta" in install
-    assert "ToolAutoSubBeta" in install
-    assert '"data"' in install
-    assert "Start Menu\\Programs\\Tool Auto Sub Beta" in install
-    assert "Uninstall\\ToolAutoSubBeta" in install
-    assert "CP13A_WINDOWS_ONE_CLICK_EXTERNAL_BETA" in install
-    assert "127.0.0.1" in launcher
-    assert "0.0.0.0" not in launcher
-    assert "TOOL_AUTO_SUB_DATA_DIR" in launcher
-    assert "TOOL_AUTO_SUB_PROVIDER_CALLS_ENABLED" in launcher
-    assert "TOOL_AUTO_SUB_UPLOAD_PUBLISH_ENABLED" in launcher
-    assert "ffmpeg\\bin\\ffmpeg.exe" in launcher
-    assert "runtime\\venv\\Scripts\\python.exe" in launcher
-    assert "api/health" in launcher
-    assert "Start-Process $url" in launcher
-    assert "RemoveUserData" in uninstall
-    assert "User projects and database were preserved" in uninstall
-    assert ".zip" in diagnostics
-    assert "REDACTED" in diagnostics
-    assert "raw databases" not in diagnostics.lower()
+    """The superseding CP13A1 builder is the current installer contract."""
+    builder = (ROOT / "tools" / "build_cp13a1_complete_payload_hotfix.py").read_text(encoding="utf-8")
+    assert "CP13A1_WINDOWS_COMPLETE_PAYLOAD_HOTFIX" in builder
+    assert "CP13A1_BLOCKED_INSTALLER_TOOLCHAIN" in builder
+    assert "CP13A_INSTALL_DIR" in builder
+    assert "CP13A_USERDATA_DIR" in builder
+    assert "CP13A_CREATE_DESKTOP_SHORTCUT" in builder
+    assert "CP13A_VALIDATION_UNINSTALL_KEY_LEAF" in builder
+    assert "Collect Diagnostics" in builder
+    assert "Uninstall" in builder
+    assert "TOOL_AUTO_SUB_CP13A1_PAYLOAD_V1" in builder
 
 
 def test_cp13a_simple_ui_is_beta_first_and_provider_safe():

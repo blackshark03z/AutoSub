@@ -17,4 +17,7 @@ dependencies = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-q"
+addopts = "-q -m 'not release'"
+markers = [
+  "release: release/package and retained historical-fixture validation; run explicitly with -m release",
+]

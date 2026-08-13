@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 from pathlib import Path
+import pytest
 
 import httpx
 import shutil
@@ -28,6 +29,9 @@ def configure_test_root(monkeypatch, tmp_path: Path, *, root: Path | None = None
     monkeypatch.setattr(production_intake, "storage_preflight", test_storage_preflight)
 
 
+release_fixture = pytest.mark.release
+
+
 async def _with_client(callback):
     from app.main import app
 
@@ -37,6 +41,7 @@ async def _with_client(callback):
             return await callback(client)
 
 
+@release_fixture
 def test_cp08_operator_summary_is_safe_and_complete(monkeypatch, tmp_path):
     configure_test_root(monkeypatch, tmp_path)
 
@@ -66,6 +71,7 @@ def test_cp08_operator_summary_is_safe_and_complete(monkeypatch, tmp_path):
     asyncio.run(_with_client(run))
 
 
+@release_fixture
 def test_cp08_approval_gates_and_issue_first_model(monkeypatch, tmp_path):
     configure_test_root(monkeypatch, tmp_path)
 
@@ -149,6 +155,7 @@ def test_cp08a_issue_filters_share_canonical_needs_review_state():
     assert "function issueStatusLabel(issue)" in js
 
 
+@release_fixture
 def test_cp08_segment_search_operates_over_full_set_but_render_window_is_bounded(monkeypatch, tmp_path):
     configure_test_root(monkeypatch, tmp_path)
 
@@ -165,6 +172,7 @@ def test_cp08_segment_search_operates_over_full_set_but_render_window_is_bounded
     asyncio.run(_with_client(run))
 
 
+@release_fixture
 def test_cp08_accepted_preview_stream_endpoint(monkeypatch, tmp_path):
     configure_test_root(monkeypatch, tmp_path)
 
@@ -455,6 +463,7 @@ def test_cp09a3_project_picker_is_searchable_bounded_and_not_native_select():
     assert "api_key" not in js
 
 
+@release_fixture
 def test_cp09a3_project_list_has_safe_labels_search_text_and_no_duplicates(monkeypatch, tmp_path):
     configure_test_root(monkeypatch, tmp_path)
 

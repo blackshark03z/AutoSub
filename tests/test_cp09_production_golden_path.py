@@ -6,6 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+import pytest
+
+pytestmark = pytest.mark.release
 
 from app.core.hashing import sha256_file
 from app.services.production_golden_path import EXPECTED_HASH, PROJECT_ID
