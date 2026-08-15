@@ -132,7 +132,7 @@ def _autosubs_runtime_state(binary: Path) -> dict[str, str]:
         _validate_autosubs_binary(binary)
     except RuntimeReadinessError as exc:
         return _state("invalid", str(exc))
-    return _state("ready", "AutoSubs 3.8.0 executable passed --version validation", path=str(binary))
+    return _state("ready", "AutoSubs 3.8.0 executable passed pinned-integrity validation", path=str(binary))
 
 
 def _autosubs_model_state(product_root: Path, binary: Path, *, validate_cached: bool) -> dict[str, str]:
@@ -150,6 +150,13 @@ def _autosubs_model_state(product_root: Path, binary: Path, *, validate_cached: 
 
 
 def _validate_autosubs_binary(binary: Path) -> None:
+    # The release artifact is already pinned by an immutable SHA-256 digest.
+    # AutoSubs 3.8.0 on this Windows target can leave a child process behind for
+    # ``--version`` even when the genuine binary is healthy.  Trust the exact
+    # pinned artifact here; the separate Small-model probe below still performs
+    # real local inference before the runtime is considered usable.
+    if binary.is_file() and _sha256_file(binary) == AUTOSUBS_WINDOWS_SHA256:
+        return
     try:
         completed = subprocess.run(
             [str(binary), "--version"], capture_output=True, text=True, encoding="utf-8", timeout=30, check=False

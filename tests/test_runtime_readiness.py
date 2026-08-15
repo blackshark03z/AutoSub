@@ -108,6 +108,15 @@ def test_invalid_executable_is_distinguished_from_missing(monkeypatch, tmp_path)
     assert status["autosubs_small_model"]["state"] == "missing"
 
 
+def test_pinned_autosubs_binary_does_not_use_hanging_version_probe(monkeypatch, tmp_path):
+    binary = tmp_path / "autosubs.exe"
+    binary.write_bytes(b"pinned release artifact")
+    monkeypatch.setattr(readiness, "_sha256_file", lambda _path: readiness.AUTOSUBS_WINDOWS_SHA256)
+    monkeypatch.setattr(readiness.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("pinned binary must not run --version"))
+
+    readiness._validate_autosubs_binary(binary)
+
+
 def test_corrupt_autosubs_download_is_removed_and_actionable(monkeypatch, tmp_path):
     monkeypatch.setenv("TOOL_AUTO_SUB_RUNTIME_ROOT", str(tmp_path / "machine-runtime"))
 

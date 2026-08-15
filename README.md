@@ -15,16 +15,16 @@ The tool is intentionally scoped to dialogue subtitles. It preserves non-dialogu
 
 ## Normal Launch
 
-For development/local operation from this repository:
+For normal local operation from this prepared project folder, double-click
+**Run AutoSub.cmd**. It starts the existing local server, waits for AutoSub's
+health endpoint, and opens the Simple UI automatically. A second double-click
+reuses the already running AutoSub server rather than starting another one.
 
-```powershell
-.\run_app.ps1
-```
+If startup fails, the launcher leaves an actionable message visible and writes
+the server diagnostic to `runtime\logs\autosub-launcher.log`. It never stops a
+different application that happens to use AutoSub's local port.
 
-Then open:
-
-- Simple UI: `http://127.0.0.1:8173/`
-- Operator UI: `http://127.0.0.1:8173/operator/`
+`run_app.ps1` remains available for developer diagnostics.
 
 For beta users, extract the CP12B ZIP and double-click `START_TOOL.cmd`.
 

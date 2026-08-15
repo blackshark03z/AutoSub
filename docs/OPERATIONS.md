@@ -2,7 +2,14 @@
 
 ## Development Startup
 
-From the repository root:
+For ordinary local use, double-click **Run AutoSub.cmd** in the repository
+root. It starts the same Uvicorn application as `run_app.ps1`, waits for
+`/api/health`, and then opens the Simple UI. If AutoSub is already healthy, it
+opens that existing UI without starting a second server. If port 8173 belongs
+to another application, it stops safely with a clear message and does not kill
+the other process. Startup logs are in `runtime\logs\autosub-launcher.log`.
+
+For developer diagnostics, from the repository root:
 
 ```powershell
 .\run_app.ps1
