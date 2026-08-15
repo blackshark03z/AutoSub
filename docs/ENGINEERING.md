@@ -15,9 +15,15 @@ Run validation as a coherent slice: inspect, implement, focused tests, fix relev
 Normal product regression is `python -m pytest -q` and excludes tests marked
 `release`. Release/package and retained historical-fixture validation remains
 explicitly executable with `python -m pytest -m release`; run the applicable
-CP08F/CP09, CP12B, or CP13A generation/bootstrap command first. The marker does
+CP11C/CP11D or other release generation/bootstrap command first. The marker does
 not skip or weaken assertions; it keeps release-only checks out of the normal
 product suite while preserving a separately runnable gate.
+
+The accepted local daily-use MVP is **PASS**, the normal product suite is
+**GREEN**, and one-click Chinese-to-English UI smoke has passed. EXE, installer,
+and release packaging are intentionally deferred on
+`wip/windows-release-pipeline-rebuild`; that deferred release lane is not a
+current product blocker.
 
 ## Safety boundaries
 

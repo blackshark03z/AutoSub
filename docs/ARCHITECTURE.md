@@ -14,19 +14,17 @@ Tool Auto Sub is a local FastAPI application with static browser UIs, SQLite sta
 - `app\static\simple` is the primary Simple UI.
 - `app\static\operator` is the advanced Operator UI.
 
-## User Interfaces
+## Launcher and User Interfaces
 
-The Simple UI at `/` is the default product path for a normal single user.
+Double-clicking `Run AutoSub.cmd` starts the local AutoSub server and opens the Simple UI after startup readiness. The Simple UI at `/` is the default product path for a normal single user; the normal flow covers video and target-language selection, runtime readiness, transcription, translation, preview, and export.
 
-Its normal external-audio workflow uses the existing `runtime_readiness` service inside the accepted background processing job. Readiness callbacks are persisted as run phases and surfaced through the existing run-status polling contract: checking, actual AutoSubs/model or Argos preparation where needed, ready, and a safe failed state. The browser never invokes a separate provisioning workflow. A readiness failure is recorded as `runtime_readiness_failed` with a redacted user-safe detail; retry creates a normal retry run only after the user chooses the visible recovery action.
+The normal external-audio workflow uses the existing `runtime_readiness` service inside the accepted background processing job. AutoSubs/Argos readiness is managed through that product path and surfaced through the existing run-status contract.
 
 The Operator UI at `/operator/` is advanced tooling for project review, diagnostics, release inspection, and recovery.
 
 ## Distribution
 
-The portable baseline distribution is a unified Full Portable ZIP. CP12B includes the application, release-local Python runtime, bundled OCR runtime, launchers, diagnostics, documentation, migrations through `0009_subtitle_tracks`, and no private source media or secrets.
-
-The current one-click external beta candidate is CP13A. It wraps CP12B in a per-user Windows EXE installer, adds a Simple UI first-run path, bundles release-local FFmpeg and ffprobe, installs under `%LOCALAPPDATA%\Programs\ToolAutoSubBeta`, and stores user projects, logs, diagnostics, and SQLite state under `%LOCALAPPDATA%\ToolAutoSubBeta`. It does not register global PATH, Python, OCR, shell handlers, services, or machine-wide state.
+The accepted product state is the local daily-use MVP. The SQLite schema remains at `0009_subtitle_tracks`. EXE, installer, and release packaging are intentionally deferred to `wip/windows-release-pipeline-rebuild`; release-only CP11C/CP11D checks remain separate from normal product validation.
 
 ## Subtitle Model
 
@@ -40,7 +38,7 @@ Creative and Imported tracks do not control cue timing, source subtitle suppress
 
 ## OCR And Render Pipeline
 
-The implemented media pipeline stores source references, OCR/source-subtitle detection artifacts, subtitle tracks, render outputs, and run manifests under project/run directories. CP12B portable startup discovers the bundled OCR runtime from release-local configuration; it does not require a separate OCR installation.
+The implemented media pipeline stores source references, OCR/source-subtitle detection artifacts, subtitle tracks, render outputs, and run manifests under project/run directories.
 
 ## Isolation
 
@@ -56,8 +54,6 @@ Imported creative scripts are copied into the owning run directory. Track metada
 
 Gemini, ElevenLabs, upload, and publish calls are disabled unless a future authorized task explicitly enables them. Tests and maintenance checks must use fake providers or local state.
 
-CP13A launchers set provider/upload disable flags at startup so external beta use remains local-only by default.
-
 ## Future Proposal
 
-Module boundary cleanup is tracked as `REF-001_MODULE_BOUNDARIES_PROPOSAL` in `docs\DECISIONS`. It is proposed, not implemented, and is not CP10B.
+Module boundary cleanup is tracked as `REF-001_MODULE_BOUNDARIES_PROPOSAL` in `docs\DECISIONS`. It is proposed, not implemented.

@@ -1,50 +1,31 @@
 # Tool Auto Sub
 
-Tool Auto Sub is a local, single-user Windows application for creating English dialogue-subtitle videos from local source media.
+Tool Auto Sub is a local, single-user Windows application for creating dialogue-subtitle videos from local source media.
 
-The current canonical product release is **CP12B Full Portable**:
-
-- Package: `release\CP12B\tool_auto_sub_windows_full_portable_cp12b.zip`
-- SHA-256: `9a1c3b03a18049aca4f63fd43df2092eec35d5c36e9ec176dbaae7bc4d4a51d0`
-- Distribution: unified Full Portable ZIP with bundled OCR runtime
-- Database schema: `0009_subtitle_tracks`
-
-## Scope
-
-The tool is intentionally scoped to dialogue subtitles. It preserves non-dialogue in-scene text unless a future issue explicitly changes that behavior.
+CP12B Full Portable remains the last accepted release baseline; current daily use is documented as the local MVP below.
 
 ## Normal Launch
 
-For normal local operation from this prepared project folder, double-click
-**Run AutoSub.cmd**. It starts the existing local server, waits for AutoSub's
-health endpoint, and opens the Simple UI automatically. A second double-click
-reuses the already running AutoSub server rather than starting another one.
-
-If startup fails, the launcher leaves an actionable message visible and writes
-the server diagnostic to `runtime\logs\autosub-launcher.log`. It never stops a
-different application that happens to use AutoSub's local port.
-
-`run_app.ps1` remains available for developer diagnostics.
-
-For beta users, extract the CP12B ZIP and double-click `START_TOOL.cmd`.
+**Double-click `Run AutoSub.cmd`.** AutoSub starts, the Simple UI opens, and normal use does not require terminal interaction.
 
 ## Primary Workflow
 
-The Simple UI is the primary interface. Select a local video, keep **English** as the output language, and choose **Tạo video có phụ đề** once. AutoSub checks the local AutoSubs and offline Chinese-to-English translation capabilities as part of that action. On a first run it shows only the preparation work that is actually needed, then continues automatically into transcription, translation, preview, and export. On later runs it revalidates the cached capabilities without pretending to download or prepare them again.
+In the Simple UI, select a local video and target language. AutoSub manages AutoSubs/Argos runtime readiness through the existing product path, then runs transcription, translation, preview, and export. The accepted one-click Chinese-to-English UI smoke passed.
 
-If local preparation cannot complete, the normal UI explains the problem and offers **Thử chuẩn bị lại** after the underlying condition is corrected. No terminal, environment-variable, JSON, or command-line setup is part of this workflow. Source Chinese text and English translation remain separate subtitle fields and tracks.
+`run_app.ps1` remains available for developer diagnostics. The Operator UI at `/operator/` is advanced tooling for diagnostics, recovery, and release review.
 
-Creative Import lets a user export a cue-based template, edit only the subtitle wording outside the tool, import it back, preview validation results, and apply it as a separate Creative or Imported subtitle track. It does not change canonical timing, audio, OCR, source suppression geometry, or source media.
+## Product State
 
-The Operator UI is the advanced console for diagnostics, release review, recovery, and historical project inspection.
+The local daily-use MVP is **PASS**, and the normal product suite is **GREEN**. EXE, installer, and release packaging are intentionally deferred; that work is preserved on `wip/windows-release-pipeline-rebuild` and is not a current product blocker. Release-only CP11C/CP11D checks remain separate under the release lane.
+
+The tool is intentionally scoped to dialogue subtitles. It preserves non-dialogue in-scene text unless a future issue explicitly changes that behavior.
 
 ## Living Documentation
 
+- [Project Status](docs/PROJECT_STATUS.md)
+- [Roadmap](docs/ROADMAP.md)
 - [Current State](docs/CURRENT_STATE.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Engineering](docs/ENGINEERING.md)
 - [Operations](docs/OPERATIONS.md)
-- [Decisions](docs/DECISIONS)
 - [Changelog](CHANGELOG.md)
-- [Maintenance Reset Note](docs/MAINTENANCE_RESET_2026.md)
-
-Historical numbered reports and checkpoint files are retained as acceptance evidence, not as the active authority chain.

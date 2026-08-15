@@ -9,20 +9,21 @@
 ## Accepted capabilities
 
 - Tool Auto Sub is a local, single-user Windows application for creating dialogue-subtitle videos from local source media.
-- The Simple UI at `/` is the normal path; the Operator UI at `/operator/` is advanced diagnostic and recovery tooling.
-- The Simple UI’s one-click Chinese-to-English external-audio workflow visibly checks local readiness, prepares AutoSubs/Argos dependencies only when missing, automatically continues after success, and offers a user-safe retry when readiness fails.
-- The canonical accepted release is CP12B Full Portable. It uses a bundled, release-local OCR runtime and SQLite project state.
-- Canonical cue timing is independent from wording. Translation, Creative, and Imported subtitle tracks are supported without changing source timing, source-suppression geometry, audio, or source media.
+- The local daily-use MVP is **PASS**. The normal launch action is to double-click `Run AutoSub.cmd`; it starts AutoSub and opens the Simple UI.
+- The normal user flow is video selection and target-language selection, runtime readiness, transcription, translation, preview, and export. Terminal interaction is not required.
+- AutoSubs/Argos runtime readiness remains managed by the existing product path. The one-click Chinese-to-English UI smoke passed.
+- The normal product suite is **GREEN**.
 
-## Accepted limitations
+## Accepted limitations and deferred work
 
 - Dialogue subtitles are the supported localization scope; in-scene text is preserved unless separately authorized.
 - Gemini, ElevenLabs, upload, and publish calls are disabled unless a future authorized task enables them.
-- CP13A1 is a one-click external beta candidate whose machine-rerun evidence is pending acceptance; it is not the canonical accepted release.
+- Release-only CP11C/CP11D checks remain separate under the release lane.
+- EXE, installer, and release packaging are intentionally **DEFERRED**. The preserved work is on `wip/windows-release-pipeline-rebuild` and is not a current product blocker.
 
 ## Direction pointers
 
-- **Active initiative:** No active product initiative is recorded by this adoption.
-- **Next planned milestone:** Resolve the separately tracked CP13A1 external beta evidence acceptance, or establish a new accepted product direction.
+- **Next product work:** UNKNOWN; no specific next product scope is accepted by this synchronization.
+- **Deferred release work:** preserved on `wip/windows-release-pipeline-rebuild`; it is separate from the accepted local MVP.
 
 This file describes accepted reality only. Active dirty work, partial results, raw evidence, and Worker state belong elsewhere.
