@@ -62,33 +62,29 @@ Read-only SQLite check:
 python -c "import sqlite3; con=sqlite3.connect('data/app.db'); print(con.execute('PRAGMA quick_check').fetchone()[0]); print(con.execute('SELECT version_num FROM alembic_version').fetchone()[0]); con.close()"
 ```
 
-## Release Build
+## Deferred release lane
 
-Do not build releases unless a `package` storage preflight passes immediately before execution. The current portable baseline is CP12B:
+The daily-use MVP launches directly from `Run AutoSub.cmd`; it does not require
+an EXE or installer. CP12B is the last accepted portable packaging baseline.
+CP13A and CP13A1 are historical release candidates. Their package inputs,
+generated artifacts, and external-machine evidence are retained as release
+provenance, while new packaging work is intentionally deferred on
+`wip/windows-release-pipeline-rebuild`.
 
-```text
-release\CP12B\tool_auto_sub_windows_full_portable_cp12b.zip
-```
-
-The current one-click external beta candidate is CP13A:
-
-```text
-release\CP13A\ToolAutoSubBetaSetup_CP13A.exe
-```
-
-CP13A is a per-user Windows installer. It installs by default under `%LOCALAPPDATA%\Programs\ToolAutoSubBeta`, keeps user data under `%LOCALAPPDATA%\ToolAutoSubBeta\data`, opens the Simple UI by default, and keeps Gemini, ElevenLabs, upload, and publish disabled.
-
-Build CP13A only from this repository root:
+Do not run release builders, installer validation, or an external beta as
+ordinary development or daily use. If an Owner explicitly resumes that lane,
+perform a `package` storage preflight immediately before the separately
+authorized command, then use the release-only test lane:
 
 ```powershell
-python tools\build_cp13a_one_click_beta.py
+python -m pytest -m release
 ```
 
-The explicit release verification commands are:
+Historical package verification, not a daily-use requirement:
 
 ```powershell
 Get-FileHash release\CP12B\tool_auto_sub_windows_full_portable_cp12b.zip -Algorithm SHA256
-Get-FileHash release\CP13A\ToolAutoSubBetaSetup_CP13A.exe -Algorithm SHA256
+Get-FileHash release\CP13A1\ToolAutoSubBetaSetup_CP13A1.exe -Algorithm SHA256
 ```
 
 ## Package Validation
@@ -103,17 +99,25 @@ If a package tool can estimate temporary workspace size, pass that estimate so t
 
 ## Diagnostics
 
-Portable diagnostics are collected with `COLLECT_DIAGNOSTICS.cmd`. CP13A installed diagnostics are collected from the Start Menu shortcut `Collect Diagnostics`. Diagnostics must be sanitized and must not include full imported scripts, subtitle text, API keys, tokens, browser profiles, source media, rendered media, or raw databases.
+For the local MVP, launcher diagnostics are written under
+`runtime\logs\autosub-launcher.log`. Historical portable/installer diagnostics
+remain release-lane evidence only. All diagnostics must be sanitized and must
+not include full imported scripts, subtitle text, API keys, tokens, browser
+profiles, source media, rendered media, or raw databases.
 
 ## Disk Gate And Cleanup
 
-The active disk policy uses operation-specific gates:
+The storage policy uses operation-specific gates:
 
 - `run`: `1,073,741,824` bytes.
 - `media`: `2,147,483,648` bytes.
 - `package`: `4,294,967,296` bytes, or more when projected temporary workspace plus safety reserve exceeds 4 GiB.
 
-Build and render operations must run their storage preflight immediately before execution. The old fixed 15 GiB global gate is retired because it was conservative for package-build/extraction safety but not supported as a run-only requirement by MAINT-006 measurements.
+Build and render operations must run their storage preflight immediately before
+execution. These thresholds are requirements, not a claim about currently
+available disk space. The old fixed 15 GiB global gate is retired because it
+was conservative for package-build/extraction safety but not supported as a
+run-only requirement by MAINT-006 measurements.
 
 Do not scan or delete sibling projects. Prefer deleting only exact, known, project-created validation/staging directories after verifying no active process, no unique user data, source package retained, and protected hashes unchanged.
 

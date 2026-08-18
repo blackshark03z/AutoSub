@@ -1,5 +1,10 @@
 # Maintenance Reset 2026
 
+> Historical maintenance snapshot. This document preserves the state observed
+> during that reset; it is not the current product authority. For the current
+> local-MVP handoff, read `README.md`, `docs/PROJECT_STATUS.md`,
+> `docs/ARCHITECTURE.md`, `docs/ENGINEERING.md`, and `docs/ROADMAP.md` first.
+
 ## Documents Consolidated
 
 The active documentation authority chain is now:
