@@ -505,6 +505,22 @@ def output_location(run_id: str) -> dict[str, Any]:
     }
 
 
+def _launch_output_folder(folder: Path) -> None:
+    if os.name != "nt" or not hasattr(os, "startfile"):
+        raise OSError("Opening the output folder is supported by the Windows product runtime only.")
+    os.startfile(str(folder))
+
+
+def open_output_folder(run_id: str) -> dict[str, Any]:
+    location = output_location(run_id)
+    folder = Path(location["folder"])
+    try:
+        _launch_output_folder(folder)
+    except OSError as exc:
+        raise ValueError("Không thể mở thư mục kết quả trên Windows. Bạn vẫn có thể sao chép đường dẫn ở phần tùy chọn kết quả.") from exc
+    return {**location, "opened": True}
+
+
 def save_copy(run_id: str, destination_folder: str) -> dict[str, Any]:
     output = output_file_path(run_id)
     destination_dir = _resolve_safe_destination(destination_folder)

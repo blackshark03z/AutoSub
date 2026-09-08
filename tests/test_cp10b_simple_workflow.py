@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import httpx
+import pytest
 
 from app.core.hashing import sha256_file
 from app.core.media import media_summary
@@ -114,7 +115,10 @@ def test_task36_simple_ui_has_one_button_state_layout_and_unique_ids():
         assert ("hidden" in section) is hidden
     setup = html.split('data-flow-view="setup"', 1)[1].split('data-flow-view="processing"', 1)[0]
     assert 'id="videoPicker"' in setup
-    assert 'id="subtitleStyle"' in setup
+    assert 'id="subtitleStyle"' not in setup
+    assert 'id="includeAss"' not in setup
+    assert 'id="outputName"' not in setup
+    assert 'id="outputDestination"' not in setup
     assert 'id="startBtn"' in setup
     assert setup.count('class="primary action-primary"') == 1
     assert 'id="advancedOptions"' in setup
@@ -214,6 +218,10 @@ def test_cp10b_source_validation_run_processing_preview_approval_and_recovery(mo
     configure_test_root(monkeypatch, tmp_path)
     source = tmp_path / "sample.mp4"
     _make_tiny_video(source)
+    from app.services import simple_workflow
+
+    opened_folders = []
+    monkeypatch.setattr(simple_workflow, "_launch_output_folder", lambda folder: opened_folders.append(Path(folder)))
 
     async def run(client):
         validation = await client.post("/api/simple/source/validate", json={"source_path": str(source)})
@@ -276,6 +284,10 @@ def test_cp10b_source_validation_run_processing_preview_approval_and_recovery(mo
         location = await client.get(f"/api/simple/runs/{run_payload['run_id']}/output-location")
         assert location.status_code == 200
         assert Path(location.json()["folder"]) == run_dir / "output"
+        opened = await client.post(f"/api/simple/runs/{run_payload['run_id']}/open-output-folder", json={})
+        assert opened.status_code == 200
+        assert opened.json()["opened"] is True
+        assert opened_folders == [run_dir / "output"]
 
         approved = await client.post(f"/api/simple/runs/{run_payload['run_id']}/approve")
         assert approved.status_code == 200
@@ -314,6 +326,28 @@ def test_cp10b_browser_file_picker_upload_fallback_creates_local_source(monkeypa
         run_payload = created.json()["run"]
         assert run_payload["source"]["path"] == str(uploaded_path)
         assert run_payload["source"]["filename"] == uploaded_path.name
+
+        repeated = await client.post(
+            "/api/simple/source/upload",
+            headers={"content-type": "application/octet-stream", "x-filename": source.name},
+            content=source.read_bytes(),
+        )
+        assert repeated.status_code == 200
+        assert Path(repeated.json()["uploaded_path"]) == uploaded_path
+        assert uploaded_path.exists()
+
+        from app.services import production_intake
+
+        temp_destination, destination = production_intake.uploaded_source_destination(source.name)
+        temp_destination.write_bytes(source.read_bytes())
+        monkeypatch.setattr(
+            production_intake,
+            "validate_source_path",
+            lambda _path: {"status": "FAIL", "error": "controlled preflight failure"},
+        )
+        with pytest.raises(ValueError, match="controlled preflight failure"):
+            production_intake.finalize_uploaded_source(temp_destination, destination)
+        assert uploaded_path.exists(), "failed validation of a duplicate must not delete the existing deduped source"
 
     asyncio.run(_with_client(run))
 

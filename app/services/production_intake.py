@@ -186,7 +186,8 @@ def uploaded_source_destination(filename: str) -> tuple[Path, Path]:
 def finalize_uploaded_source(temp_destination: Path, destination: Path) -> dict[str, Any]:
     digest = sha256_file(temp_destination)
     deduped = destination.parent / f"{digest}{destination.suffix.lower()}"
-    if deduped.exists():
+    reused_existing = deduped.exists()
+    if reused_existing:
         temp_destination.unlink(missing_ok=True)
         destination = deduped
     else:
@@ -194,7 +195,8 @@ def finalize_uploaded_source(temp_destination: Path, destination: Path) -> dict[
         destination = deduped
     validation = validate_source_path(str(destination))
     if validation["status"] != "PASS":
-        destination.unlink(missing_ok=True)
+        if not reused_existing:
+            destination.unlink(missing_ok=True)
         raise ValueError(validation.get("error") or "Uploaded source failed preflight.")
     return {"uploaded_path": str(destination), "sha256": digest, "preflight": validation}
 

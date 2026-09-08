@@ -429,11 +429,7 @@ function schedulePathValidation() {
 function collectSettings() {
   return {
     target_language: $("targetLanguage").value,
-    output_filename: $("outputName").value || "final_video.mp4",
-    output_destination: $("outputDestination").value || "",
-    include_ass_sidecar: $("includeAss").checked,
     copy_source_into_workspace: $("copySource").checked,
-    subtitle_style: $("subtitleStyle").value,
     caption_mode: $("cleanupMode").value,
   };
 }
@@ -852,8 +848,11 @@ function wireEvents() {
   $("openFolderBtn").addEventListener("click", async () => {
     if (!state.run?.run_id) return;
     try {
-      const location = await api(`/api/simple/runs/${encodeURIComponent(state.run.run_id)}/output-location`);
-      setResultMessage(`Thư mục kết quả: ${location.folder}`);
+      await api(`/api/simple/runs/${encodeURIComponent(state.run.run_id)}/open-output-folder`, {
+        method: "POST",
+        body: "{}",
+      });
+      setResultMessage("Đã mở thư mục kết quả.");
     } catch (error) {
       setResultMessage(error.message, true);
     }

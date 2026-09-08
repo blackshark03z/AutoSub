@@ -40,7 +40,7 @@ addons/translation_runtime/packages/
 addons/autosubs/
 
 # Fresh development baseline: generated/build/runtime artifacts stay external.
-# Build OS project/Goal/evidence records are versioned; .ai/.gitignore excludes local runtime state.
+# CADS project context is ordinary tracked documentation; generated runtime/evidence remains external.
 release/
 build/
 build_temp/

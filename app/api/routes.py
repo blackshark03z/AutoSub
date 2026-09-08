@@ -49,6 +49,7 @@ from app.services.simple_workflow import (
     get_run,
     output_file_path,
     output_location,
+    open_output_folder,
     persist_unhandled_processing_failure,
     recent_runs,
     reject_run,
@@ -368,6 +369,18 @@ def simple_output_location(run_id: str) -> dict:
         raise HTTPException(status_code=409, detail={"title": "Kết quả không hợp lệ", "message": str(exc)}) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"title": "Video is not ready", "message": str(exc)}) from exc
+
+
+@router.post("/simple/runs/{run_id}/open-output-folder")
+def simple_open_output_folder(run_id: str) -> dict:
+    try:
+        return open_output_folder(run_id)
+    except InvalidCompletedResultError as exc:
+        raise HTTPException(status_code=409, detail={"title": "Kết quả không hợp lệ", "message": str(exc)}) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"title": "Video is not ready", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail={"title": "Không thể mở thư mục kết quả", "message": str(exc)}) from exc
 
 
 @router.post("/simple/runs/{run_id}/approve")

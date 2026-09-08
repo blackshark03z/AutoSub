@@ -45,7 +45,7 @@ def test_task36_setup_is_one_button_and_advanced_features_are_collapsed():
     assert "Chọn video, kiểm tra thiết lập và bấm tạo. Mọi xử lý diễn ra trên máy." in setup
     assert 'id="videoPicker"' in setup
     assert 'id="sourceSummary"' in setup
-    assert 'id="subtitleStyle"' in setup
+    assert 'id="subtitleStyle"' not in setup
     assert 'id="cleanupMode"' in setup
     assert "Chế độ phụ đề" in setup
     assert "Che phụ đề gốc phía dưới" not in setup
@@ -54,7 +54,9 @@ def test_task36_setup_is_one_button_and_advanced_features_are_collapsed():
     assert "Gemini free tier" not in setup.lower()
     # V1: OCR mode is the default
     assert 'value="source_caption_ocr_translation"' in setup
-    assert "Lưu thêm tệp phụ đề ASS" in setup
+    assert "Lưu thêm tệp phụ đề ASS" not in setup
+    assert 'id="outputName"' not in setup
+    assert 'id="outputDestination"' not in setup
     assert 'id="startBtn" class="primary action-primary" type="button" disabled' in setup
     assert setup.count('class="primary action-primary"') == 1
     assert "Hãy chọn một video để tiếp tục." in setup
@@ -116,6 +118,8 @@ def test_task36_completed_and_error_views_fail_closed():
     assert 'run.result_validation?.status !== "FAIL"' in js
     assert '&& run.output?.url' in js
     assert "clearPreview();" in js
+    assert "/open-output-folder" in js
+    assert "Đã mở thư mục kết quả." in js
     assert 'run?.failure_category !== "runtime_readiness_failed"' in js
     assert 'startProcessing({ retryRuntime: true })' in js
 

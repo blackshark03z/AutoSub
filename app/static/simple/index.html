@@ -48,14 +48,6 @@
 
           <div class="essential-settings">
             <label class="field">
-              <span>Kiểu phụ đề</span>
-              <select id="subtitleStyle">
-                <option value="Compact readable plate">Nền gọn, dễ đọc</option>
-              </select>
-              <small>Chữ trắng trên nền gọn để dễ đọc mà không che quá nhiều hình ảnh.</small>
-            </label>
-
-            <label class="field">
               <span>Ngôn ngữ phụ đề đầu ra</span>
               <select id="targetLanguage">
                 <option value="English" selected>English</option>
@@ -72,13 +64,6 @@
               <small>Nhận dạng lời nói chạy cục bộ bằng AutoSubs; phụ đề nguồn và bản dịch được giữ thành các track riêng.</small>
             </label>
 
-            <label class="check-field">
-              <input id="includeAss" type="checkbox" checked />
-              <span>
-                <strong>Lưu thêm tệp phụ đề ASS</strong>
-                <small>Dùng khi bạn muốn chỉnh phụ đề bằng phần mềm khác.</small>
-              </span>
-            </label>
           </div>
 
           <details id="advancedOptions" class="advanced-disclosure">
@@ -89,23 +74,13 @@
                 <input id="sourcePath" type="text" placeholder="Dán đường dẫn hoặc dùng nút Chọn video" autocomplete="off" />
                 <small>Dùng khi bạn muốn tham chiếu trực tiếp tới một tệp local thay vì sao chép.</small>
               </label>
-              <div class="advanced-grid">
-                <label class="field">
-                  <span>Tên tệp kết quả</span>
-                  <input id="outputName" value="final_video.mp4" />
-                </label>
-                <label class="field">
-                  <span>Thư mục lưu bản sao</span>
-                  <input id="outputDestination" placeholder="Có thể để trống" />
-                </label>
-                <label class="check-field">
-                  <input id="copySource" type="checkbox" />
-                  <span>
-                    <strong>Sao chép video nguồn vào dự án</strong>
-                    <small>Chỉ bật khi bạn cần một bản nguồn riêng trong thư mục làm việc.</small>
-                  </span>
-                </label>
-              </div>
+              <label class="check-field">
+                <input id="copySource" type="checkbox" />
+                <span>
+                  <strong>Sao chép video nguồn vào dự án</strong>
+                  <small>Chỉ bật khi bạn cần một bản nguồn riêng trong thư mục làm việc.</small>
+                </span>
+              </label>
               <p id="resourceInfo" class="message">Dung lượng cần thiết sẽ được kiểm tra sau khi chọn video.</p>
 
               <details id="creativePanel" class="nested-disclosure">

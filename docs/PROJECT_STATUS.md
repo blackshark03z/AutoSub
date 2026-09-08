@@ -13,6 +13,9 @@
 - The normal user flow is video selection and target-language selection, runtime readiness, transcription, translation, preview, and export. Terminal interaction is not required.
 - AutoSubs/Argos runtime readiness remains managed by the existing product path. The one-click Chinese-to-English UI smoke passed.
 - The normal product suite is **GREEN**.
+- The composed CADS Critical User Journey is **STABLE E2E PASS** on a real 15-second source using managed runtime readiness, provider transcription, local zh→en translation, ffmpeg render, validated preview, real output-folder opening, and fresh-run reset.
+- Controlled readiness failure is fail-closed and recoverable from the rendered Simple UI without reconstructing the selected source.
+- Build OS lifecycle/control-plane authority is retired from the canonical repository tree; current engineering control is CADS-native Git/test/runtime work described by root `AGENTS.md`, `TASK.md`, `ARCHITECTURE.md`, and `docs/DECISIONS/`.
 
 ## Accepted limitations and deferred work
 

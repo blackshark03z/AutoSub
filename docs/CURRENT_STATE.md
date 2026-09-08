@@ -19,6 +19,19 @@ validator; it is not a statement that an installer is required for daily use.
 - The normal test lane is the default `python -m pytest -q` configuration,
   which excludes `release`-marked package/history validation.
 
+## Stable E2E acceptance — 2026-09-09
+
+The current local MVP has been re-accepted under the CADS Critical User Journey rather than inferred from isolated feature tests.
+
+- Real rendered-UI journey PASS on the existing 15-second local fixture.
+- Acceptance run: `run_20260908183651205064_2d923ddc`.
+- Subtitle provenance: `provider_transcription`; the accepted ASS contained 7 dialogue events and did not use fixture subtitle injection.
+- The validated output MP4 hash differs from the source hash, the completed preview is eligible, `Mở thư mục kết quả` performs a real Windows folder-open action, and `Tạo video mới` resets the setup state without deleting the prior result.
+- Responsive rendered UI checks passed at 1365 px and 390 px without horizontal overflow.
+- Controlled runtime-readiness failure PASS: failure remains fail-closed, exposes retry/back, preserves the useful selected source, and never exposes a fake completed result.
+- Focused journey/runtime/launcher regressions, canonical-doc validation, storage preflight, and the normal full `python -m pytest -q` lane passed after the accepted repairs.
+- AutoSub now uses current CADS-native Git/test/runtime engineering control. The former Build OS authority/policy/adoption files and in-repository Build OS control-plane archive are retired from the canonical tree; historical provenance remains in Git history.
+
 ## Release history and deferred lane
 
 CP12B Full Portable is the last accepted packaging baseline. CP13A/CP13A1 are

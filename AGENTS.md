@@ -1,83 +1,40 @@
-# AutoSub Build OS v1.22 lifecycle operating guidance
+# AutoSub — CADS operating map
 
-## Active control plane
+AutoSub follows **Convergent AI Development System (CADS)** for AI-assisted engineering. The canonical CADS source is `https://github.com/blackshark03z/Convergent-AI-Development-System`; the locally verified CADS baseline for this activation is commit `a3e24a1d28cea2a4ad0ee956dfa13ca2a2d211f5` (`Consolidate CADS around five engineering controls`).
 
-AutoSub uses one verified external **Build OS v1.22** transactional control
-plane. It is intentionally outside this repository at:
+CADS is a reasoning/engineering standard, not a second lifecycle runtime. Ordinary work stays native to Git, source inspection, focused tests, full regression when appropriate, ordinary commits, and the actual AutoSub runtime.
 
-`C:\ToolAutoSub\.build-os-v1.22-lifecycle-kit-1.1.2-continuity-1.1.0-context-epoch-1.0.1`
+## Control loop
 
-Package provenance:
+On new/stale context, reconstruct repository/runtime reality before planning. Then use the smallest applicable CADS control:
 
-- archive: `D:\Youtube\_packages\Senior_AI_Build_OS_Stable_v1.22_lifecycle_v1.1.2_continuity_v1.1.0_context_epoch_v1.0.1.zip`
-- archive SHA-256: `0749714490B946F3C1C66AFC10533ACF03E6F900A2A7246B721969574A8A9C78`
-- frozen source commit: `e41ca10826b32b2d46a3b859345f734c113e00ae`
-- lifecycle kit: `1.1.2`; continuity skill: `1.1.0`; context epoch capability: `1.0.1`
-- authority record: `.buildos-authority.json`
+1. **Reality** — identify canonical Git HEAD, dirty state, current product behavior, runtime/config/data identity, and direct evidence.
+2. **Intent / Design** — frame one bounded Product Goal, representative Critical User Journey (CUJ), acceptance, fixture, non-goals, constraints, and only material design drivers.
+3. **Change** — make the minimum sufficient coherent change. Prefer `REUSE -> WIRE -> FIX -> REPLACE_AND_DELETE -> ADD`.
+4. **Acceptance** — verify the predefined product outcome and the composed real-user journey. Feature/test PASS does not by itself establish Product PASS.
+5. **Consequence** — use an explicit boundary only for destructive, external, privileged/security-sensitive, or explicitly high-cost effects.
 
-Use the normal Worker facade with `--root C:\ToolAutoSub\AutoSub`:
+For material user-facing work, apply the current CADS user-facing workflow, frontend-design, and UI-quality-review guidance when available. If the external CADS skill library is unavailable, this file plus the repository's `TASK.md`, `ARCHITECTURE.md`, tests, and runtime evidence remain the minimum operating contract; do not invent a replacement lifecycle.
 
-```powershell
-python C:\ToolAutoSub\.build-os-v1.22-lifecycle-kit-1.1.2-continuity-1.1.0-context-epoch-1.0.1\scripts\ai.py --root C:\ToolAutoSub\AutoSub status
-```
+## Project-specific authority
 
-Before Worker takeover and before lifecycle operations, run the package-native
-execution-authority preflight. Use the `project-lifecycle-bootstrap` and
-`documentation-handoff-continuity` Skills for their documented lifecycle and
-continuity steps. The local `.buildos/` directory is an excluded runtime, not a
-tracked product artifact. The default-on Field Study is external at
-`C:\ToolAutoSub\.buildos-field-study\AutoSub` and is append-only,
-evidence-backed, and non-blocking.
+- Owner: desired product outcome, material product trade-offs, consequential authorization, and subjective real-use acceptance.
+- AI Tech Lead: missing engineering-concern discovery, Goal/CUJ/acceptance framing, ordinary engineering judgment, and verification strategy within Owner intent.
+- `main` Git/source: implementation reality.
+- Identified live AutoSub runtime: observed behavior for the exercised source/config/environment.
+- Tests: verification evidence, not a substitute for the real journey.
+- `TASK.md`: current bounded Goal and progress only.
+- `ARCHITECTURE.md`: durable architecture/invariants.
+- `docs/DECISIONS/`: material accepted direction that must survive turnover.
 
-## Lifecycle and proof
+## Current product boundaries
 
-The single lifecycle authority is the validated immutable generation selected
-by `.buildos/control/CURRENT`. Generated packets are guidance only. Normal
-flow is `bootstrap` → ordinary Git commit → `record-commit` → `validate` →
-`close`; `recover` repairs only control-plane pointer/receipt/projection state.
-There is no destructive reopen: a post-validation product change needs
-`new-revision`, which preserves prior evidence.
+- Product target: local, single-user Windows application.
+- Primary entry: double-click `Run AutoSub.cmd`; normal use must not require a terminal.
+- Primary V1 journey: local Chinese-dialogue video -> local readiness -> speech transcription -> Chinese-to-English translation -> subtitle render -> verified MP4 preview/export.
+- User media must not be mutated or automatically deleted.
+- Gemini, ElevenLabs, upload/publish external providers remain outside the active Product Goal unless explicitly re-authorized.
+- EXE/installer/release packaging remains a separate deferred lane.
+- Runtime binaries, models, caches, user media, databases, secrets, and generated heavy artifacts stay out of canonical source.
 
-Risk is derived from actual side effects and cannot be downgraded:
-
-- R0: read-only.
-- R1: write/create.
-- R2: mutation or type change.
-- R3: delete; requires explicit Owner approval/reference, independent review,
-  and a distinct rollback/recovery check before validation.
-
-Every product task must use a bounded allow/prohibit scope and immutable
-validation evidence. The kernel does not treat Owner acceptance as a substitute
-for required R3 independent review. It does not implement legacy Goal budgets,
-delivery-delta breakers, Guardian attestations, or task-finalization ceremonies;
-do not infer those v1.16 rules. Product Goals, decomposition, and worktree
-orchestration remain project decisions outside the v1.22 kernel, with a
-cooperative single product writer per worktree.
-
-Context governance is supervisory: use current prompt P against measured window
-W (warn 50%, compact in the same chat at 70%, evidence-gated rollover at 80%,
-hard stop at W minus the configured reserve). Request counts and historical
-peaks are observational only. Missing telemetry/window measurements must remain
-truthfully unmeasured; a labeled 128k fallback is not a claim about the active
-model.
-
-## Workflow convention
-
-Goal worker owns execution until terminal state or a genuine Owner-only
-blocker. Routine task transitions, validation retries, Scouts, Workers and
-Reviewers are internal execution and must not require Owner relay.
-
-Use one Codex Goal for a large feature and keep it in one thread by default.
-Compact natively before rollover; use a Context Epoch successor only when the
-governor requires it. Keep detailed worker evidence in files while active model
-context retains bounded summaries and pointers. Check Field Study eligibility
-at terminal tasks before discarding task context.
-
-## Preserved legacy record
-
-`archives/senior-ai-build-os-v1.16/` is the read-only historical record of the
-retired legacy control plane. It is provenance only, is not discoverable as
-lifecycle authority, and must not be edited to emulate the new kernel. AutoSub
-application code, providers,
-translation, UI, runtime binaries, and product behavior are outside Build OS
-adoption scope.
+Legacy Build OS lifecycle/control-plane files are not current authority and must not be used to gate ordinary AutoSub development.

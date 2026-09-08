@@ -7,6 +7,8 @@ Roadmap is planned direction, never the authority for shipped behavior. A DONE i
 - Local daily-use MVP is **PASS**.
 - Normal use starts by double-clicking `Run AutoSub.cmd`, opens the Simple UI, and supports video/language selection, runtime readiness, transcription, translation, preview, and export.
 - One-click Chinese-to-English UI smoke passed and the normal product suite is **GREEN**.
+- CADS composed-journey acceptance is **STABLE E2E PASS**: real source selection → readiness → provider transcription → local translation → render → validated preview → real output-folder action → fresh-run reset, plus controlled fail-closed recovery.
+- The retired Build OS control plane is dropped from the canonical tree; ordinary development now follows the lightweight CADS Git/test/runtime path.
 
 ## NEXT PRODUCT WORK
 

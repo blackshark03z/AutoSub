@@ -1,45 +1,59 @@
 # Engineering Contract
 
+## Operating standard
+
+AutoSub follows current Convergent AI Development System (CADS) as an engineering reasoning standard, not as a second lifecycle runtime. Normal development is native:
+
+`understand -> inspect -> edit -> focused test -> ordinary commit -> continue`
+
+For new/stale context, reconstruct live Git/runtime reality first. For a new/changed material product outcome, keep one bounded Product Goal with a representative Critical User Journey and observable acceptance in root `TASK.md`. Use root `ARCHITECTURE.md` for durable architecture/invariants and `docs/DECISIONS/` only for material decisions that must survive turnover.
+
+Feature/subsystem PASS does not establish Journey/Product PASS. A completion claim for a multi-step user-facing Goal requires evidence from the composed supported product journey, tied to identified source/config/runtime, plus relevant independent regression evidence.
+
 ## Code and dependency expectations
 
-Keep the FastAPI modular monolith, local-only provider boundaries, SQLite project isolation, and explicit runtime readiness/error handling. Keep product code separate from Build OS control artifacts.
+Keep the FastAPI modular monolith, local-only provider boundaries, SQLite project/run isolation, and explicit runtime readiness/error handling unless current Goal evidence materially requires a change. Prefer reuse/wiring/fix/replacement over adding new abstractions or parallel paths.
 
 ## Testing and executable quality gates
 
-Use focused tests for changed behavior and the full pytest suite only after the documented storage preflight. Documentation-only control-plane work runs `python tools\validate_canonical_docs.py`.
+Use focused tests for changed behavior, then run integrated relevant verification. Before the normal full suite, run the documented `run` storage preflight.
 
-Run validation as a coherent slice: inspect, implement, focused tests, fix relevant failures, integrated relevant validation, and one final acceptance pass. Persist detailed command output once, then retain a short summary and pointer.
+Normal product regression:
 
-### Normal versus release validation
+```powershell
+python tools\storage_preflight.py --operation run
+python -m pytest -q
+```
 
-Normal product regression is `python -m pytest -q` and excludes tests marked
-`release`. Release/package and retained historical-fixture validation remains
-explicitly executable with `python -m pytest -m release`; run the applicable
-CP11C/CP11D or other release generation/bootstrap command first. The marker does
-not skip or weaken assertions; it keeps release-only checks out of the normal
-product suite while preserving a separately runnable gate.
+Canonical documentation consistency:
 
-The accepted local daily-use MVP is **PASS**, the normal product suite is
-**GREEN**, and one-click Chinese-to-English UI smoke has passed. EXE, installer,
-and release packaging are intentionally deferred on
-`wip/windows-release-pipeline-rebuild`; that deferred release lane is not a
-current product blocker.
+```powershell
+python tools\validate_canonical_docs.py
+```
+
+Release/package validation remains explicitly separate with `python -m pytest -m release` after the applicable release preparation. Do not treat release-only failures as blockers for the local daily-use Goal unless that lane is explicitly resumed.
+
+## User-facing verification
+
+When the Goal changes task flow, discoverability, screen interaction, status, or recovery:
+
+- shape the UI around the user's job rather than backend modules;
+- expose only controls with a real effect;
+- keep the primary action and current state/next action obvious;
+- exercise the actual rendered Simple UI when live verification is available;
+- verify ready/loading/success/error/recovery states that can actually occur;
+- prioritize journey blockers/high usability issues and defer cosmetic alternatives after acceptance is met.
 
 ## Safety boundaries
 
 - **Runtime:** Windows x64 local application and machine-local runtimes only; no global PATH, service, or shell-handler changes are ordinary work.
-- **Production:** No production deployment or cloud publication is enabled; release packaging and external beta activity require separately authorized work.
-- **Data:** User-selected source media and project data remain local; source media is not mutated and low disk space never authorizes automatic deletion.
-- **Secrets:** Do not commit secrets, API keys, tokens, browser profiles, user media, runtime binaries, models, or caches.
+- **Production:** no production deployment/cloud publication is enabled; release packaging/external beta is separately scoped.
+- **Data:** user-selected source media and project data stay local; source media is not mutated and low disk space never authorizes automatic deletion.
+- **Secrets:** do not commit secrets, API keys, tokens, browser profiles, user media, runtime binaries, models, caches, or live databases.
+- **External effects:** use explicit authorization/safety for destructive, privileged/security-sensitive, external, or explicitly high-cost effects.
 
-## Workflow convention
+## Change and closure discipline
 
-Goal worker owns execution until terminal state or a genuine Owner-only blocker. Routine task transitions, validation retries, Scouts, Workers and Reviewers are internal execution and must not require Owner relay.
+Keep one active workline by default. Experiments should be disposable. Before changing direction or handing off, preserve unique value through a commit or explicit retained path. At Goal closure, converge unique Goal value into one canonical Product HEAD, remove only proven Goal-created disposable residue, run the predefined acceptance journey and regressions, and push the accepted clean HEAD.
 
-Treat a large feature as one Codex Goal and keep that Goal in one thread by default. Compact natively before rollover; use a Context Epoch successor only when the governor requires it. Keep detailed worker evidence in files while the active model retains bounded summaries and pointers. Perform a Field Study eligibility check when terminal work ends, before task context is discarded.
-
-The control-plane task `BUILD_OS_V122_LIFECYCLE_ADOPTION/r001` is documentation-only. Its immutable evidence validates the v1.22 transition and does not represent a product behavior change.
-
-## Avoid
-
-- Do not bypass configured quality gates or copy active state into canonical docs.
+Do not expand a local defect into unrelated refactoring. Apply: if it directly blocks the current Goal, fix it; if it threatens a must-preserve invariant, fix it; otherwise defer it.
