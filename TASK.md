@@ -77,8 +77,8 @@ See `docs/DECISIONS/0007-cads-native-development.md`.
 
 # Discoveries / Blockers
 
-No product or Owner-only blocker remains. Product acceptance A1-A7 is satisfied by bounded source/config/runtime identity and rendered/runtime evidence.
+No product or Owner-only blocker remains. Acceptance A1-A8 is satisfied: bounded source/config/runtime identity is tied to rendered/runtime evidence, normal regression is green, Build OS is retired from the canonical tree, and final Git convergence was verified with a clean `main` equal to `origin/main`.
 
 # Next Safe Action
 
-Perform final Git convergence only: rerun the lightweight final gates on the synchronized tree, stage the bounded Goal diff, commit to `main`, push to `origin/main`, and verify a clean `HEAD == origin/main`. After that A8 is satisfied and this Goal requires no further product work.
+None for this Goal. Treat AutoSub CADS stable E2E as closed. Any future product or deferred release work must begin from current `main` with a newly bounded Goal/CUJ instead of reopening this completed task implicitly.
