@@ -16,6 +16,7 @@ from app.providers.translation.gemini import (
     GeminiOpenAICompatibleProvider,
     gemini_credential_status,
     load_gemini_translation_config,
+    save_gemini_secret_lines,
 )
 from app.services.cp02_pipeline import run_cp02_vertical_slice
 from app.services.content_transform import transform_latest_timeline
@@ -157,6 +158,11 @@ class CreativeApplyRequest(CreativeImportRequest):
     fallback_policy: str = "fallback_to_translation"
 
 
+class GeminiCredentialRequest(BaseModel):
+    api_keys: list[str] = Field(default_factory=list, max_length=100)
+    api_key: str | None = Field(default=None, max_length=4096)
+
+
 class ActiveTrackRequest(BaseModel):
     track_id: str
     fallback_policy: str = "fallback_to_translation"
@@ -213,11 +219,15 @@ def operator_runtime_build() -> dict:
         commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=Path.cwd(), text=True, stderr=subprocess.DEVNULL).strip()
     except Exception:
         pass
-    simple_asset = os.environ.get("TOOL_AUTO_SUB_SIMPLE_UI_VERSION", "").strip() or "cp12b"
+    simple_asset = os.environ.get("TOOL_AUTO_SUB_SIMPLE_UI_VERSION", "").strip() or "fluent-settings-v1"
     operator_asset = os.environ.get("TOOL_AUTO_SUB_OPERATOR_UI_VERSION", "").strip() or "cp09c"
+    try:
+        product_version = (get_settings().root / "VERSION").read_text(encoding="utf-8").strip() or "1.9.0"
+    except OSError:
+        product_version = "1.9.0"
     return {
         "git_commit": commit,
-        "backend_version": "0.2.0",
+        "backend_version": product_version,
         "frontend_asset_version": operator_asset,
         "simple_frontend_asset_version": simple_asset,
         "operator_frontend_asset_version": operator_asset,
@@ -249,9 +259,60 @@ def simple_capabilities() -> dict:
     }
 
 
+@router.get("/simple/gemini/credentials")
+def simple_gemini_credentials_status() -> dict:
+    return gemini_credential_status()
+
+
+@router.post("/simple/gemini/credentials")
+def simple_save_gemini_credentials(payload: GeminiCredentialRequest) -> dict:
+    keys = list(payload.api_keys)
+    if payload.api_key:
+        keys.append(payload.api_key)
+    try:
+        return save_gemini_secret_lines(keys, append=True)
+    except (ValueError, RuntimeError, OSError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"title": "Không thể lưu Gemini API key", "message": str(exc)},
+        ) from exc
+
+
 @router.get("/simple/runtime/readiness")
 def simple_runtime_readiness() -> dict:
-    return runtime_readiness(get_settings().root)
+    readiness = runtime_readiness(get_settings().root)
+    ocr = get_ocr_runtime_status()
+    gemini = gemini_credential_status()
+    gemini_component = {
+        "state": "ready" if gemini.get("configured") else "missing",
+        "message": (
+            f"Đã lưu {int(gemini.get('count') or 0)} Gemini API key."
+            if gemini.get("configured")
+            else "Chưa có Gemini API key. Mở Cài đặt để thêm key cho OCR + Gemini."
+        ),
+        "configured": bool(gemini.get("configured")),
+        "count": int(gemini.get("count") or 0),
+        "model": gemini.get("model"),
+        "credential_source": gemini.get("credential_source"),
+        "storage_path": gemini.get("storage_path"),
+    }
+    audio_ready = readiness["status"] == "ready"
+    ocr_ready = ocr.get("available") is True and gemini_component["state"] == "ready"
+    return {
+        **readiness,
+        "ocr_runtime": ocr,
+        "gemini_runtime": gemini_component,
+        "mode_status": {
+            "external_audio_transcription": {
+                "status": "ready" if audio_ready else "not_ready",
+                "required_components": ["autosubs_runtime", "autosubs_small_model", "argos_runtime", "argos_zh_en_model"],
+            },
+            "source_caption_ocr_translation": {
+                "status": "ready" if ocr_ready else "not_ready",
+                "required_components": ["ocr_runtime", "gemini_runtime"],
+            },
+        },
+    }
 
 
 @router.post("/simple/runtime/prepare")

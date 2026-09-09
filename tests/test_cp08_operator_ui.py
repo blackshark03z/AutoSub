@@ -498,7 +498,7 @@ def test_cp09a10_runtime_build_endpoint_reports_frontend_and_backend(monkeypatch
         response = await client.get("/api/operator/runtime-build")
         assert response.status_code == 200
         payload = response.json()
-        assert payload["backend_version"] == "0.2.0"
+        assert payload["backend_version"] == "1.9.0"
         assert payload["frontend_asset_version"] == "cp09c"
         assert isinstance(payload["git_commit"], str)
         serialized = str(payload).lower()
@@ -520,8 +520,8 @@ def test_cp11a_runtime_build_uses_packaged_commit_without_git(monkeypatch):
     payload = routes.operator_runtime_build()
 
     assert payload["git_commit"] == "c3a3dcf"
-    assert payload["backend_version"] == "0.2.0"
-    assert payload["simple_frontend_asset_version"] == "cp12b"
+    assert payload["backend_version"] == "1.9.0"
+    assert payload["simple_frontend_asset_version"] == "fluent-settings-v1"
     assert payload["operator_frontend_asset_version"] == "cp09c"
 
 

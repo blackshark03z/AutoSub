@@ -21,6 +21,8 @@ from app.services.local_transcription import ensure_local_transcription_track
 from app.services.external_transcription import ensure_external_transcription_track
 from app.services.asr_models import SIMPLE_UI_MODEL_NAME, normalize_simple_ui_settings
 from app.services.offline_translation import OfflineTranslationError, translate_source_captions
+from app.providers.translation.gemini import GeminiCaptionTranslationError, ensure_gemini_caption_ready
+from app.services.ocr_runtime import get_ocr_runtime_status
 from app.services.runtime_readiness import RuntimeReadinessError, ensure_product_runtime_ready
 from app.services.clean_subtitle_render import (
     build_source_replacement_filter,
@@ -295,23 +297,39 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                 _write_manifest(Path(row.run_directory), row, status="processing")
 
         provenance = active_track_provenance(run_id)
-        if not test_fixture_context_enabled() and provenance not in {
-            "user_import",
-            "user_authored",
-            "local_transcription",
-            "provider_transcription",
-        }:
-            _set_processing_phase(run_id, "Prepare audio")
+        if (
+            not test_fixture_context_enabled()
+            and provenance not in {"user_import", "user_authored", "local_transcription", "provider_transcription"}
+            and provenance not in SOURCE_CAPTION_MODES
+        ):
             requested_mode = str(requested.get("caption_mode") or LOCAL_AUDIO_MODE)
-            if requested_mode in SOURCE_CAPTION_MODES:
-                _set_processing_phase(run_id, "Read embedded captions")
+            if requested_mode == SOURCE_CAPTION_MODE:
+                _set_processing_phase(run_id, "Check OCR runtime")
+                ocr_status = get_ocr_runtime_status()
+                if ocr_status.get("available") is not True:
+                    _persist_ocr_runtime_block(run_id, ocr_status)
+                    raise RuntimeReadinessBlockedError(
+                        str(ocr_status.get("actionable_fix_message") or "Bộ đọc phụ đề OCR chưa sẵn sàng.")
+                    )
+                _set_processing_phase(run_id, "Check Gemini")
+                try:
+                    ensure_gemini_caption_ready()
+                except GeminiCaptionTranslationError as exc:
+                    _persist_gemini_runtime_block(run_id, exc)
+                    raise RuntimeReadinessBlockedError(str(exc)) from exc
+                _set_processing_phase(run_id, "Read and translate embedded captions")
                 try:
                     source_caption = run_caption_analysis_worker(source_path, run_directory)
                 except CaptionAnalysisError as exc:
-                    _persist_processing_failure(run_id, exc.code, "Read embedded captions", exc)
+                    _persist_processing_failure(run_id, exc.code, "Read and translate embedded captions", exc)
                     raise
                 except Exception as exc:
-                    _persist_processing_failure(run_id, "EMBEDDED_CAPTION_ANALYSIS_FAILED", "Read embedded captions", exc)
+                    _persist_processing_failure(
+                        run_id,
+                        "EMBEDDED_CAPTION_ANALYSIS_FAILED",
+                        "Read and translate embedded captions",
+                        exc,
+                    )
                     raise
                 create_source_caption_translation_track(
                     run_id,
@@ -327,6 +345,7 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                     str(source_caption["metadata"].get("mode") or SOURCE_CAPTION_GEMINI_MODE),
                 )
             elif requested_mode == EXTERNAL_AUDIO_MODE:
+                _set_processing_phase(run_id, "Prepare audio")
                 try:
                     ensure_product_runtime_ready(
                         get_settings().root,
@@ -350,6 +369,7 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                     _create_external_translation_track(run_id, external_result, str(requested.get("target_language") or "English"))
                 _persist_resolved_mode(run_id, EXTERNAL_AUDIO_MODE)
             elif requested_mode == LOCAL_AUDIO_MODE:
+                _set_processing_phase(run_id, "Prepare audio")
                 _set_processing_phase(run_id, "Recognize speech")
                 ensure_local_transcription_track(
                     run_id,
@@ -914,6 +934,39 @@ def _persist_subtitle_source_block(run_id: str, exc: Exception) -> None:
         _write_manifest(Path(row.run_directory), row, status="blocked")
 
 
+def _persist_ocr_runtime_block(run_id: str, status: dict[str, Any]) -> None:
+    with session_scope() as session:
+        row = _get_run(session, run_id)
+        message = str(status.get("actionable_fix_message") or "Bộ đọc phụ đề OCR chưa sẵn sàng.")
+        failure = {"code": "CAPTION_OCR_RUNTIME_FAILED", "message": _safe_user_failure_message(RuntimeError(message))}
+        row.failure_category = "CAPTION_OCR_RUNTIME_FAILED"
+        row.internal_state = "blocked"
+        row.current_phase = "Check OCR runtime"
+        row.output_path = None
+        row.output_hash = None
+        row.updated_at = datetime.now(timezone.utc)
+        failure_path = Path(row.run_directory) / "logs" / "ocr_runtime_readiness.json"
+        failure_path.parent.mkdir(parents=True, exist_ok=True)
+        failure_path.write_text(json.dumps(failure, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_manifest(Path(row.run_directory), row, status="blocked")
+
+
+def _persist_gemini_runtime_block(run_id: str, exc: Exception) -> None:
+    with session_scope() as session:
+        row = _get_run(session, run_id)
+        failure = {"code": "gemini_readiness_failed", "message": _safe_user_failure_message(exc)}
+        row.failure_category = "gemini_readiness_failed"
+        row.internal_state = "blocked"
+        row.current_phase = "Check Gemini"
+        row.output_path = None
+        row.output_hash = None
+        row.updated_at = datetime.now(timezone.utc)
+        failure_path = Path(row.run_directory) / "logs" / "gemini_readiness.json"
+        failure_path.parent.mkdir(parents=True, exist_ok=True)
+        failure_path.write_text(json.dumps(failure, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_manifest(Path(row.run_directory), row, status="blocked")
+
+
 def _persist_runtime_readiness_block(run_id: str, exc: Exception) -> None:
     with session_scope() as session:
         row = _get_run(session, run_id)
@@ -1200,7 +1253,7 @@ def _serialize_run(row: SimpleWorkflowRun | None, **extra: Any) -> dict[str, Any
             "manifest": str(Path(row.run_directory) / "run_manifest.json"),
         },
         "stages": [{"id": stage_id, "label": label} for stage_id, label in USER_STAGES],
-        "progress": _stage_progress(row.internal_state, row.current_phase),
+        "progress": _stage_progress(row.internal_state, row.current_phase, requested.get("caption_mode")),
         "output": {
             "path": row.output_path,
             "url": output_url,
@@ -1226,7 +1279,7 @@ def _serialize_run(row: SimpleWorkflowRun | None, **extra: Any) -> dict[str, Any
 
 
 def _load_failure_detail(run_directory: Path) -> dict[str, str] | None:
-    for name in ("runtime_readiness.json", "subtitle_source_block.json"):
+    for name in ("ocr_runtime_readiness.json", "gemini_readiness.json", "runtime_readiness.json", "subtitle_source_block.json"):
         try:
             payload = json.loads((run_directory / "logs" / name).read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
@@ -1290,7 +1343,7 @@ def _provider_calls_for_run(run_id: str) -> dict[str, int]:
         return {"gemini": 0, "elevenlabs": 0, "youtube": 0}
 
 
-def _stage_progress(state: str, phase: str | None = None) -> dict[str, Any]:
+def _stage_progress(state: str, phase: str | None = None, caption_mode: str | None = None) -> dict[str, Any]:
     if state in {"completed", "approved"}:
         current = "verifying_result"
         completed = [stage_id for stage_id, _ in USER_STAGES]
@@ -1323,23 +1376,44 @@ def _stage_progress(state: str, phase: str | None = None) -> dict[str, Any]:
                 "percentage": None,
                 "status_label": status_label,
             }
-        phase_map = {
-            "Prepare audio": ("checking_video", runtime_stage_ids, "Đang chuẩn bị âm thanh"),
-            "Recognize speech": ("analysing_dialogue", runtime_stage_ids + ["checking_video"], "Đang nhận dạng lời nói"),
-            "Create subtitles": (
-                "preparing_english_subtitles",
-                runtime_stage_ids + ["checking_video", "analysing_dialogue"],
-                "Đang tạo phụ đề",
-            ),
-            "Render video": (
-                "rendering_video",
-                runtime_stage_ids + ["checking_video", "analysing_dialogue", "preparing_english_subtitles", "cleaning_dialogue_subtitles"],
-                "Đang xuất video",
-            ),
-        }
+        if caption_mode == SOURCE_CAPTION_MODE:
+            phase_map = {
+                "Check OCR runtime": ("checking_runtime", [], "Đang kiểm tra bộ đọc phụ đề OCR"),
+                "Check Gemini": ("checking_runtime", [], "Đang kiểm tra kết nối Gemini"),
+                "Read and translate embedded captions": (
+                    "analysing_dialogue",
+                    ["checking_runtime"],
+                    "Đang đọc phụ đề và dịch bằng Gemini",
+                ),
+                "Create subtitles": (
+                    "preparing_english_subtitles",
+                    ["checking_runtime", "analysing_dialogue"],
+                    "Đang chuẩn bị phụ đề tiếng Anh",
+                ),
+                "Render video": (
+                    "rendering_video",
+                    ["checking_runtime", "analysing_dialogue", "preparing_english_subtitles", "cleaning_dialogue_subtitles"],
+                    "Đang xuất video",
+                ),
+            }
+        else:
+            phase_map = {
+                "Prepare audio": ("checking_video", runtime_stage_ids, "Đang chuẩn bị âm thanh"),
+                "Recognize speech": ("analysing_dialogue", runtime_stage_ids + ["checking_video"], "Đang nhận dạng lời nói"),
+                "Create subtitles": (
+                    "preparing_english_subtitles",
+                    runtime_stage_ids + ["checking_video", "analysing_dialogue"],
+                    "Đang tạo phụ đề",
+                ),
+                "Render video": (
+                    "rendering_video",
+                    runtime_stage_ids + ["checking_video", "analysing_dialogue", "preparing_english_subtitles", "cleaning_dialogue_subtitles"],
+                    "Đang xuất video",
+                ),
+            }
         current, completed, status_label = phase_map.get(
             phase,
-            ("analysing_dialogue", ["checking_video"], "Đang xử lý"),
+            ("analysing_dialogue", ["checking_video"] if caption_mode != SOURCE_CAPTION_MODE else ["checking_runtime"], "Đang xử lý"),
         )
     else:
         current = "checking_video"

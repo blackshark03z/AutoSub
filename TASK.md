@@ -1,84 +1,67 @@
 # Goal
 
-Make the current local AutoSub V1 genuinely stable end-to-end for its normal single-user Windows job: a user can double-click AutoSub, choose a local Chinese-dialogue video, create a verified English-subtitled MP4 with one primary action, inspect the result, reach the actual output folder, and recover from an applicable failure without terminal knowledge.
+Release a stable AutoSub build from the canonical `D:\AutoSub` source under current CADS, with two truthful user-facing caption workflows and no active Build OS lifecycle/control plane:
 
-This Goal also completes the engineering-control transition from the retired AutoSub Build OS lifecycle/control plane to current CADS-native Git/test/runtime development.
+- **Speech mode:** local AutoSubs transcription -> local Argos Chinese-to-English translation -> verified subtitle render.
+- **Embedded-caption mode:** local PaddleOCR -> Gemini text/multimodal correction + translation -> verified subtitle render.
 
-# Critical User Journey
+The user must be able to configure Gemini from the Simple UI without editing files, understand that OCR+Gemini uses Internet/quota and may incur provider charges, and fail before expensive frame analysis when OCR or Gemini prerequisites are unavailable.
 
-1. User double-clicks `Run AutoSub.cmd`.
-2. AutoSub reuses or starts exactly one verified local server and opens the Simple UI.
-3. User chooses/drops a supported local video. AutoSub validates the source and shows its identity/metadata without creating or starting processing prematurely.
-4. User sees only meaningful working choices, then clicks the single primary action `Tạo video có phụ đề`.
-5. AutoSub verifies/prepares the managed AutoSubs + Argos runtime as needed and exposes real processing stages.
-6. AutoSubs produces real source speech transcription; Argos produces Chinese-to-English subtitle content; ffmpeg renders the subtitle video.
-7. AutoSub exposes the completed state only when result validation passes. User can preview the real MP4.
-8. `Mở thư mục kết quả` actually opens the output folder. User can then create a new video without stale run state leaking into the next cycle.
-9. If runtime/source/render preparation fails, AutoSub fails closed, preserves the useful selection/context when safe, explains the problem in user terms, and provides the relevant retry/back path.
+# Critical User Journeys
+
+## CUJ-A — Local speech
+
+1. Launch `D:\AutoSub\Run AutoSub.cmd` and reach the Simple UI.
+2. Select a supported Chinese-dialogue video.
+3. Keep `Tự nhận dạng lời nói cục bộ` selected and run once.
+4. AutoSub verifies/prepares AutoSubs + Argos, transcribes, translates, renders, validates, and exposes the real MP4 preview/output folder.
+5. Start a new video without stale state leaking from the completed run.
+
+## CUJ-B — OCR + Gemini
+
+1. Select `Dịch phụ đề có sẵn (OCR + Gemini)`.
+2. UI clearly shows that PaddleOCR is local while Gemini uses Internet/API quota and may incur charges.
+3. If no Gemini key exists, Run remains blocked and the user can open Settings, paste 1–n keys (one per line), and append them to `secrets\\gemini_api.txt`. Existing keys are preserved, duplicates are ignored, and the API/UI expose only sanitized counts/status rather than key contents. At runtime, auth/quota failure on the active key advances once through the configured list and sticks to the first working key; network/provider-wide failures stay bounded rather than cycling indefinitely.
+4. Before frame extraction, AutoSub verifies the local OCR runtime and verifies Gemini credential/connectivity/model availability.
+5. AutoSub reads embedded Chinese captions with PaddleOCR, uses Gemini text/multimodal resolution for correction/translation, renders the English subtitles, validates the final MP4, and records real Gemini provider usage.
+6. OCR/Gemini failures remain fail-closed with retry/back behavior and no eligible output.
 
 # Acceptance
 
-- **A1 — CADS activation / Build OS retirement:** root `AGENTS.md`, `TASK.md`, `ARCHITECTURE.md`, and decision index describe current CADS-native control; active Build OS authority/policy/adoption artifacts and the retired in-repo Build OS archive are absent from the canonical working tree. No external Build OS lifecycle command is required for ordinary development.
-- **A2 — Launch:** from the canonical Product HEAD on the supported Windows machine, `Run AutoSub.cmd` reaches a healthy `127.0.0.1:8173` Simple UI without terminal interaction; a healthy existing AutoSub process is reused and an unrelated port occupant is never killed.
-- **A3 — Setup:** the representative fixture can be selected/validated from the rendered Simple UI; only controls that have a real product effect are presented as working controls; exactly one obvious primary create action advances the normal journey.
-- **A4 — Real processing:** with test-fixture subtitle injection disabled, the representative fixture completes through real managed runtime readiness, provider transcription, local translation, subtitle rendering, and final validation. The resulting MP4 exists, is not the source bytes, contains non-empty subtitle rendering, reports eligible completion, and has non-fixture provenance.
-- **A5 — Result/useful outcome:** the completed UI loads the output preview; `Mở thư mục kết quả` triggers a real Windows folder-open action; `Tạo video mới` returns to a fresh setup state without deleting prior results.
-- **A6 — Recovery:** at least one controlled runtime-readiness failure remains fail-closed and offers a retry/back path without exposing an invalid completed result or requiring the user to reconstruct the selected source manually.
-- **A7 — Regression:** focused journey/runtime/launcher tests pass, `python tools\validate_canonical_docs.py` passes, storage preflight permits the run, and the normal `python -m pytest -q` regression passes. Release-only tests are not part of this Goal.
-- **A8 — Convergence:** one clean canonical `main` Product HEAD contains the accepted change, no competing Goal-created implementation/worktree remains, and the accepted HEAD is pushed to `origin/main`.
+- **A1 — CADS / Build OS:** ordinary development/release uses current CADS + native Git/test/runtime evidence. No active Build OS lifecycle/adoption/control-plane artifact gates normal work.
+- **A2 — D-root convergence:** active source, DB/data, OCR runtime, managed AutoSubs/Argos runtime, models and accepted run paths resolve from D. Any unique AutoSub legacy data remaining on C is preserved to D before removal.
+- **A3 — Truthful modes:** Simple UI exposes speech-local and OCR+Gemini. It does not expose the legacy direct Gemini caption mode as a separate user choice. Primary copy does not imply OCR+Gemini is offline.
+- **A4 — Gemini key management:** missing `operator/translation_config.env` is not fatal; non-secret Gemini defaults are built in. Settings accepts 1–n Gemini keys (one per line), appends only new unique keys to ignored local file `secrets\\gemini_api.txt`, preserves the existing list, clears the input after save, and readiness/API expose only sanitized status/count/model/source. Legacy Credential Manager entries remain readable as a compatibility fallback.
+- **A5 — Mode-aware readiness / fail-fast:** speech readiness depends on AutoSubs + Argos. OCR readiness depends on PaddleOCR + Gemini credential. OCR/Gemini preflight occurs before caption frame extraction; missing/invalid prerequisites cause no expensive caption-analysis work.
+- **A6 — Gemini behavior:** OCR path reuses the existing guarded PaddleOCR + Gemini implementation, including text correction, multimodal resolution for uncertain intervals, semantic guards, caching and provider usage accounting. A compatible selected Gemini model may run under the Owner-authorized provider policy even when historical free-tier evidence is absent.
+- **A7 — Mode-accurate UX/recovery:** processing labels, helper copy, readiness cards and retry actions match the selected mode; OCR and Gemini failures preserve safe context and never expose a false completed result.
+- **A8 — Real E2E evidence:** one representative speech fixture completes through real AutoSubs + Argos; one representative embedded-caption fixture completes through real PaddleOCR + Gemini with `provider_calls.gemini > 0` unless an exact provider cache hit is explicitly evidenced, and produces a validated final MP4.
+- **A9 — Regression:** focused tests, storage preflight, canonical docs validation and normal full `python -m pytest -q` pass from the candidate Product HEAD. Release-specific verification is run for the new candidate package.
+- **A10 — Stable release:** one clean canonical `main` Product HEAD contains the accepted work, is pushed to `origin/main`, tagged `v1.9.0`, and an exact-commit source bundle is generated with manifest/checksum evidence. Historical CP12B/CP13A packages are not relabeled as this release.
 
-Acceptance is not weakened merely because a subsystem test passes. A2-A6 require source/runtime/config identity tied to the exercised evidence.
+# Acceptance Fixtures
 
-# Acceptance Fixture / Golden Input
-
-Use the existing 15-second real local fixture already present in AutoSub's operator-upload store:
-
-`C:\ToolAutoSub\AutoSub\data\operator_uploads\8f5454dd0b448583a7a497b79bcc34f8903d017090cd4f8fb2e8308fdaa5a442.mp4`
-
-Observed baseline evidence before implementation: a prior completed run exists for this source with `result_eligible=true` and subtitle provenance `provider_transcription`. The media itself remains ignored/local and is never committed.
-
-# Non-goals
-
-- EXE, installer, portable-package, or external-beta/release-lane work.
-- New language pairs beyond the current Chinese-to-English V1.
-- Enabling Gemini, ElevenLabs, YouTube upload/publish, or other paid/cloud product paths.
-- Broad module/architecture refactoring unrelated to a direct CUJ blocker or must-preserve invariant.
-- Improving OCR unless the normal audio-transcription CUJ demonstrates that OCR is a direct blocker.
-- Cosmetic redesign after journey blockers/high usability defects are resolved.
+- Speech: `D:\AutoSub\data\operator_uploads\8f5454dd0b448583a7a497b79bcc34f8903d017090cd4f8fb2e8308fdaa5a442.mp4`.
+- OCR: prefer the preserved historical short OCR acceptance clip after D migration; otherwise create a short D-local acceptance excerpt from the already-migrated OCR source. Acceptance media remains outside Git.
 
 # Constraints
 
 - Windows-first, local single-user product.
-- Preserve source/user media; low disk space never authorizes automatic deletion.
-- Fail closed on invalid subtitle/output evidence.
-- Keep current FastAPI modular-monolith + SQLite project/run isolation unless real evidence forces a change.
-- Generated media, runtime/models/caches, secrets, and databases stay outside Git.
-- The historical release lane stays separate from normal regression.
+- Source/user media is never mutated or auto-deleted to solve storage pressure.
+- Gemini is an explicit external provider boundary only for OCR+Gemini; ElevenLabs/YouTube publication remain outside this Goal.
+- Secrets never enter Git, logs, response payloads or release archives.
+- Keep the FastAPI modular monolith + SQLite/run isolation unless direct evidence requires otherwise.
+- Prefer `REUSE -> WIRE -> FIX -> REPLACE_AND_DELETE -> ADD`; do not create a new translation provider when the existing Gemini caption path already satisfies the Goal.
+- No cosmetic redesign chain after material journey/usability blockers are closed.
 
-# Material Decisions
+# Current Findings
 
-- CADS replaces the AutoSub Build OS lifecycle/control-plane model; ordinary development is native Git/test/runtime work.
-- V1 stability is defined by the composed CUJ, not by the sum of feature tests.
-- Misleading no-op controls are removed from the normal UI rather than implementing speculative options that the current Goal does not need.
-- The default V1 output contract remains one verified `final_video.mp4`; advanced export naming/destination configurability is deferred until a real product requirement exists.
+- Canonical D migration commit is `35589b73133bc4d414c1b6424669e3f4bde8eaf9` on `main`/`origin/main` before this Goal.
+- Current CADS baseline verified at `a3e24a1d28cea2a4ad0ee956dfa13ca2a2d211f5`.
+- The prior OCR failure was caused by missing OCR discovery/readiness and occurred only after expensive frame/crop work.
+- The existing full embedded-caption implementation already contains PaddleOCR + Gemini text/multimodal correction/translation and quality guards; it is being reused rather than replaced.
+- The machine currently has no Gemini credential configured for AutoSub, so real Gemini E2E requires one Owner-provided API key entered locally in the new UI.
 
-See `docs/DECISIONS/0007-cads-native-development.md`.
+# Release Closure
 
-# Progress
-
-- CADS local checkout verified at `a3e24a1`; AutoSub is migrated to CADS-native project context and engineering control.
-- Build OS authority/policy/adoption artifacts, canonical archive source, local `.buildos` runtime residue, and AutoSub-specific external Build OS packages/field-study residue were retired as directed.
-- Result-folder action now performs the real Windows folder-open consequence; misleading no-op Simple UI controls were removed from the primary journey.
-- Upload dedupe ownership was hardened so a failed preflight cannot delete an already-existing hash-deduplicated source.
-- Focused journey/runtime/launcher regression: PASS after repair.
-- Real rendered Playwright CUJ: PASS on `run_20260908183651205064_2d923ddc`; provenance `provider_transcription`; 7 real ASS dialogue events; output hash differs from source; preview/result eligible; real folder-open PASS; fresh-video reset PASS; 1365 px and 390 px layouts PASS.
-- Controlled `runtime_readiness_failed` journey: PASS fail-closed with retry/back, no fake preview, `result_eligible=false`, and selected-source preservation.
-- Storage preflight: PASS. Canonical docs validator: PASS before final evidence sync. Normal full `python -m pytest -q`: PASS with exit code 0; release-only/deferred tests remain intentionally outside this Goal.
-
-# Discoveries / Blockers
-
-No product or Owner-only blocker remains. Acceptance A1-A8 is satisfied: bounded source/config/runtime identity is tied to rendered/runtime evidence, normal regression is green, Build OS is retired from the canonical tree, and final Git convergence was verified with a clean `main` equal to `origin/main`.
-
-# Next Safe Action
-
-None for this Goal. Treat AutoSub CADS stable E2E as closed. Any future product or deferred release work must begin from current `main` with a newly bounded Goal/CUJ instead of reopening this completed task implicitly.
+Both real CUJs now PASS. Final closure is bounded to release identity/docs validation, one final normal regression, storage gates, commit/push, tag `v1.9.0`, and exact-tag source bundle/checksum generation. No new product scope is opened in this release.

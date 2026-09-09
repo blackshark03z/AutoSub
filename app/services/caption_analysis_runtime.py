@@ -208,7 +208,7 @@ def _analysis_worker_entry(result_queue: Any, source_path: str, run_directory: s
         progress.complete()
         result_queue.put({"status": "ok", "result": result})
     except BaseException as exc:
-        code = getattr(exc, "code", WORKER_ERROR_CODE)
+        code = getattr(exc, "code", getattr(exc, "reason_code", WORKER_ERROR_CODE))
         
         # Diagnostic persistence
         try:

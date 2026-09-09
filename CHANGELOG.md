@@ -1,27 +1,22 @@
 # Changelog
 
-## Current Baseline
+## AutoSub 1.9.0 Stable — 2026-09-09
 
-- The local daily-use MVP is **PASS**: double-clicking `Run AutoSub.cmd` starts
-  AutoSub and opens the Simple UI for the normal readiness, transcription,
-  translation, preview, and export flow. One-click Chinese-to-English UI smoke
-  passed, and the normal product suite is **GREEN**.
-- EXE, installer, and release packaging remain intentionally deferred on
-  `wip/windows-release-pipeline-rebuild`; release-only CP11C/CP11D checks remain
-  separate under the release lane.
+- Promoted two truthful production journeys: local AutoSubs+Argos speech mode and PaddleOCR+Gemini embedded-caption mode.
+- Added mode-aware readiness and fail-fast OCR/Gemini preflight before expensive frame analysis.
+- Added professional Simple UI redesign with a dedicated Settings view, Windows/Fluent-oriented hierarchy and WCAG-oriented interaction behavior.
+- Added 1-n Gemini key management: append/deduplicate local ignored file storage, sanitized counts, and bounded sticky failover across keys on auth/quota failures.
+- Completed canonical migration to `D:\\AutoSub` and retired active Build OS authority in favor of CADS + native Git/test/runtime evidence.
+- Fixed OCR render-plan contract mismatch (`render_cues`) found by real E2E acceptance.
+- Fixed adjacent OCR interval overlap so valid captions are boundary-trimmed rather than silently dropped during ASS normalization.
+- Real speech CUJ PASS: `run_20260909112831523056_b7d74d66`, 7 ASS Dialogue events.
+- Real OCR+Gemini CUJ PASS: `run_20260909114149833349_fcd7afff`, 2 OCR intervals -> 2 ASS Dialogue events.
+- Live Gemini call evidence preserved from `run_20260909112225050772_05bb7b7a`; accepted retry used the exact cache entry.
 
-## Historical Release Notes
+## Historical release notes
 
-- CP12B Full Portable was the canonical release baseline.
-- CP13A1 Complete Payload Hotfix was a one-click external beta candidate; its
-  release evidence remains historical and does not change the accepted local
-  MVP state.
+- CP12B Full Portable was a historical portable release baseline.
+- CP13A/CP13A1 were historical one-click beta candidates and are not relabeled as 1.9.0.
 - CP12A added Creative Subtitle Script Import with Translation, Creative, and Imported tracks.
-- CP11D established the unified Full Portable distribution with bundled OCR.
+- CP11D established the earlier unified Full Portable distribution with bundled OCR.
 - CP10B introduced the Simple end-to-end workflow UI as the primary user path.
-- CP09 completed the production golden path, local export package, and manual publication handoff.
-- CP08G locked localization scope to dialogue subtitles only.
-
-## Historical Notes
-
-Detailed checkpoint reports remain in Git history and numbered root reports. They are historical acceptance evidence, not the active documentation authority chain.

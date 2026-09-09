@@ -125,7 +125,8 @@ def normalize_simple_ui_settings(settings: dict[str, Any] | None) -> dict[str, A
         normalized["asr"] = asr_copy
     for value in legacy_values:
         normalize_simple_ui_model_name(value)
-    if str(normalized.get("caption_mode") or "") == "external_audio_transcription":
+    caption_mode = str(normalized.get("caption_mode") or "")
+    if caption_mode == "external_audio_transcription":
         normalized.pop("asr_model_path", None)
         normalized.update(
             {
@@ -135,6 +136,9 @@ def normalize_simple_ui_settings(settings: dict[str, Any] | None) -> dict[str, A
                 "asr_model_policy": "autosubs_cached_model_preflight",
             }
         )
+    elif caption_mode.startswith("source_caption_"):
+        for key in ("asr_provider", "asr_model", "asr_model_path", "asr_model_source", "asr_model_policy"):
+            normalized.pop(key, None)
     else:
         normalized.update(
             {

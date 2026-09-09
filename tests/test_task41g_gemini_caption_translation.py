@@ -191,6 +191,53 @@ def test_transient_http_failure_has_one_bounded_retry(tmp_path, monkeypatch, fir
     assert result.retry_count == 1
 
 
+def test_caption_translator_uses_next_key_after_quota_failure(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+    config = _config(tmp_path)
+    config.key_file.write_text(
+        "first-key-that-is-long-enough-0001\nsecond-key-that-is-long-enough-0002\n",
+        encoding="utf-8",
+    )
+    seen_auth: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        auth = request.headers.get("authorization", "")
+        seen_auth.append(auth)
+        if "first-key-that-is-long-enough-0001" in auth:
+            return httpx.Response(429, json={"error": {"message": "quota"}})
+        return _response(
+            [
+                {"id": "OCR_0001", "english": "I'm here."},
+                {"id": "OCR_0002", "english": "I need to hurry back to my room."},
+            ]
+        )
+
+    translator = GeminiCaptionTranslator(config, transport=httpx.MockTransport(handler))
+    result = translator.translate(_captions())
+
+    assert len(seen_auth) == 2
+    assert "first-key-that-is-long-enough-0001" in seen_auth[0]
+    assert "second-key-that-is-long-enough-0002" in seen_auth[1]
+    assert result.retry_count == 1
+    assert translator._active_key_index == 1
+
+
+def test_multimodal_resolver_key_selection_advances_once_and_sticks(tmp_path):
+    config = _config(tmp_path)
+    config.key_file.write_text(
+        "first-key-that-is-long-enough-0001\nsecond-key-that-is-long-enough-0002\n",
+        encoding="utf-8",
+    )
+    resolver = GeminiMultimodalCaptionResolver(config)
+
+    assert resolver._active_key_index == 0
+    assert resolver._advance_key() is True
+    assert resolver._active_key_index == 1
+    assert resolver._active_key == "second-key-that-is-long-enough-0002"
+    assert resolver._advance_key() is False
+    assert resolver._active_key_index == 1
+
+
 def test_invalid_json_retries_once_then_fails(tmp_path, monkeypatch):
     _disable_real_cache(monkeypatch)
     calls = 0
@@ -314,25 +361,10 @@ def test_duplicate_start_does_not_queue_second_worker(monkeypatch):
     assert tasks.tasks == []
 
 
-def test_gemini_secret_file_migrates_to_secure_store_and_deletes_plaintext(tmp_path, monkeypatch):
+def test_gemini_secret_file_is_canonical_and_not_migrated(tmp_path, monkeypatch):
     secret_file = tmp_path / "gemini_api.txt"
     secret_file.write_text("fake-one\nfake-two\n", encoding="utf-8")
-    stored: dict[str, bytes] = {}
-
-    class FakeWin32Cred:
-        CRED_TYPE_GENERIC = 1
-        CRED_PERSIST_LOCAL_MACHINE = 2
-
-        def CredRead(self, target, cred_type, flags):
-            if target not in stored:
-                raise OSError("not found")
-            return {"CredentialBlob": stored[target]}
-
-        def CredWrite(self, credential, flags):
-            stored[str(credential["TargetName"])] = str(credential["CredentialBlob"])
-
-    monkeypatch.setattr(gemini_module, "win32cred", FakeWin32Cred())
-    monkeypatch.setattr(gemini_module, "_read_native_gemini_secret_lines", lambda credential_name: [])
+    monkeypatch.setattr(gemini_module, "_read_secure_gemini_secret_lines", lambda _name: ["legacy-secure-key"])
     config = GeminiTranslationConfig(
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         model="gemini-test",
@@ -344,8 +376,10 @@ def test_gemini_secret_file_migrates_to_secure_store_and_deletes_plaintext(tmp_p
     lines = load_gemini_secret_lines(config)
 
     assert lines == ["fake-one", "fake-two"]
-    assert not secret_file.exists()
-    assert stored["tool_auto_sub_worker_handoff_v0_2_gemini_api"] == "fake-one\nfake-two"
+    assert secret_file.exists()
+    source, status_lines = gemini_module._credential_source_status(config)
+    assert source == "secret_file"
+    assert status_lines == ["fake-one", "fake-two"]
 
 
 def test_gemini_secure_store_reads_native_credential_manager_without_pywin32(tmp_path, monkeypatch):
@@ -368,24 +402,15 @@ def test_gemini_secure_store_reads_native_credential_manager_without_pywin32(tmp
 
     source, lines = gemini_module._credential_source_status(config)
 
-    assert source == "secure_credential_manager"
+    assert source == "legacy_secure_credential"
     assert lines == ["fake-native-one", "fake-native-two"]
 
 
-def test_gemini_plaintext_migration_uses_native_credential_manager_without_pywin32(tmp_path, monkeypatch):
+def test_gemini_secret_file_precedes_native_credential_manager(tmp_path, monkeypatch):
     secret_file = tmp_path / "gemini_api.txt"
-    secret_file.write_text("fake-native-one\nfake-native-two\n", encoding="utf-8")
-    stored: dict[str, list[str]] = {}
-
-    def read_native(credential_name: str) -> list[str]:
-        return stored.get(credential_name, [])
-
-    def write_native(credential_name: str, lines: list[str]) -> None:
-        stored[credential_name] = list(lines)
-
+    secret_file.write_text("file-one\nfile-two\n", encoding="utf-8")
     monkeypatch.setattr(gemini_module, "win32cred", None)
-    monkeypatch.setattr(gemini_module, "_read_native_gemini_secret_lines", read_native)
-    monkeypatch.setattr(gemini_module, "_write_native_gemini_secret_lines", write_native)
+    monkeypatch.setattr(gemini_module, "_read_native_gemini_secret_lines", lambda _name: ["legacy-one", "legacy-two"])
     config = GeminiTranslationConfig(
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         model="gemini-test",
@@ -396,9 +421,8 @@ def test_gemini_plaintext_migration_uses_native_credential_manager_without_pywin
 
     lines = load_gemini_secret_lines(config)
 
-    assert lines == ["fake-native-one", "fake-native-two"]
-    assert stored["tool_auto_sub_worker_handoff_v0_2_gemini_api"] == ["fake-native-one", "fake-native-two"]
-    assert not secret_file.exists()
+    assert lines == ["file-one", "file-two"]
+    assert secret_file.exists()
 
 
 def test_sample_frames_falls_back_to_ffmpeg_when_cv2_cannot_open_source(tmp_path, monkeypatch):
@@ -614,6 +638,47 @@ def test_model_listing_does_not_claim_free_tier_without_project_evidence(
     assert discovery.selected_model == "gemini-3.6-flash"
     assert discovery.free_tier_verified is False
     assert discovery.status == "needs_review"
+
+
+def test_model_discovery_uses_next_key_after_auth_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(gemini_module, "read_cached_response", lambda *_args: None)
+    monkeypatch.setattr(gemini_module, "write_cached_response", lambda *_args: None)
+    config = _config(tmp_path)
+    config.key_file.write_text(
+        "first-key-that-is-long-enough-0001\nsecond-key-that-is-long-enough-0002\n",
+        encoding="utf-8",
+    )
+    seen_keys: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        key = request.headers.get("x-goog-api-key", "")
+        seen_keys.append(key)
+        if key == "first-key-that-is-long-enough-0001":
+            return httpx.Response(403, json={"error": {"message": "denied"}})
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": "models/gemini-2.5-flash",
+                        "displayName": "Gemini 2.5 Flash",
+                        "supportedGenerationMethods": ["generateContent"],
+                    }
+                ]
+            },
+        )
+
+    discovery = discover_gemini_models(
+        config,
+        transport=httpx.MockTransport(handler),
+        use_cache=False,
+    )
+
+    assert seen_keys == [
+        "first-key-that-is-long-enough-0001",
+        "second-key-that-is-long-enough-0002",
+    ]
+    assert discovery.selected_model == "gemini-2.5-flash"
 
 
 def test_multimodal_resolver_uses_three_visual_crops_audio_and_json_schema(tmp_path, monkeypatch):

@@ -15,7 +15,7 @@ def _sources() -> tuple[str, str, str]:
     )
 
 
-def test_task36_has_four_mutually_exclusive_views_without_tabs_or_rail():
+def test_task36_has_five_mutually_exclusive_views_without_tabs_or_rail():
     html, js, css = _sources()
 
     assert 'role="tablist"' not in html
@@ -23,16 +23,17 @@ def test_task36_has_four_mutually_exclusive_views_without_tabs_or_rail():
     assert "status-rail" not in html
     assert "tab-strip" not in html
     assert "progress sidebar" not in html.lower()
-    assert "const FLOW_VIEWS = [\"setup\", \"processing\", \"completed\", \"error\"]" in js
+    assert "const FLOW_VIEWS = [\"setup\", \"settings\", \"processing\", \"completed\", \"error\"]" in js
     assert 'document.body.dataset.flowState = next' in js
     assert 'element.hidden = view !== next' in js
     assert ".flow-view" in css
     assert ".status-rail" not in css
 
-    markers = re.findall(r'data-flow-view="(setup|processing|completed|error)"', html)
-    assert markers == ["setup", "processing", "completed", "error"]
-    assert html.count('class="flow-view') == 4
+    markers = re.findall(r'data-flow-view="(setup|settings|processing|completed|error)"', html)
+    assert markers == ["setup", "settings", "processing", "completed", "error"]
+    assert html.count('class="flow-view') == 5
     assert 'data-flow-view="setup" aria-labelledby="setupTitle">' in html
+    assert 'data-flow-view="settings" aria-labelledby="appSettingsTitle" hidden>' in html
     assert 'data-flow-view="processing" aria-labelledby="processingTitle" hidden>' in html
     assert 'data-flow-view="completed" aria-labelledby="completedTitle" hidden>' in html
     assert 'data-flow-view="error" aria-labelledby="errorTitle" hidden>' in html
@@ -42,12 +43,12 @@ def test_task36_setup_is_one_button_and_advanced_features_are_collapsed():
     html, js, _ = _sources()
     setup = html.split('data-flow-view="setup"', 1)[1].split('data-flow-view="processing"', 1)[0]
 
-    assert "Chọn video, kiểm tra thiết lập và bấm tạo. Mọi xử lý diễn ra trên máy." in setup
+    assert "Chọn video, chọn cách lấy phụ đề, rồi bấm tạo." in setup
     assert 'id="videoPicker"' in setup
     assert 'id="sourceSummary"' in setup
     assert 'id="subtitleStyle"' not in setup
     assert 'id="cleanupMode"' in setup
-    assert "Chế độ phụ đề" in setup
+    assert "Nguồn phụ đề" in setup
     assert "Che phụ đề gốc phía dưới" not in setup
     # V1: Gemini mode is not exposed
     assert 'value="source_caption_gemini_translation"' not in setup
@@ -120,7 +121,9 @@ def test_task36_completed_and_error_views_fail_closed():
     assert "clearPreview();" in js
     assert "/open-output-folder" in js
     assert "Đã mở thư mục kết quả." in js
-    assert 'run?.failure_category !== "runtime_readiness_failed"' in js
+    assert '"runtime_readiness_failed", "CAPTION_OCR_RUNTIME_FAILED", "gemini_readiness_failed"' in js
+    assert "Thử kiểm tra OCR lại" in js
+    assert "Thử kết nối Gemini lại" in js
     assert 'startProcessing({ retryRuntime: true })' in js
 
 
@@ -167,13 +170,13 @@ def test_task36_has_responsive_no_overflow_contract_and_clean_vietnamese():
     html, js, css = _sources()
     combined = f"{html}\n{js}"
 
-    assert "width: min(860px, calc(100vw - 36px));" in css
+    assert "width: min(960px, calc(100vw - 32px));" in css
     assert "@media (max-width: 720px)" in css
     assert "@media (max-width: 430px)" in css
     assert "width: 100%;" in css
     assert "overflow-wrap: anywhere;" in css
-    assert "/app.js?v=first-run-runtime" in html
-    assert "/styles.css?v=task36b" in html
+    assert "/app.js?v=fluent-settings-v1" in html
+    assert "/styles.css?v=fluent-settings-v1" in html
     for bad in ("\ufffd", "Ãƒ", "Ã‚", "Táº", "Ä‘"):
         assert bad not in combined
     for unexpected in (

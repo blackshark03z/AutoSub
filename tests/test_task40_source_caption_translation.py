@@ -285,12 +285,49 @@ def test_ocr_render_plan_masks_detected_top_region_and_scales(monkeypatch):
         layout["plate"]["height"],
     )
     assert plan["subtitle_provenance"] == SOURCE_CAPTION_MODE
+    assert len(plan["render_cues"]) == 1
+    assert plan["render_cues"][0]["render_text"] == "I'm here."
+    assert plan["dropped_cue_count"] == 0
+
+
+def test_ocr_render_plan_preserves_adjacent_cues_when_detection_intervals_overlap(monkeypatch):
+    monkeypatch.setattr("app.services.source_caption_translation.media_summary", lambda _: {
+        "duration_seconds": 12.1,
+        "video": {"width": 1920, "height": 1080},
+    })
+    cues = [
+        {
+            "cue_id": "OCR_0001",
+            "start_ms": 5750,
+            "end_ms": 7750,
+            "resolved_text": "Where are you going now?",
+            "source_bbox": {"left_x": 813, "top_y": 67, "right_x": 1105, "bottom_y": 113},
+            "source_interval": {"start_time": 5.75, "end_time": 7.75},
+            "line_count": 1,
+        },
+        {
+            "cue_id": "OCR_0002",
+            "start_ms": 7250,
+            "end_ms": 11750,
+            "resolved_text": "Dad, send it to Dad.",
+            "source_bbox": {"left_x": 736, "top_y": 916, "right_x": 1180, "bottom_y": 1051},
+            "source_interval": {"start_time": 7.25, "end_time": 11.75},
+            "line_count": 2,
+        },
+    ]
+
+    plan = build_source_caption_render_plan(Path("source.mp4"), cues, font_path=Path(r"C:\Windows\Fonts\arial.ttf"))
+
+    assert [cue["cue_id"] for cue in plan["render_cues"]] == ["OCR_0001", "OCR_0002"]
+    assert plan["render_cues"][0]["end_ms"] == plan["render_cues"][1]["start_ms"] == 7250
+    assert plan["dropped_cue_count"] == 0
+    assert {layout["segment_id"] for layout in plan["layouts"]} == {"OCR_0001", "OCR_0002"}
 
 
 def test_ui_wording_and_separate_modes_keep_one_button_contract():
     html = Path("app/static/simple/index.html").read_text(encoding="utf-8")
     js = Path("app/static/simple/app.js").read_text(encoding="utf-8")
-    assert "Tự nhận dạng lời nói cục bộ" in html
+    assert "Nhận dạng lời nói trên máy" in html
     assert "AutoSubs" in html
     assert "Che phụ đề gốc phía dưới" not in html
     assert 'id="startBtn"' in html

@@ -16,9 +16,11 @@ The current product is a FastAPI modular monolith with static browser UIs, SQLit
 
 # Data / Control Flow
 
-Normal V1 CUJ:
+Normal V1 CUJs:
 
-`Run AutoSub.cmd -> verified local FastAPI server -> Simple UI -> source validation -> run identity -> runtime readiness -> AutoSubs transcription -> Argos zh->en translation -> resolved subtitle track -> ffmpeg subtitle render -> final result validation -> browser preview/output folder`
+- Speech: `Run AutoSub.cmd -> local FastAPI -> Simple UI -> source validation -> AutoSubs readiness/transcription -> Argos zh->en -> resolved subtitle track -> ffmpeg render -> validation -> preview/output`.
+- Embedded captions: `Run AutoSub.cmd -> local FastAPI -> Simple UI -> source validation -> PaddleOCR readiness -> Gemini credential/model preflight -> OCR + guarded Gemini correction/translation -> resolved subtitle track -> ffmpeg render -> validation -> preview/output`.
+- Application Settings are separate from per-run configuration. Gemini Settings accept 1–n keys, append only new unique values to ignored local `secrets\\gemini_api.txt`, and expose only sanitized counts/status. Legacy Windows Credential Manager entries remain a read-only compatibility fallback.
 
 Project/run artifacts are isolated under `data/projects/<project_id>/runs/<run_id>/`. Source media is referenced by default and is copied only when the explicit working-copy option is used. Completed output is published to the UI only after validation marks it eligible.
 
@@ -27,7 +29,7 @@ Project/run artifacts are isolated under `data/projects/<project_id>/runs/<run_i
 - `main` Git/source is implementation authority.
 - SQLite + run directories are live product state for the identified data root.
 - The source media path/hash identifies the input; source media is not mutated.
-- `runtime_readiness` owns machine-local AutoSubs/Argos readiness identity and validation.
+- `runtime_readiness` owns machine-local AutoSubs/Argos readiness identity and validation; OCR readiness is owned by the OCR runtime service and Gemini readiness by the Gemini provider preflight.
 - Run manifests/results are evidence only for the run/source/configuration they identify.
 - Tests are verification evidence; they do not supersede live product behavior.
 - `TASK.md` is temporary current-Goal context, not runtime authority.
@@ -41,19 +43,22 @@ Project/run artifacts are isolated under `data/projects/<project_id>/runs/<run_i
 - Processing is idempotently admitted so duplicate UI starts do not create duplicate active work for the same run.
 - Project/run data remains isolated by run identity.
 - Runtime/provider failures produce actionable, sanitized product errors rather than raw secrets/tracebacks.
-- Gemini, ElevenLabs, upload/publish effects are disabled for the active V1 normal journey.
+- Gemini calls are permitted only after explicit OCR+Gemini selection and fail-fast provider preflight. ElevenLabs and upload/publish effects remain disabled for the active V1 journeys.
 - Generated media, user data, secrets, runtime binaries/models/caches, and databases are not canonical Git source.
 
 # Important Tradeoffs / Decisions
 
 - V1 optimizes for a single coherent daily-use journey rather than exposing every historical capability in the primary UI.
-- AutoSubs + Argos are managed/validated locally so the user does not need manual runtime setup during normal operation; first preparation may require network access.
+- AutoSubs + Argos are managed/validated locally so speech mode does not need manual runtime setup during normal operation; first preparation may require network access.
+- OCR stays local through PaddleOCR, while Gemini is an explicit external boundary used only for caption correction/translation after credential/model preflight.
+- Frequent per-run choices stay in the creation flow; infrequent application configuration such as provider credentials lives in Settings.
 - The normal output contract is intentionally fixed and simple. Configurability that has no verified backend effect must not be presented as a working control.
-- EXE/installer/portable packaging remains a separate deferred release concern; repository-local double-click launch is the accepted daily-use entry point for this Goal.
+- Stable packaging must be built only from the exact Product HEAD that passed both CUJs and release verification; historical packages are never relabeled.
 
 # External Boundaries
 
 - AutoSubs release download/model preparation and Argos package/model preparation may use network access when a required managed runtime is missing.
+- Gemini uses Internet/API quota only when the user selects OCR+Gemini; its key file is local, ignored by Git/release, and never returned by product APIs.
 - ffmpeg is a required local media execution dependency.
 - No cloud publication/deployment is part of the active Goal.
 

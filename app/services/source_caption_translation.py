@@ -27,6 +27,7 @@ from app.services.clean_subtitle_render import (
     detect_source_subtitle_bbox,
     english_layout_for_interval,
     interval_stats,
+    normalize_render_cues,
     read_frame,
     review_times,
     stabilize_layouts,
@@ -379,7 +380,7 @@ def create_source_caption_translation(
             raise SourceCaptionUnavailableError(SOURCE_CAPTION_BLOCK_MESSAGE)
         gemini_config = load_gemini_translation_config(translation_config_path)
         discovery = model_discovery or discover_gemini_models(gemini_config)
-        if not discovery.free_tier_verified or not discovery.selected_model:
+        if not discovery.selected_model:
             raise SourceCaptionUnavailableError(SOURCE_CAPTION_BLOCK_MESSAGE)
         gemini_config = replace(gemini_config, model=str(discovery.selected_model))
         caption_translator = translator or GeminiCaptionTranslator(gemini_config)
@@ -2015,6 +2016,19 @@ def build_source_caption_render_plan(
     duration = float(media.get("duration_seconds") or 0)
     font_size = max(36, round(height * 0.041))
     font = ImageFont.truetype(str(font_path), font_size)
+    render_candidates = [{**cue} for cue in cues]
+    for index in range(len(render_candidates) - 1):
+        current = render_candidates[index]
+        following = render_candidates[index + 1]
+        try:
+            current_start = int(current.get("start_ms"))
+            current_end = int(current.get("end_ms"))
+            following_start = int(following.get("start_ms"))
+        except (TypeError, ValueError):
+            continue
+        if current_start < following_start < current_end:
+            current["end_ms"] = following_start
+    render_cues = normalize_render_cues(render_candidates, duration_seconds=duration)
     pad_x = max(12, round(width * 0.00625))
     pad_y = max(8, round(height * 0.0074))
     intervals = []
@@ -2025,7 +2039,7 @@ def build_source_caption_render_plan(
         coverage_records: list[dict[str, Any]] = []
         coverage_adjustments: dict[str, dict[str, float]] = {}
         requires_pixel_coverage = False
-        for cue in cues:
+        for cue in render_cues:
             bbox = cue.get("source_bbox")
             if not isinstance(bbox, dict):
                 continue
@@ -2041,14 +2055,14 @@ def build_source_caption_render_plan(
                 duration=duration,
             )
             coverage_adjustments, coverage_records, uncovered_coverage = _source_caption_coverage_adjustments(
-                cues,
+                render_cues,
                 coverage_windows,
                 source_video_sha256=source_video_sha256,
                 reviewed_coverage_exclusions=reviewed_coverage_exclusions,
             )
             if uncovered_coverage:
                 raise SourceCaptionUnavailableError(SOURCE_CAPTION_BLOCK_MESSAGE)
-        for cue in cues:
+        for cue in render_cues:
             bbox = cue.get("source_bbox")
             source_interval = cue.get("source_interval") or {}
             if not isinstance(bbox, dict):
@@ -2160,6 +2174,8 @@ def build_source_caption_render_plan(
         "output_width": width,
         "output_height": height,
         "font_size": font_size,
+        "render_cues": render_cues,
+        "dropped_cue_count": len(cues) - len(render_cues),
         "intervals": intervals,
         "layouts": layouts,
         "source_caption_coverage": coverage_records,

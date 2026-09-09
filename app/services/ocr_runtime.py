@@ -102,11 +102,13 @@ def get_ocr_runtime_status(config_path: Path | None = None) -> dict[str, Any]:
         }
     verification = _read_verification_summary(config.runtime_root.parent)
     model_availability = {
-        "ch_det": (config.model_root / "ch_det").exists(),
-        "ch_rec": (config.model_root / "ch_rec").exists(),
-        "ch_cls": (config.model_root / "ch_cls").exists(),
+        name: all(
+            (config.model_root / name / filename).is_file()
+            for filename in ("inference.pdmodel", "inference.pdiparams")
+        )
+        for name in ("ch_det", "ch_rec", "ch_cls")
     }
-    available = config.python_path.exists() and all(model_availability.values())
+    available = config.python_path.is_file() and all(model_availability.values())
     smoke_result = verification.get("smoke_result", "not_run")
     import_result = verification.get("import_result", "unknown")
     version = verification.get("runtime_version") or _runtime_version(config.python_path)

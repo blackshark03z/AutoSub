@@ -31,10 +31,11 @@ For material user-facing work, apply the current CADS user-facing workflow, fron
 
 - Product target: local, single-user Windows application.
 - Primary entry: double-click `Run AutoSub.cmd`; normal use must not require a terminal.
-- Primary V1 journey: local Chinese-dialogue video -> local readiness -> speech transcription -> Chinese-to-English translation -> subtitle render -> verified MP4 preview/export.
+- Primary V1 journeys: (A) local Chinese-dialogue video -> AutoSubs speech transcription -> Argos zh→en translation -> verified MP4; and (B) embedded Chinese captions -> local PaddleOCR -> Gemini correction/translation -> verified MP4.
+- The Simple UI separates per-run choices from application Settings. Gemini keys are managed in Settings as an append/deduplicate list in ignored local file `secrets\\gemini_api.txt`; APIs/UI expose only sanitized status/counts, never key contents.
 - User media must not be mutated or automatically deleted.
-- Gemini, ElevenLabs, upload/publish external providers remain outside the active Product Goal unless explicitly re-authorized.
-- EXE/installer/release packaging remains a separate deferred lane.
+- Gemini is explicitly authorized only for the OCR+Gemini journey. ElevenLabs and upload/publish providers remain outside the active Product Goal.
+- Stable release packaging is active only after both accepted user journeys and release verification pass from the exact candidate HEAD.
 - Runtime binaries, models, caches, user media, databases, secrets, and generated heavy artifacts stay out of canonical source.
 
 Legacy Build OS lifecycle/control-plane files are not current authority and must not be used to gate ordinary AutoSub development.

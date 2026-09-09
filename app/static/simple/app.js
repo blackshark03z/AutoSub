@@ -1,5 +1,6 @@
 const state = {
   view: "setup",
+  returnView: "setup",
   run: null,
   latestValidRun: null,
   sourcePath: "",
@@ -8,21 +9,31 @@ const state = {
   pollTimer: null,
   starting: false,
   startApiCalls: 0,
+  readiness: null,
 };
 
-const FLOW_VIEWS = ["setup", "processing", "completed", "error"];
+const FLOW_VIEWS = ["setup", "settings", "processing", "completed", "error"];
 const VIEW_IDS = {
   setup: "setupView",
+  settings: "settingsView",
   processing: "processingView",
   completed: "completedView",
   error: "errorView",
 };
 
-const WORKFLOW_STEPS = [
+const AUDIO_WORKFLOW_STEPS = [
   { id: "runtime", label: "Kiểm tra khả năng cục bộ", stages: ["checking_runtime", "downloading_autosubs", "preparing_autosubs_model", "preparing_translation", "runtime_ready"] },
   { id: "prepare", label: "Chuẩn bị âm thanh", stages: ["checking_video"] },
   { id: "recognize", label: "Nhận dạng lời nói", stages: ["analysing_dialogue"] },
   { id: "subtitles", label: "Tạo phụ đề", stages: ["preparing_english_subtitles", "cleaning_dialogue_subtitles"] },
+  { id: "render", label: "Xuất video", stages: ["rendering_video"] },
+  { id: "verify", label: "Kiểm tra kết quả", stages: ["verifying_result"] },
+];
+
+const OCR_WORKFLOW_STEPS = [
+  { id: "runtime", label: "Kiểm tra OCR và Gemini", stages: ["checking_runtime"] },
+  { id: "recognize", label: "Đọc và dịch phụ đề", stages: ["analysing_dialogue"] },
+  { id: "subtitles", label: "Chuẩn bị phụ đề", stages: ["preparing_english_subtitles", "cleaning_dialogue_subtitles"] },
   { id: "render", label: "Xuất video", stages: ["rendering_video"] },
   { id: "verify", label: "Kiểm tra kết quả", stages: ["verifying_result"] },
 ];
@@ -48,6 +59,31 @@ const TRACK_TYPE_LABELS = {
 };
 
 const $ = (id) => document.getElementById(id);
+
+function captionMode(run = null) {
+  return run?.settings?.caption_mode || $("cleanupMode")?.value || "external_audio_transcription";
+}
+
+function isOcrMode(run = null) {
+  return captionMode(run) === "source_caption_ocr_translation";
+}
+
+function workflowSteps(run = null) {
+  return isOcrMode(run) ? OCR_WORKFLOW_STEPS : AUDIO_WORKFLOW_STEPS;
+}
+
+function stageLabel(run, stageId) {
+  if (!isOcrMode(run)) return STAGE_LABELS[stageId];
+  const ocrLabels = {
+    checking_runtime: "Đang kiểm tra OCR và Gemini",
+    analysing_dialogue: "Đang đọc phụ đề và dịch bằng Gemini",
+    preparing_english_subtitles: "Đang chuẩn bị phụ đề tiếng Anh",
+    cleaning_dialogue_subtitles: "Đang chuẩn bị phụ đề để xuất video",
+    rendering_video: "Đang xuất video",
+    verifying_result: "Đang kiểm tra kết quả",
+  };
+  return ocrLabels[stageId] || STAGE_LABELS[stageId];
+}
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -115,8 +151,43 @@ function setFlowView(nextView) {
     const element = $(VIEW_IDS[view]);
     if (element) element.hidden = view !== next;
   });
+  const settingsActive = next === "settings";
+  if (settingsActive) {
+    $("settingsNavBtn")?.setAttribute("aria-current", "page");
+    $("homeNavBtn")?.removeAttribute("aria-current");
+  } else {
+    $("homeNavBtn")?.setAttribute("aria-current", "page");
+    $("settingsNavBtn")?.removeAttribute("aria-current");
+  }
   document.body.dataset.flowState = next;
   window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+function focusViewHeading(view) {
+  const headingId = {
+    setup: "setupTitle",
+    settings: "appSettingsTitle",
+    processing: "processingTitle",
+    completed: "completedTitle",
+    error: "errorTitle",
+  }[view];
+  if (!headingId) return;
+  requestAnimationFrame(() => $(headingId)?.focus({ preventScroll: true }));
+}
+
+function openSettings() {
+  if (state.view !== "settings") state.returnView = state.view;
+  setFlowView("settings");
+  focusViewHeading("settings");
+  renderReadiness().catch(handleActionError);
+}
+
+function closeSettings() {
+  const derived = deriveFlowView(state.run);
+  const target = state.returnView === "settings" ? derived : state.returnView;
+  const next = FLOW_VIEWS.includes(target) && target !== "settings" ? target : derived;
+  setFlowView(next);
+  requestAnimationFrame(() => $("settingsNavBtn")?.focus({ preventScroll: true }));
 }
 
 function isFailedRun(run) {
@@ -161,16 +232,29 @@ function renderSource(source) {
 }
 
 function updateStartAction() {
-  const ready = Boolean(state.validatedSource && state.sourcePath && !state.starting);
+  const missingGemini = isOcrMode() && state.readiness && state.readiness?.gemini_runtime?.configured !== true;
+  const ready = Boolean(state.validatedSource && state.sourcePath && !state.starting && !missingGemini);
   $("startBtn").disabled = !ready;
   $("startReason").textContent = state.starting
     ? "Đang bắt đầu lượt xử lý..."
-    : ready
-      ? "Video đã sẵn sàng. Một lần bấm sẽ tạo phụ đề và xuất video."
-      : "Hãy chọn một video để tiếp tục.";
+    : missingGemini
+      ? "Hãy lưu Gemini API key để dùng chế độ OCR + Gemini."
+      : ready
+        ? "Video đã sẵn sàng. Một lần bấm sẽ tạo phụ đề và xuất video."
+        : "Hãy chọn một video để tiếp tục.";
 }
 
 function runtimeComponents(readiness) {
+  if (isOcrMode()) {
+    const ocr = readiness?.ocr_runtime || {};
+    return [
+      ["PaddleOCR", {
+        state: ocr.available === true ? "ready" : "missing",
+        message: ocr.actionable_fix_message || "Bộ đọc phụ đề OCR chưa sẵn sàng.",
+      }],
+      ["Gemini", readiness?.gemini_runtime],
+    ];
+  }
   return [
     ["AutoSubs", readiness?.autosubs_runtime],
     ["Mô hình AutoSubs small", readiness?.autosubs_small_model],
@@ -218,14 +302,16 @@ function renderProcessing(run) {
   $("processingFilename").textContent = run?.source?.filename || state.validatedSource?.filename || "Video đã chọn";
   $("processingCurrent").textContent = failed
     ? "Quá trình xử lý đã dừng."
-    : progress.status_label || STAGE_LABELS[currentStage] || "Đang xử lý";
+    : progress.status_label || stageLabel(run, currentStage) || "Đang xử lý";
   $("processingDescription").textContent = failed
     ? "Ứng dụng đã dừng an toàn và không công bố kết quả chưa hợp lệ."
-    : currentStage.includes("runtime") || currentStage.includes("autosubs") || currentStage === "preparing_translation"
-      ? "AutoSub đang kiểm tra hoặc chuẩn bị các khả năng cục bộ cần thiết. Bạn không cần tải hay cấu hình thủ công."
-      : "Trạng thái được cập nhật từ tiến trình xử lý thực trên máy.";
+    : isOcrMode(run)
+      ? "PaddleOCR đọc phụ đề trên máy; Gemini dùng kết nối Internet để sửa/giải nghĩa và dịch nội dung."
+      : currentStage.includes("runtime") || currentStage.includes("autosubs") || currentStage === "preparing_translation"
+        ? "AutoSub đang kiểm tra hoặc chuẩn bị các khả năng cục bộ cần thiết. Bạn không cần tải hay cấu hình thủ công."
+        : "Trạng thái được cập nhật từ tiến trình xử lý thực trên máy.";
   $("processingTechnicalOutput").textContent = JSON.stringify(run || {}, null, 2);
-  $("processingStages").innerHTML = WORKFLOW_STEPS.map((step) => {
+  $("processingStages").innerHTML = workflowSteps(run).map((step) => {
     const active = step.stages.includes(currentStage);
     const done = run?.internal_state === "completed"
       || step.stages.every((stageId) => completedStages.has(stageId));
@@ -276,6 +362,8 @@ function friendlyFailureMessage(run, fallback = "") {
     source_missing: "Video nguồn không còn ở vị trí đã chọn.",
     render_failed: "Không thể xuất video. Tệp nguồn vẫn được giữ nguyên.",
     invalid_completed_result: "Kết quả không hợp lệ nên không được hiển thị.",
+    CAPTION_OCR_RUNTIME_FAILED: "Bộ đọc phụ đề OCR chưa sẵn sàng. Hãy kiểm tra lại rồi thử lại.",
+    gemini_readiness_failed: "Chưa thể kết nối Gemini. Kiểm tra API key hoặc Internet rồi thử lại.",
   };
   return messages[run?.failure_category]
     || run?.result_validation?.message
@@ -286,7 +374,15 @@ function renderError(run, fallbackMessage = "") {
   clearPreview();
   $("errorMessage").textContent = friendlyFailureMessage(run, fallbackMessage);
   $("technicalOutput").textContent = JSON.stringify(run || { message: fallbackMessage }, null, 2);
-  $("retryRuntimeBtn").hidden = run?.failure_category !== "runtime_readiness_failed";
+  const category = String(run?.failure_category || "");
+  const retryableRuntimeFailure = ["runtime_readiness_failed", "CAPTION_OCR_RUNTIME_FAILED", "gemini_readiness_failed"].includes(category)
+    || category.startsWith("GEMINI_");
+  $("retryRuntimeBtn").hidden = !retryableRuntimeFailure;
+  $("retryRuntimeBtn").textContent = category === "CAPTION_OCR_RUNTIME_FAILED"
+    ? "Thử kiểm tra OCR lại"
+    : (category === "gemini_readiness_failed" || category.startsWith("GEMINI_"))
+      ? "Thử kết nối Gemini lại"
+      : "Thử chuẩn bị lại";
 }
 
 function renderRun(run, options = {}) {
@@ -299,7 +395,9 @@ function renderRun(run, options = {}) {
   if (view === "processing") renderProcessing(run);
   if (view === "completed") renderCompleted(run);
   if (view === "error") renderError(run, options.errorMessage || "");
+  const previousView = state.view;
   setFlowView(view);
+  if (previousView !== view) focusViewHeading(view);
   updateStartAction();
 }
 
@@ -315,20 +413,45 @@ function readinessCard(label, value, pass = true) {
 async function renderReadiness() {
   try {
     const readiness = await api("/api/simple/runtime/readiness");
-    const ready = readiness.status === "ready";
+    state.readiness = readiness;
+    const mode = captionMode();
+    const ready = readiness?.mode_status?.[mode]?.status === "ready";
+    const gemini = readiness?.gemini_runtime || {};
+    const keyCount = Number(gemini.count || 0);
+
     $("readinessPill").textContent = ready ? "Sẵn sàng" : "Cần chuẩn bị";
     $("readinessPill").classList.toggle("pass", ready);
+    $("readinessPill").classList.toggle("error", !ready);
     $("readinessSummary").innerHTML = runtimeComponents(readiness).map(([label, component]) => {
       const componentReady = component?.state === "ready";
       return readinessCard(label, componentReady ? "Sẵn sàng" : component?.message || "Cần chuẩn bị", componentReady);
     }).join("");
+
+    $("geminiSettingsPill").textContent = keyCount > 0 ? `${keyCount} key` : "Chưa cấu hình";
+    $("geminiSettingsPill").classList.toggle("pass", keyCount > 0);
+    $("geminiSettingsPill").classList.toggle("error", keyCount === 0);
+    $("geminiStoredCount").textContent = `Đã lưu ${keyCount} key`;
+    $("geminiRequirementText").textContent = keyCount > 0
+      ? `Đã có ${keyCount} key. Gemini sẽ được kiểm tra kết nối trước khi OCR bắt đầu.`
+      : "Chưa có key. Mở Cài đặt để thêm key trước khi chạy OCR + Gemini.";
+
     $("readinessDetails").textContent = JSON.stringify({
-      status: readiness.status,
-      action: ready ? "Chọn video để bắt đầu." : "Chọn video rồi bấm tạo; AutoSub sẽ chuẩn bị khả năng cục bộ cần thiết.",
+      mode,
+      status: ready ? "ready" : "not_ready",
+      gemini_key_count: keyCount,
+      gemini_storage: gemini.storage_path || "secrets\\gemini_api.txt",
+      action: ready
+        ? "Các thành phần cần cho chế độ hiện tại đã sẵn sàng."
+        : isOcrMode()
+          ? "OCR cần PaddleOCR trên máy và ít nhất một Gemini API key; kết nối model được kiểm tra trước khi phân tích video."
+          : "AutoSub sẽ chuẩn bị các khả năng cục bộ cần thiết khi bắt đầu.",
     }, null, 2);
+    updateModeUi();
+    updateStartAction();
   } catch (error) {
     $("readinessPill").textContent = "Cần kiểm tra";
     $("readinessPill").classList.remove("pass");
+    $("readinessPill").classList.add("error");
     $("readinessSummary").innerHTML = readinessCard("Ứng dụng", "Chưa sẵn sàng", false);
     $("readinessDetails").textContent = error.message;
   }
@@ -501,7 +624,7 @@ async function startProcessing({ retryRuntime = false } = {}) {
       ...run,
       internal_state: "processing",
       progress: run.progress || {
-        current_stage: "checking_video",
+        current_stage: isOcrMode(run) ? "checking_runtime" : "checking_video",
         completed_stages: [],
         percentage: null,
         status_label: "Đang bắt đầu xử lý",
@@ -788,7 +911,85 @@ function handleActionError(error) {
   setMessage(error.message || "Đã xảy ra lỗi.", true);
 }
 
+function updateModeUi() {
+  const ocr = isOcrMode();
+  $("geminiRequirement").hidden = !ocr;
+  $("captionModeHelp").textContent = ocr
+    ? "PaddleOCR đọc phụ đề trên máy; Gemini sửa/giải nghĩa và dịch sang tiếng Anh qua Internet."
+    : "AutoSubs nhận dạng lời nói; Argos dịch Trung → Anh trên máy.";
+  if (ocr && state.readiness) {
+    const keyCount = Number(state.readiness?.gemini_runtime?.count || 0);
+    $("geminiRequirementText").textContent = keyCount > 0
+      ? `Đã có ${keyCount} key. Gemini sẽ được kiểm tra kết nối trước khi OCR bắt đầu.`
+      : "Chưa có key. Mở Cài đặt để thêm key trước khi chạy OCR + Gemini.";
+  }
+  updateStartAction();
+}
+
+function setGeminiSettingsMessage(text, kind = "neutral") {
+  const element = $("geminiSettingsMessage");
+  element.textContent = text;
+  element.classList.toggle("success", kind === "success");
+  element.classList.toggle("error", kind === "error");
+  element.setAttribute("role", kind === "error" ? "alert" : "status");
+  element.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
+}
+
+async function saveGeminiKeys() {
+  const input = $("geminiKeysInput");
+  const keys = String(input.value || "")
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!keys.length) {
+    input.setAttribute("aria-invalid", "true");
+    setGeminiSettingsMessage("Hãy nhập ít nhất một Gemini API key, mỗi key một dòng.", "error");
+    input.focus();
+    return;
+  }
+  input.removeAttribute("aria-invalid");
+
+  const button = $("saveGeminiKeysBtn");
+  button.disabled = true;
+  setGeminiSettingsMessage(`Đang kiểm tra và thêm ${keys.length} key...`);
+  try {
+    const result = await api("/api/simple/gemini/credentials", {
+      method: "POST",
+      body: JSON.stringify({ api_keys: keys }),
+    });
+    input.value = "";
+    input.removeAttribute("aria-invalid");
+    const added = Number(result.added_count || 0);
+    const duplicates = Number(result.duplicate_count || 0);
+    const total = Number(result.count || 0);
+    setGeminiSettingsMessage(`Đã thêm ${added} key mới. Tổng ${total} key đã lưu.`, "success");
+    $("geminiLastSaveSummary").textContent = duplicates > 0
+      ? `${duplicates} key trùng được bỏ qua. Danh sách cũ không bị ghi đè.`
+      : "Không có key trùng. Danh sách cũ được giữ nguyên và key mới đã được thêm.";
+    await renderReadiness();
+  } catch (error) {
+    input.setAttribute("aria-invalid", "true");
+    setGeminiSettingsMessage(error.message || "Không thể lưu Gemini API key.", "error");
+    input.focus();
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function wireEvents() {
+  $("settingsNavBtn").addEventListener("click", openSettings);
+  $("settingsBackBtn").addEventListener("click", closeSettings);
+  $("homeNavBtn").addEventListener("click", () => {
+    if (state.view === "settings") closeSettings();
+  });
+  $("openGeminiSettingsBtn").addEventListener("click", openSettings);
+  $("saveGeminiKeysBtn").addEventListener("click", () => saveGeminiKeys());
+  $("refreshGeminiStatusBtn").addEventListener("click", () => {
+    setGeminiSettingsMessage("Đang làm mới trạng thái...");
+    renderReadiness()
+      .then(() => setGeminiSettingsMessage("Đã làm mới trạng thái Gemini.", "success"))
+      .catch((error) => setGeminiSettingsMessage(error.message || "Không thể làm mới trạng thái.", "error"));
+  });
   $("chooseVideo").addEventListener("click", (event) => {
     event.stopPropagation();
     $("videoPicker").click();
@@ -810,6 +1011,11 @@ function wireEvents() {
     } else if (file) {
       uploadAndValidate(file).catch(handleActionError);
     }
+  });
+  $("cleanupMode").addEventListener("change", () => {
+    if (state.run?.internal_state === "selected") state.run = null;
+    updateModeUi();
+    renderReadiness().catch(handleActionError);
   });
   $("sourcePath").addEventListener("input", schedulePathValidation);
   $("sourcePath").addEventListener("change", () => {
@@ -895,6 +1101,7 @@ function wireEvents() {
 }
 
 wireEvents();
+updateModeUi();
 renderReadiness();
 renderRun(null, { explicitNew: true });
 restoreInitialState().catch((error) => {

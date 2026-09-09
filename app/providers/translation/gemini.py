@@ -88,6 +88,10 @@ FREE_TIER_MODEL_CANDIDATES = (
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
 )
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_TIMEOUT_SECONDS = 180.0
+DEFAULT_GEMINI_KEY_FILE = r"secrets\gemini_api.txt"
 DEFAULT_GEMINI_CREDENTIAL_NAME = "tool_auto_sub_worker_handoff_v0_2_gemini_api"
 GEMINI_DISCOVERY_PROVIDER = "gemini_model_discovery"
 GEMINI_DISCOVERY_PROMPT_VERSION = "model-discovery-v2"
@@ -112,13 +116,17 @@ def _selected_credential_name(config: GeminiTranslationConfig) -> str | None:
 
 
 def _credential_source_status(config: GeminiTranslationConfig) -> tuple[str, list[str]]:
+    # Product Settings owns a simple append-only secret file. The file is ignored
+    # by Git/release packaging and is never echoed through the API. Keep Windows
+    # Credential Manager as a read-only legacy fallback so existing users do not
+    # lose previously configured keys during the migration.
+    if config.key_file.exists():
+        return "secret_file", load_strict_secret_lines(config.key_file)
     credential_name = _selected_credential_name(config)
     if credential_name:
         secure_lines = _read_secure_gemini_secret_lines(credential_name)
         if secure_lines:
-            return "secure_credential_manager", secure_lines
-    if config.key_file.exists():
-        return "plaintext_file", load_strict_secret_lines(config.key_file)
+            return "legacy_secure_credential", secure_lines
     return "missing", []
 
 
@@ -231,31 +239,14 @@ def _write_native_gemini_secret_lines(credential_name: str, lines: list[str]) ->
 
 
 def load_gemini_secret_lines(config: GeminiTranslationConfig) -> list[str]:
+    if config.key_file.exists():
+        return load_strict_secret_lines(config.key_file)
     credential_name = _selected_credential_name(config)
     if credential_name:
         stored = _read_secure_gemini_secret_lines(credential_name)
         if stored:
-            if config.key_file.exists():
-                plaintext = load_strict_secret_lines(config.key_file)
-                if plaintext != stored:
-                    raise RuntimeError(
-                        "Gemini secure credential does not match the pending plaintext migration."
-                    )
-                config.key_file.unlink()
             return stored
-    if not config.key_file.exists():
-        raise FileNotFoundError(f"Secret file not found: {config.key_file.name}")
-    lines = load_strict_secret_lines(config.key_file)
-    if credential_name:
-        _write_secure_gemini_secret_lines(credential_name, lines)
-        verified = _read_secure_gemini_secret_lines(credential_name)
-        if verified != lines:
-            raise RuntimeError("Gemini credential migration verification failed.")
-        try:
-            config.key_file.unlink()
-        except FileNotFoundError:
-            pass
-    return lines
+    raise FileNotFoundError(f"Secret file not found: {config.key_file.name}")
 
 
 def _select_active_secret_line(lines: list[str], *, key_index: int = 0) -> str:
@@ -434,6 +425,7 @@ class GeminiCaptionTranslator:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._keys = load_gemini_secret_lines(config)
+        self._active_key_index = key_index
         self._active_key = _select_active_secret_line(self._keys, key_index=key_index)
         self.config = config
         self.model = config.model
@@ -441,6 +433,14 @@ class GeminiCaptionTranslator:
         self.max_transient_retries = max(0, min(max_transient_retries, 2))
         self.max_schema_retries = max(0, min(max_schema_retries, 1))
         self._transport = transport
+
+    def _advance_key(self) -> bool:
+        next_index = self._active_key_index + 1
+        if next_index >= len(self._keys):
+            return False
+        self._active_key_index = next_index
+        self._active_key = self._keys[next_index]
+        return True
 
     def translate(self, captions: list[dict[str, str]]) -> GeminiCaptionTranslationResult:
         _validate_caption_inputs(captions)
@@ -535,6 +535,10 @@ class GeminiCaptionTranslator:
                 request_count += 1
                 last_error = exc
                 status = exc.response.status_code
+                if status in {401, 403, 429} and self._advance_key():
+                    retry_count += 1
+                    transient_attempt = 0
+                    continue
                 if status in {401, 403}:
                     raise GeminiCaptionTranslationError(
                         "GEMINI_CAPTION_AUTH_UNAVAILABLE",
@@ -597,11 +601,20 @@ class GeminiMultimodalCaptionResolver:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._keys = load_gemini_secret_lines(config)
+        self._active_key_index = key_index
         self._active_key = _select_active_secret_line(self._keys, key_index=key_index)
         self.config = config
         self.model = config.model
         self.max_transient_retries = max(0, min(max_transient_retries, 2))
         self._transport = transport
+
+    def _advance_key(self) -> bool:
+        next_index = self._active_key_index + 1
+        if next_index >= len(self._keys):
+            return False
+        self._active_key_index = next_index
+        self._active_key = self._keys[next_index]
+        return True
 
     def resolve(self, interval_request: dict[str, Any]) -> GeminiMultimodalResolutionResult:
         _validate_multimodal_input(interval_request)
@@ -695,6 +708,10 @@ class GeminiMultimodalCaptionResolver:
             except httpx.HTTPStatusError as exc:
                 request_count += 1
                 status = exc.response.status_code
+                if status in {401, 403, 429} and self._advance_key():
+                    retry_count += 1
+                    transient_attempt = 0
+                    continue
                 if status in {401, 403}:
                     raise GeminiCaptionTranslationError(
                         "GEMINI_MULTIMODAL_AUTH_UNAVAILABLE",
@@ -1097,12 +1114,13 @@ def load_gemini_translation_config(config_path: Path | None = None) -> GeminiTra
     settings = get_settings()
     env_path = Path(config_path) if config_path is not None else settings.root / "operator" / "translation_config.env"
     values: dict[str, str] = {}
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        key, value = stripped.split("=", 1)
-        values[key.strip()] = value.strip()
+    if env_path.is_file():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            key, value = stripped.split("=", 1)
+            values[key.strip()] = value.strip()
     try:
         run_config = json.loads(settings.run_config_path.read_text(encoding="utf-8"))
     except Exception:
@@ -1113,11 +1131,14 @@ def load_gemini_translation_config(config_path: Path | None = None) -> GeminiTra
     )
     if not credential_name:
         credential_name = DEFAULT_GEMINI_CREDENTIAL_NAME
+    key_file_value = values.get("TRANSLATION_KEY_FILE") or (
+        str(translation_config.get("key_file") or "").strip() if isinstance(translation_config, dict) else ""
+    ) or DEFAULT_GEMINI_KEY_FILE
     return GeminiTranslationConfig(
-        base_url=values["TRANSLATION_BASE_URL"],
-        model=values["TRANSLATION_MODEL"],
-        timeout_seconds=float(values.get("TRANSLATION_TIMEOUT_SECONDS", "180")),
-        key_file=settings.root / values["TRANSLATION_KEY_FILE"],
+        base_url=values.get("TRANSLATION_BASE_URL", DEFAULT_GEMINI_BASE_URL),
+        model=values.get("TRANSLATION_MODEL", DEFAULT_GEMINI_MODEL),
+        timeout_seconds=float(values.get("TRANSLATION_TIMEOUT_SECONDS", str(DEFAULT_GEMINI_TIMEOUT_SECONDS))),
+        key_file=settings.root / key_file_value,
         credential_name=credential_name,
         free_tier_evidence_path=Path(
             os.environ.get(
@@ -1132,88 +1153,99 @@ def discover_gemini_models(
     config: GeminiTranslationConfig | None = None,
     *,
     transport: httpx.BaseTransport | None = None,
+    use_cache: bool = True,
 ) -> GeminiModelDiscoveryResult:
     config = config or load_gemini_translation_config()
     keys = load_gemini_secret_lines(config)
-    active_key = _select_active_secret_line(keys)
-    project_free_tier_verified = _free_tier_project_verified(config, active_key)
-    request_payload = {
-        "provider": GEMINI_DISCOVERY_PROVIDER,
-        "prompt_version": GEMINI_DISCOVERY_PROMPT_VERSION,
-        "base_url": _native_api_root(config),
-        "configured_model": config.model,
-        "candidate_models": list(FREE_TIER_MODEL_CANDIDATES),
-        "credential_name": _selected_credential_name(config),
-        "project_free_tier_verified": project_free_tier_verified,
-    }
-    request_hash = build_request_hash(request_payload)
-    cached = read_cached_response(GEMINI_DISCOVERY_PROVIDER, request_hash)
-    if cached is not None:
-        return GeminiModelDiscoveryResult(
-            status=str(cached.get("status") or "ok"),
-            sanitized_models=list(cached.get("sanitized_models") or []),
-            raw_count=int(cached.get("raw_count") or 0),
-            selected_model=cached.get("selected_model"),
-            selected_reason=cached.get("selected_reason"),
-            free_tier_verified=bool(cached.get("free_tier_verified")),
-        )
-
     endpoint = _native_api_root(config).rstrip("/") + "/models"
-    try:
-        with httpx.Client(timeout=config.timeout_seconds, transport=transport) as client:
-            response = client.get(
-                endpoint,
-                headers={"x-goog-api-key": active_key, "Content-Type": "application/json"},
-            )
-            response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        raise GeminiCaptionTranslationError(
-            "GEMINI_MODEL_DISCOVERY_HTTP_ERROR",
-            f"Gemini model discovery failed with HTTP {exc.response.status_code}.",
-        ) from exc
-    except httpx.TransportError as exc:
-        raise GeminiCaptionTranslationError(
-            "GEMINI_MODEL_DISCOVERY_NETWORK_ERROR",
-            "Gemini model discovery failed after a transport error.",
-        ) from exc
 
-    payload = response.json()
-    raw_models = payload.get("models") if isinstance(payload, dict) and isinstance(payload.get("models"), list) else []
-    sanitized_models = [
-        _sanitized_model_entry(item)
-        for item in raw_models
-        if isinstance(item, dict)
-    ]
-    selected_model, selected_reason = _select_free_tier_model(sanitized_models, config.model)
-    model_is_free_candidate = bool(
-        selected_model
-        and _normalize_model_name(str(selected_model))
-        in {candidate.casefold() for candidate in FREE_TIER_MODEL_CANDIDATES}
+    for key_index, active_key in enumerate(keys):
+        project_free_tier_verified = _free_tier_project_verified(config, active_key)
+        request_payload = {
+            "provider": GEMINI_DISCOVERY_PROVIDER,
+            "prompt_version": GEMINI_DISCOVERY_PROMPT_VERSION,
+            "base_url": _native_api_root(config),
+            "configured_model": config.model,
+            "candidate_models": list(FREE_TIER_MODEL_CANDIDATES),
+            "credential_name": _selected_credential_name(config),
+            "active_key_fingerprint": _active_key_fingerprint(active_key),
+            "project_free_tier_verified": project_free_tier_verified,
+        }
+        request_hash = build_request_hash(request_payload)
+        cached = read_cached_response(GEMINI_DISCOVERY_PROVIDER, request_hash) if use_cache else None
+        if cached is not None:
+            return GeminiModelDiscoveryResult(
+                status=str(cached.get("status") or "ok"),
+                sanitized_models=list(cached.get("sanitized_models") or []),
+                raw_count=int(cached.get("raw_count") or 0),
+                selected_model=cached.get("selected_model"),
+                selected_reason=cached.get("selected_reason"),
+                free_tier_verified=bool(cached.get("free_tier_verified")),
+            )
+
+        try:
+            with httpx.Client(timeout=config.timeout_seconds, transport=transport) as client:
+                response = client.get(
+                    endpoint,
+                    headers={"x-goog-api-key": active_key, "Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status in {401, 403, 429} and key_index + 1 < len(keys):
+                continue
+            raise GeminiCaptionTranslationError(
+                "GEMINI_MODEL_DISCOVERY_HTTP_ERROR",
+                f"Gemini model discovery failed with HTTP {status}.",
+            ) from exc
+        except httpx.TransportError as exc:
+            raise GeminiCaptionTranslationError(
+                "GEMINI_MODEL_DISCOVERY_NETWORK_ERROR",
+                "Gemini model discovery failed after a transport error.",
+            ) from exc
+
+        payload = response.json()
+        raw_models = payload.get("models") if isinstance(payload, dict) and isinstance(payload.get("models"), list) else []
+        sanitized_models = [
+            _sanitized_model_entry(item)
+            for item in raw_models
+            if isinstance(item, dict)
+        ]
+        selected_model, selected_reason = _select_free_tier_model(sanitized_models, config.model)
+        model_is_free_candidate = bool(
+            selected_model
+            and _normalize_model_name(str(selected_model))
+            in {candidate.casefold() for candidate in FREE_TIER_MODEL_CANDIDATES}
+        )
+        free_tier_verified = bool(
+            model_is_free_candidate and project_free_tier_verified
+        )
+        result = GeminiModelDiscoveryResult(
+            status="ok" if free_tier_verified else "needs_review",
+            sanitized_models=sanitized_models,
+            raw_count=len(raw_models),
+            selected_model=selected_model,
+            selected_reason=selected_reason,
+            free_tier_verified=free_tier_verified,
+        )
+        write_cached_response(
+            GEMINI_DISCOVERY_PROVIDER,
+            request_hash,
+            {
+                "status": result.status,
+                "sanitized_models": result.sanitized_models,
+                "raw_count": result.raw_count,
+                "selected_model": result.selected_model,
+                "selected_reason": result.selected_reason,
+                "free_tier_verified": result.free_tier_verified,
+            },
+        )
+        return result
+
+    raise GeminiCaptionTranslationError(
+        "GEMINI_MODEL_DISCOVERY_HTTP_ERROR",
+        "No configured Gemini API key could access the model listing.",
     )
-    free_tier_verified = bool(
-        model_is_free_candidate and project_free_tier_verified
-    )
-    result = GeminiModelDiscoveryResult(
-        status="ok" if free_tier_verified else "needs_review",
-        sanitized_models=sanitized_models,
-        raw_count=len(raw_models),
-        selected_model=selected_model,
-        selected_reason=selected_reason,
-        free_tier_verified=free_tier_verified,
-    )
-    write_cached_response(
-        GEMINI_DISCOVERY_PROVIDER,
-        request_hash,
-        {
-            "status": result.status,
-            "sanitized_models": result.sanitized_models,
-            "raw_count": result.raw_count,
-            "selected_model": result.selected_model,
-            "selected_reason": result.selected_reason,
-            "free_tier_verified": result.free_tier_verified,
-        },
-    )
-    return result
 
 
 def gemini_credential_status() -> dict[str, Any]:
@@ -1226,6 +1258,7 @@ def gemini_credential_status() -> dict[str, Any]:
             "model": config.model,
             "credential_name": _selected_credential_name(config),
             "credential_source": source,
+            "storage_path": DEFAULT_GEMINI_KEY_FILE if source == "secret_file" else None,
         }
     except (FileNotFoundError, KeyError, ValueError):
         return {
@@ -1234,7 +1267,91 @@ def gemini_credential_status() -> dict[str, Any]:
             "model": None,
             "credential_name": None,
             "credential_source": "missing",
+            "storage_path": DEFAULT_GEMINI_KEY_FILE,
         }
+
+
+def save_gemini_secret_lines(lines: list[str], *, append: bool = True) -> dict[str, Any]:
+    """Append unique Gemini API keys to the local secret file without echoing them."""
+    config = load_gemini_translation_config()
+    incoming: list[str] = []
+    input_duplicate_count = 0
+    for raw in lines:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        if len(value) < 20 or len(value) > 4096 or any(char.isspace() for char in value):
+            raise ValueError("Gemini API key format is invalid.")
+        if value in incoming:
+            input_duplicate_count += 1
+            continue
+        incoming.append(value)
+    if not incoming:
+        raise ValueError("At least one Gemini API key is required.")
+
+    existing: list[str] = []
+    if append:
+        if config.key_file.is_file():
+            existing = load_strict_secret_lines(config.key_file)
+        else:
+            credential_name = _selected_credential_name(config)
+            if credential_name:
+                existing = _read_secure_gemini_secret_lines(credential_name)
+    merged = list(dict.fromkeys([*existing, *incoming])) if append else list(incoming)
+    duplicate_count = input_duplicate_count + sum(1 for value in incoming if value in existing)
+
+    config.key_file.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = config.key_file.with_suffix(config.key_file.suffix + ".tmp")
+    temp_path.write_text("\n".join(merged) + "\n", encoding="utf-8")
+    os.replace(temp_path, config.key_file)
+    verified = load_strict_secret_lines(config.key_file)
+    if verified != merged:
+        raise RuntimeError("Gemini key file verification failed after save.")
+    return {
+        "configured": True,
+        "count": len(verified),
+        "added_count": len(verified) - len(existing),
+        "duplicate_count": duplicate_count,
+        "model": config.model,
+        "credential_source": "secret_file",
+        "storage_path": DEFAULT_GEMINI_KEY_FILE,
+    }
+
+
+def ensure_gemini_caption_ready() -> dict[str, Any]:
+    """Fail fast on credential/network/model availability before expensive OCR analysis."""
+    config = load_gemini_translation_config()
+    source, keys = _credential_source_status(config)
+    if not keys:
+        raise GeminiCaptionTranslationError(
+            "GEMINI_CREDENTIAL_MISSING",
+            "Gemini API key is not configured. Add a key in AutoSub and retry.",
+            retryable=False,
+        )
+    try:
+        discovery = discover_gemini_models(config, use_cache=False)
+    except GeminiCaptionTranslationError:
+        raise
+    except Exception as exc:
+        raise GeminiCaptionTranslationError(
+            "GEMINI_PREFLIGHT_FAILED",
+            "Could not verify Gemini connectivity. Check the Internet connection and retry.",
+            retryable=True,
+        ) from exc
+    if not discovery.selected_model:
+        raise GeminiCaptionTranslationError(
+            "GEMINI_MODEL_UNAVAILABLE",
+            "No compatible Gemini model is available for caption translation.",
+            retryable=True,
+        )
+    return {
+        "status": "ready",
+        "credential_source": source,
+        "credential_count": len(keys),
+        "selected_model": discovery.selected_model,
+        "selected_reason": discovery.selected_reason,
+        "free_tier_verified": discovery.free_tier_verified,
+    }
 
 
 def _request_payload(provider: str, model: str, request: TranslationBlockRequest, prompt_version: str) -> dict:

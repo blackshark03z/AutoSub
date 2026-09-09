@@ -81,7 +81,9 @@ def test_cp10b_default_route_loads_simple_ui_and_operator_route_remains():
     assert "Video đã hoàn tất" in html
     assert "Tùy chọn nâng cao" in html
     assert "Chi tiết xử lý lỗi" in html
-    assert "Tool Auto Sub Beta" in html
+    assert "AutoSub" in html
+    assert 'class="app-topbar"' in html
+    assert 'id="settingsNavBtn"' in html
     assert "<details id=\"errorDetails\"" in html
     assert "percentage: null" in js
     assert 'addEventListener("input", schedulePathValidation)' in js
@@ -90,8 +92,8 @@ def test_cp10b_default_route_loads_simple_ui_and_operator_route_remains():
     assert 'const explicitNew = params.get("new") === "1"' in js
     assert "/api/simple/source/upload" in js
     assert "uploadAndValidate(file)" in js
-    assert "/app.js?v=first-run-runtime" in html
-    assert "/styles.css?v=task36b" in html
+    assert "/app.js?v=fluent-settings-v1" in html
+    assert "/styles.css?v=fluent-settings-v1" in html
     primary_copy = html.split("<details id=\"advancedOptions\"", 1)[0].lower()
     assert "checkpoint" not in primary_copy
     assert "canonical artifact" not in primary_copy
@@ -107,13 +109,13 @@ def test_task36_simple_ui_has_one_button_state_layout_and_unique_ids():
     assert 'role="tab"' not in html
     assert 'role="tabpanel"' not in html
     assert 'class="status-rail"' not in html
-    assert "const FLOW_VIEWS = [\"setup\", \"processing\", \"completed\", \"error\"]" in js
-    for view, hidden in (("setup", False), ("processing", True), ("completed", True), ("error", True)):
+    assert "const FLOW_VIEWS = [\"setup\", \"settings\", \"processing\", \"completed\", \"error\"]" in js
+    for view, hidden in (("setup", False), ("settings", True), ("processing", True), ("completed", True), ("error", True)):
         marker = f'data-flow-view="{view}"'
         assert marker in html
         section = html.split(marker, 1)[0].rsplit("<section", 1)[1] + html.split(marker, 1)[1].split(">", 1)[0]
         assert ("hidden" in section) is hidden
-    setup = html.split('data-flow-view="setup"', 1)[1].split('data-flow-view="processing"', 1)[0]
+    setup = html.split('data-flow-view="setup"', 1)[1].split('data-flow-view="settings"', 1)[0]
     assert 'id="videoPicker"' in setup
     assert 'id="subtitleStyle"' not in setup
     assert 'id="includeAss"' not in setup
@@ -160,9 +162,9 @@ def test_task36_simple_ui_processing_and_completed_contracts():
 def test_cp10b_simple_ui_keeps_compact_typography_contract():
     css = Path("app/static/simple/styles.css").read_text(encoding="utf-8")
 
-    assert "font-size: clamp(2rem, 4vw, 2.35rem);" in css
-    assert "line-height: 1.08;" in css
-    assert '--font-ui: "Segoe UI", "Noto Sans", Arial, sans-serif;' in css
+    assert "font-size: clamp(1.9rem, 4vw, 2.45rem);" in css
+    assert "line-height: 1.12;" in css
+    assert '--font-ui: "Segoe UI Variable", "Segoe UI", "Noto Sans", Arial, sans-serif;' in css
     assert "font-family: var(--font-ui);" in css
     assert "Georgia" not in css
     assert "Times New Roman" not in css

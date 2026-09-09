@@ -1,106 +1,80 @@
 # Current State
 
-This is the current human-readable handoff baseline. Code, tests, accepted
-evidence, and live Git remain the source of truth. `project_state.json`
-retains the last formal release snapshot used by the historical documentation
-validator; it is not a statement that an installer is required for daily use.
+## Canonical release
 
-## Current daily-use MVP
-
-- The accepted product is a local, single-user Windows MVP.
-- Double-click `Run AutoSub.cmd` to start the local server and open the Simple
-  UI. Normal use does not require a terminal or an installer.
-- The supported user path is local video and target-language selection,
-  runtime preparation, source transcription, local translation, preview, and
-  export.
-- Runtime readiness manages AutoSubs v3.8.0 with its `small` model and local
-  Argos zh→en translation. The accepted one-click Chinese→English UI smoke
-  passed.
-- The normal test lane is the default `python -m pytest -q` configuration,
-  which excludes `release`-marked package/history validation.
-
-## Stable E2E acceptance — 2026-09-09
-
-The current local MVP has been re-accepted under the CADS Critical User Journey rather than inferred from isolated feature tests.
-
-- Real rendered-UI journey PASS on the existing 15-second local fixture.
-- Acceptance run: `run_20260908183651205064_2d923ddc`.
-- Subtitle provenance: `provider_transcription`; the accepted ASS contained 7 dialogue events and did not use fixture subtitle injection.
-- The validated output MP4 hash differs from the source hash, the completed preview is eligible, `Mở thư mục kết quả` performs a real Windows folder-open action, and `Tạo video mới` resets the setup state without deleting the prior result.
-- Responsive rendered UI checks passed at 1365 px and 390 px without horizontal overflow.
-- Controlled runtime-readiness failure PASS: failure remains fail-closed, exposes retry/back, preserves the useful selected source, and never exposes a fake completed result.
-- Focused journey/runtime/launcher regressions, canonical-doc validation, storage preflight, and the normal full `python -m pytest -q` lane passed after the accepted repairs.
-- AutoSub now uses current CADS-native Git/test/runtime engineering control. The former Build OS authority/policy/adoption files and in-repository Build OS control-plane archive are retired from the canonical tree; historical provenance remains in Git history.
-
-## Release history and deferred lane
-
-CP12B Full Portable is the last accepted packaging baseline. CP13A/CP13A1 are
-historical release candidates and evidence, not the current daily-use product
-contract. EXE, installer, external beta, and package work are intentionally
-**DEFERRED** and preserved separately on
-`wip/windows-release-pipeline-rebuild`.
-They are not current MVP blockers.
-
-The following release metadata is retained verbatim for provenance and the
-historical validator; it must not be read as an instruction to build or use an
-installer:
-
-- Historical package path: `release\CP12B\tool_auto_sub_windows_full_portable_cp12b.zip`
-- Historical package SHA-256: `9a1c3b03a18049aca4f63fd43df2092eec35d5c36e9ec176dbaae7bc4d4a51d0`
-- Historical release ID: `CP12B_WINDOWS_FULL_PORTABLE_CREATIVE_IMPORT_BETA`
-- Historical distribution: `Unified Full Portable`
-- Historical one-click beta candidate: `CP13A1 Complete Payload Hotfix`
-- CP13A1 installer path: `release\CP13A1\ToolAutoSubBetaSetup_CP13A1.exe`
-- CP13A1 installer SHA-256: `9ca6f54c9d3caa440ea410f40aba819c75f7240954a316841d5da7ca4f9e317a`
-- CP13A1 release ID: `CP13A1_WINDOWS_COMPLETE_PAYLOAD_HOTFIX`
-- CP13A1 distribution: `Per-user Windows EXE installer with complete installed-root payload wrapping CP12B`
-- CP13A1 machine validation: `CP13A1_COMPLETE_INSTALL_PAYLOAD_AND_UNINSTALL_SHORTCUT_MACHINE_PASS`
-- CP13A1 evidence state: `RERUN_PASS_PENDING_ACCEPTANCE` (historical/deferred)
-- Primary UI: `Simple UI`
-- Advanced UI: `Operator UI`
-- Backend version: `0.2.0`
-- Simple UI asset version: `cp13a`
-- Operator UI asset version: `cp09c`
+- Name: `AutoSub 1.9.0 Stable`
+- Release ID: `AUTOSUB_1_9_0_STABLE`
+- Version: `1.9.0`
+- Git tag: `v1.9.0`
+- Canonical root: `D:\\AutoSub`
+- Source bundle: `release\\AutoSub-1.9.0\\AutoSub-1.9.0-source.zip`
+- Primary UI: Simple UI at `http://127.0.0.1:8173/`
+- Simple UI asset: `fluent-settings-v1`
 - Database schema: `0009_subtitle_tracks`
-- External-machine beta: `pending`
-- Storage gate: `tiered_operation_storage_gate`
-- Historical D: free-space snapshot: `5,352,738,816` bytes (`4.984` GiB)
-- Storage thresholds: `run=1,073,741,824`, `media=2,147,483,648`, `package=4,294,967,296` bytes
-- Current operation gate status: `run=allowed`, `media=allowed`, `package=allowed`
-- Retained development project whitelist: `vertical_slice_cp07`
-- Remaining project directories: `1`
 
-## Current limits and next action
+The source bundle is generated from the exact tagged Product HEAD after commit closure. Its SHA-256 belongs to post-commit release evidence/`SHA256SUMS.txt`, avoiding circular source metadata.
 
-The old fixed 15 GiB global disk gate is retired. Storage is checked by
-operation immediately before execution: `run`, `media`, or `package`. The
-historical CP13A1 rerun still requires independent machine-evidence acceptance
-if an Owner explicitly resumes the deferred release lane.
+## Accepted product contract
 
-No next product scope is accepted by this handoff. A future Tech Lead should
-first decide whether to continue local-MVP product work or explicitly resume
-the deferred release lane; neither decision is implied by this document.
+AutoSub is a local, single-user Windows application with two accepted Critical User Journeys.
 
-## Validation Commands
+### Speech CUJ — PASS
 
-Lightweight consistency check:
+`run_20260909112831523056_b7d74d66`
 
-```powershell
-python tools\validate_canonical_docs.py
-```
+- AutoSubs local speech recognition.
+- Argos local Chinese-to-English translation.
+- Completed with `result_eligible=true` and final validation `PASS`.
+- Final MP4 exists and has SHA-256 `180053ba31b49eba8277b80b7c0781ca83fbdf32d1f6b08b5a261cb155e8027b`.
+- Subtitle provenance: `provider_transcription`.
+- ASS Dialogue count: `7`.
+- Gemini calls: `0`.
 
-Historical release hash verification, intentionally not part of normal tests
-and not required for the daily-use MVP:
+### Embedded-caption OCR + Gemini CUJ — PASS
 
-```powershell
-Get-FileHash release\CP12B\tool_auto_sub_windows_full_portable_cp12b.zip -Algorithm SHA256
-Get-FileHash release\CP13A1\ToolAutoSubBetaSetup_CP13A1.exe -Algorithm SHA256
-```
+Final acceptance run: `run_20260909114149833349_fcd7afff`.
 
-Storage preflight examples:
+- Local PaddleOCR found `2` caption intervals.
+- Both intervals are preserved through render: `2` intervals -> `2` ASS Dialogue events.
+- Gemini correction/translation model: `gemini-2.5-flash`.
+- Completed with `result_eligible=true` and final validation `PASS`.
+- Final MP4 exists and has SHA-256 `ad37deef979acd6c4f0113dceaa53bb0fb036f2d5536791d40844e265448966f`.
+- Subtitle provenance: `source_caption_gemini_translation`.
+- Final run used one exact Gemini provider cache hit. Live-provider evidence is preserved by earlier run `run_20260909112225050772_05bb7b7a`, which made `1` real Gemini request and exposed the renderer contract defect subsequently fixed.
 
-```powershell
-python tools\storage_preflight.py --operation run
-python tools\storage_preflight.py --operation media
-python tools\storage_preflight.py --operation package
-```
+The renderer fixes added during acceptance are material: source-caption render plans now expose `render_cues`, and adjacent OCR intervals that overlap slightly are boundary-trimmed rather than silently dropping a caption.
+
+## UI / Settings
+
+The Simple UI separates frequent creation choices from application Settings. Gemini Settings accepts 1-n API keys, one per line, appends only new unique values to ignored local `secrets\\gemini_api.txt`, reports added/duplicate/total counts, and never echoes plaintext keys through product APIs. Multi-key Gemini execution uses bounded sticky failover for credential/quota failures.
+
+The UI follows Windows/Fluent-oriented settings hierarchy and WCAG-oriented focus, visible labels/helper text, target sizing, reflow, reduced-motion and error-feedback behavior.
+
+## Verification
+
+- Focused OCR/render overlap regression: PASS.
+- Professional UI/Settings regression: PASS.
+- Normal `python -m pytest -q`: PASS on the accepted candidate before release metadata closure; release closure reruns it on the final Product HEAD.
+- Canonical docs validator must PASS on final Product HEAD.
+- Storage preflight measured on `D:\AutoSub`: `10,379,632,640` bytes free.
+  - `run`: threshold `1073741824` bytes — allowed.
+  - `media`: threshold `2147483648` bytes — allowed.
+  - `package`: threshold `4294967296` bytes — allowed.
+- The old fixed 15 GiB global gate is retired.
+
+## Stable release identity
+
+- Canonical release: `AutoSub 1.9.0 Stable`.
+- Release ID: `AUTOSUB_1_9_0_STABLE`.
+- Version: `1.9.0`.
+- Git tag: `v1.9.0`.
+- Source bundle: `release\AutoSub-1.9.0\AutoSub-1.9.0-source.zip`.
+- The source bundle and SHA-256 are generated from the exact tagged commit after Git closure; historical CP packages are not relabeled.
+
+## Architecture / process authority
+
+Current engineering control is CADS: `Reality -> Intent/Design -> Change -> Acceptance -> Consequence`, using native Git, tests and runtime evidence. Legacy Build OS lifecycle/control-plane files are retired from authority.
+
+## Historical distribution provenance
+
+CP12B Full Portable, CP13A and CP13A1 remain historical package/evidence lines only. Their external-machine beta state is not a prerequisite for this local stable release, and none of those binaries is relabeled as AutoSub 1.9.0 Stable.

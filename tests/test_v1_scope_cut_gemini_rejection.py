@@ -15,22 +15,18 @@ from app.core.config import get_settings
 HTML_PATH = Path("app/static/simple/index.html")
 
 
-def test_ui_does_not_expose_gemini_mode():
-    """UI should not show Gemini source-caption option to users."""
+def test_ui_exposes_gemini_only_through_ocr_workflow():
+    """The legacy direct Gemini mode stays hidden; OCR+Gemini is the supported user flow."""
     html = HTML_PATH.read_text(encoding="utf-8")
-    
-    # Gemini mode should not be visible
-    assert "source_caption_gemini_translation" not in html
-    assert "Gemini free tier" not in html.lower()
-    assert "Gemini" not in html.split('id="cleanupMode"')[1].split("</select>")[0]
-    
-    # OCR mode should be the only option
-    assert 'value="source_caption_ocr_translation"' in html
+
+    assert 'value="source_caption_gemini_translation"' not in html
+    assert 'value="source_caption_ocr_translation">Đọc phụ đề có sẵn — OCR + Gemini</option>' in html
+    assert 'value="external_audio_transcription" selected' in html
     assert html.count('id="cleanupMode"') == 1
 
 
-def test_ui_stable_default_mode_present():
-    """UI should present the stable OCR translation mode."""
+def test_ui_stable_ocr_gemini_mode_present():
+    """UI should present the supported OCR+Gemini workflow beside local speech."""
     html = HTML_PATH.read_text(encoding="utf-8")
     
     cleanup_section = html.split('id="cleanupMode"')[1].split("</select>")[0]

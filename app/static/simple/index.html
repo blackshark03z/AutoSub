@@ -3,25 +3,38 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tool Auto Sub Beta</title>
+    <title>AutoSub</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/styles.css?v=task36b" />
+    <link rel="stylesheet" href="/styles.css?v=fluent-settings-v1" />
   </head>
   <body data-flow-state="setup">
-    <!-- Legacy packaging contract: 5-minute beta guide; Gemini, ElevenLabs; không cần API key; Open Advanced Operator UI. -->
     <main class="app-shell">
+      <header class="app-topbar" aria-label="Điều hướng ứng dụng">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true">A</span>
+          <div>
+            <strong>AutoSub</strong>
+            <small>Local subtitle workflow</small>
+          </div>
+        </div>
+        <nav class="app-nav" aria-label="Điều hướng chính">
+          <button id="homeNavBtn" class="nav-action" type="button" aria-current="page">Tạo video</button>
+          <button id="settingsNavBtn" class="nav-action" type="button">Cài đặt</button>
+        </nav>
+      </header>
+
       <section id="setupView" class="flow-view" data-flow-view="setup" aria-labelledby="setupTitle">
         <header class="state-header">
-          <p class="eyebrow">Tool Auto Sub Beta</p>
-          <h1 id="setupTitle">Tạo video có phụ đề</h1>
-          <p class="lead">Chọn video, kiểm tra thiết lập và bấm tạo. Mọi xử lý diễn ra trên máy.</p>
+          <p class="eyebrow">Tạo video</p>
+          <h1 id="setupTitle" tabindex="-1">Tạo video có phụ đề</h1>
+          <p class="lead">Chọn video, chọn cách lấy phụ đề, rồi bấm tạo. AutoSub sẽ kiểm tra các thành phần cần thiết trước khi xử lý.</p>
         </header>
 
-        <section class="surface setup-surface">
+        <section class="surface setup-surface" aria-labelledby="sourceTitle">
           <div class="section-heading">
             <div>
-              <h2>Chọn video</h2>
-              <p>Video gốc được giữ nguyên. Bạn có thể kéo thả hoặc chọn từ máy tính.</p>
+              <h2 id="sourceTitle">Video nguồn</h2>
+              <p>Video gốc được giữ nguyên. Kéo thả hoặc chọn một tệp trên máy.</p>
             </div>
             <span id="validationPill" class="pill">Chưa chọn video</span>
           </div>
@@ -29,50 +42,59 @@
           <div id="dropArea" class="drop-area" tabindex="0" role="button" aria-label="Chọn hoặc kéo thả video">
             <input id="videoPicker" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" hidden />
             <span class="drop-icon" aria-hidden="true">+</span>
-            <strong>Kéo thả video vào đây</strong>
-            <span>hoặc chọn tệp từ máy tính</span>
+            <span class="drop-copy"><strong>Kéo thả video vào đây</strong><small>MP4, MOV, WebM hoặc MKV</small></span>
             <button id="chooseVideo" type="button">Chọn video</button>
           </div>
 
           <div id="sourceSummary" class="summary-grid" aria-live="polite"></div>
-          <p id="userMessage" class="message" role="status"></p>
+          <p id="userMessage" class="message" role="status" aria-live="polite"></p>
         </section>
 
-        <section class="surface settings-surface" aria-labelledby="settingsTitle">
+        <section class="surface settings-surface" aria-labelledby="runSettingsTitle">
           <div class="section-heading">
             <div>
-              <h2 id="settingsTitle">Thiết lập</h2>
-              <p>Các giá trị mặc định phù hợp cho hầu hết video.</p>
+              <h2 id="runSettingsTitle">Cấu hình lượt chạy</h2>
+              <p>Chỉ giữ các lựa chọn ảnh hưởng trực tiếp tới video đang tạo.</p>
             </div>
           </div>
 
           <div class="essential-settings">
-            <label class="field">
+            <label class="field" for="targetLanguage">
               <span>Ngôn ngữ phụ đề đầu ra</span>
               <select id="targetLanguage">
                 <option value="English" selected>English</option>
               </select>
-              <small>Phụ đề tiếng Trung gốc và bản dịch tiếng Anh được giữ tách riêng.</small>
+              <small>Phụ đề nguồn và bản dịch được giữ thành các track riêng.</small>
             </label>
 
-            <label class="field">
-              <span>Chế độ phụ đề</span>
-              <select id="cleanupMode">
-                <option value="external_audio_transcription" selected>Tự nhận dạng lời nói cục bộ</option>
-                <option value="source_caption_ocr_translation">Dịch phụ đề có sẵn (OCR)</option>
+            <label class="field" for="cleanupMode">
+              <span>Nguồn phụ đề</span>
+              <select id="cleanupMode" aria-describedby="captionModeHelp">
+                <option value="external_audio_transcription" selected>Nhận dạng lời nói trên máy</option>
+                <option value="source_caption_ocr_translation">Đọc phụ đề có sẵn — OCR + Gemini</option>
               </select>
-              <small>Nhận dạng lời nói chạy cục bộ bằng AutoSubs; phụ đề nguồn và bản dịch được giữ thành các track riêng.</small>
+              <small id="captionModeHelp">AutoSubs nhận dạng lời nói; Argos dịch Trung → Anh trên máy.</small>
             </label>
+          </div>
 
+          <div id="geminiRequirement" class="provider-callout" hidden>
+            <div class="provider-callout-copy">
+              <span class="provider-icon" aria-hidden="true">G</span>
+              <div>
+                <strong>OCR + Gemini cần API key</strong>
+                <small id="geminiRequirementText">Gemini dùng Internet để sửa/giải nghĩa và dịch phụ đề.</small>
+              </div>
+            </div>
+            <button id="openGeminiSettingsBtn" type="button">Quản lý key</button>
           </div>
 
           <details id="advancedOptions" class="advanced-disclosure">
             <summary>Tùy chọn nâng cao</summary>
             <div class="advanced-content">
-              <label class="field path-field">
+              <label class="field path-field" for="sourcePath">
                 <span>Đường dẫn video trên máy</span>
-                <input id="sourcePath" type="text" placeholder="Dán đường dẫn hoặc dùng nút Chọn video" autocomplete="off" />
-                <small>Dùng khi bạn muốn tham chiếu trực tiếp tới một tệp local thay vì sao chép.</small>
+                <input id="sourcePath" type="text" placeholder="Ví dụ: D:\\Videos\\video.mp4" autocomplete="off" />
+                <small>Dùng khi muốn tham chiếu trực tiếp tới tệp local thay vì chọn bằng hộp thoại.</small>
               </label>
               <label class="check-field">
                 <input id="copySource" type="checkbox" />
@@ -85,7 +107,7 @@
 
               <details id="creativePanel" class="nested-disclosure">
                 <summary>Nhập hoặc chỉnh nội dung phụ đề</summary>
-                <p class="message">Tùy chọn này không bắt buộc. Ứng dụng sẽ chuẩn bị lượt chạy khi bạn dùng một công cụ bên dưới.</p>
+                <p class="message">Tùy chọn chuyên sâu. Chỉ dùng khi cần thay nội dung track phụ đề.</p>
                 <span id="trackPill" class="pill">Chưa có bản nội dung</span>
                 <div class="button-row">
                   <button id="exportTxtTemplateBtn" type="button">Xuất mẫu TXT</button>
@@ -95,12 +117,12 @@
                   <button id="applyImportedBtn" type="button">Áp dụng bản đã nhập</button>
                   <button id="undoImportBtn" type="button">Hoàn tác lần nhập gần nhất</button>
                 </div>
-                <label class="field">
+                <label class="field" for="creativeImportText">
                   <span>Nội dung TXT hoặc JSON</span>
                   <textarea id="creativeImportText" placeholder="Dán nội dung đã hoàn thành"></textarea>
                 </label>
                 <div class="advanced-grid">
-                  <label class="field">
+                  <label class="field" for="creativeImportFormat">
                     <span>Định dạng nhập</span>
                     <select id="creativeImportFormat">
                       <option value="txt">TXT theo mã câu</option>
@@ -108,11 +130,11 @@
                       <option value="txt-line">TXT theo từng dòng</option>
                     </select>
                   </label>
-                  <label class="field">
+                  <label class="field" for="contentTrackSelect">
                     <span>Bản nội dung</span>
                     <select id="contentTrackSelect"><option value="">Chưa có</option></select>
                   </label>
-                  <label class="field">
+                  <label class="field" for="fallbackPolicy">
                     <span>Khi thiếu câu</span>
                     <select id="fallbackPolicy">
                       <option value="fallback_to_translation">Dùng bản phiên âm</option>
@@ -125,21 +147,12 @@
                 <div id="creativeCueEditor" class="recent-runs"></div>
               </details>
 
-              <details class="nested-disclosure">
-                <summary>Kiểm tra ứng dụng</summary>
-                <div class="inline-heading">
-                  <span id="readinessPill" class="pill">Đang kiểm tra</span>
-                </div>
-                <div id="readinessSummary" class="summary-grid"></div>
-                <pre id="readinessDetails" class="safe-output"></pre>
-              </details>
-
               <a class="advanced-link" href="/operator/">Mở Advanced Operator UI</a>
             </div>
           </details>
         </section>
 
-        <section class="action-zone">
+        <section class="action-zone" aria-label="Bắt đầu xử lý">
           <button id="startBtn" class="primary action-primary" type="button" disabled>Tạo video có phụ đề</button>
           <p id="startReason" class="action-reason">Hãy chọn một video để tiếp tục.</p>
           <button id="latestResultBtn" class="text-action" type="button" aria-label="Xem kết quả" hidden>Xem video gần nhất</button>
@@ -151,17 +164,86 @@
         </details>
       </section>
 
+      <section id="settingsView" class="flow-view settings-page" data-flow-view="settings" aria-labelledby="appSettingsTitle" hidden>
+        <header class="state-header settings-header">
+          <button id="settingsBackBtn" class="back-action" type="button">← Quay lại</button>
+          <p class="eyebrow">Cài đặt</p>
+          <h1 id="appSettingsTitle" tabindex="-1">Cài đặt AutoSub</h1>
+          <p class="lead">Các cấu hình ít thay đổi được đặt ở đây để màn hình tạo video luôn gọn và dễ hiểu.</p>
+        </header>
+
+        <section class="settings-section" aria-labelledby="geminiSettingsTitle">
+          <div class="settings-section-heading">
+            <div>
+              <h2 id="geminiSettingsTitle">Gemini</h2>
+              <p>Dùng cho chế độ đọc phụ đề có sẵn bằng OCR + Gemini. Gemini dùng Internet/API quota và có thể phát sinh phí theo tài khoản của bạn.</p>
+            </div>
+            <span id="geminiSettingsPill" class="pill">Chưa cấu hình</span>
+          </div>
+
+          <div class="settings-card">
+            <div class="settings-card-header">
+              <div>
+                <strong>Danh sách API key</strong>
+                <small id="geminiStoredCount">Đã lưu 0 key</small>
+              </div>
+              <span class="settings-meta">secrets\\gemini_api.txt</span>
+            </div>
+            <label class="field" for="geminiKeysInput">
+              <span>Thêm Gemini API key</span>
+              <textarea id="geminiKeysInput" class="key-textarea" rows="5" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="geminiKeysHelp" placeholder="Mỗi dòng một key"></textarea>
+              <small id="geminiKeysHelp">Mỗi key một dòng. Khi lưu, AutoSub chỉ thêm key mới vào file; key trùng được bỏ qua và danh sách cũ không bị ghi đè. Ô nhập sẽ được xóa sau khi lưu.</small>
+            </label>
+            <div class="settings-actions">
+              <button id="saveGeminiKeysBtn" class="primary" type="button">Thêm key</button>
+              <button id="refreshGeminiStatusBtn" type="button">Làm mới trạng thái</button>
+            </div>
+            <div id="geminiSettingsMessage" class="status-banner" role="status" aria-live="polite">Chưa có thay đổi.</div>
+            <p id="geminiLastSaveSummary" class="message">Key không được hiển thị lại sau khi lưu.</p>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-labelledby="runtimeSettingsTitle">
+          <div class="settings-section-heading">
+            <div>
+              <h2 id="runtimeSettingsTitle">Khả năng xử lý</h2>
+              <p>Trạng thái các engine được kiểm tra theo chế độ đang chọn.</p>
+            </div>
+            <span id="readinessPill" class="pill">Đang kiểm tra</span>
+          </div>
+          <div class="settings-card">
+            <div id="readinessSummary" class="summary-grid"></div>
+            <details class="nested-disclosure">
+              <summary>Chi tiết kỹ thuật</summary>
+              <pre id="readinessDetails" class="safe-output"></pre>
+            </details>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-labelledby="aboutSettingsTitle">
+          <div class="settings-section-heading">
+            <div>
+              <h2 id="aboutSettingsTitle">Ứng dụng</h2>
+              <p>AutoSub chạy local trên Windows. Gemini chỉ được gọi khi bạn chọn OCR + Gemini.</p>
+            </div>
+          </div>
+          <div class="settings-card compact-card">
+            <p class="message no-margin">Tệp key nằm trong thư mục <code>secrets</code>, được loại khỏi Git và gói release. API chỉ trả trạng thái và số lượng key, không trả nội dung key.</p>
+          </div>
+        </section>
+      </section>
+
       <section id="processingView" class="flow-view centered-view" data-flow-view="processing" aria-labelledby="processingTitle" hidden>
         <header class="state-header">
-          <p class="eyebrow">Đang xử lý trên máy</p>
-          <h1 id="processingTitle">Đang tạo video có phụ đề</h1>
+          <p class="eyebrow">Đang xử lý</p>
+          <h1 id="processingTitle" tabindex="-1">Đang tạo video có phụ đề</h1>
           <p id="processingFilename" class="lead"></p>
         </header>
         <section class="surface processing-surface">
           <div class="activity-bar" aria-hidden="true"><span></span></div>
           <p id="processingCurrent" class="processing-current">Đang bắt đầu xử lý...</p>
           <p id="processingDescription" class="message">Bạn có thể giữ cửa sổ này mở để theo dõi trạng thái thực.</p>
-          <ol id="processingStages" class="stage-list" aria-label="Trạng thái ban đầu: Chưa bắt đầu"></ol>
+          <ol id="processingStages" class="stage-list" aria-label="Tiến độ xử lý"></ol>
           <details id="processingDetails" class="advanced-disclosure">
             <summary>Xem chi tiết</summary>
             <pre id="processingTechnicalOutput" class="safe-output"></pre>
@@ -171,8 +253,8 @@
 
       <section id="completedView" class="flow-view centered-view" data-flow-view="completed" aria-labelledby="completedTitle" hidden>
         <header class="state-header">
-          <p class="eyebrow">Kết quả đã sẵn sàng</p>
-          <h1 id="completedTitle">Video đã hoàn tất</h1>
+          <p class="eyebrow">Hoàn tất</p>
+          <h1 id="completedTitle" tabindex="-1">Video đã hoàn tất</h1>
           <p class="lead">Hãy xem lại video trước khi sử dụng chính thức.</p>
         </header>
         <section class="surface result-surface">
@@ -194,9 +276,9 @@
               <button id="viewOutputBtn" type="button">Mở video trong cửa sổ mới</button>
               <button id="copyPathBtn" type="button">Sao chép đường dẫn</button>
             </div>
-            <label class="field">
+            <label class="field" for="saveDestination">
               <span>Lưu một bản sao vào thư mục</span>
-              <input id="saveDestination" type="text" placeholder="Dán đường dẫn thư mục đích" />
+              <input id="saveDestination" type="text" placeholder="Ví dụ: D:\\Videos\\Done" />
             </label>
             <button id="saveCopyBtn" type="button">Lưu một bản sao</button>
             <pre id="saveResult" class="safe-output"></pre>
@@ -206,13 +288,15 @@
 
       <section id="errorView" class="flow-view centered-view" data-flow-view="error" aria-labelledby="errorTitle" hidden>
         <header class="state-header">
-          <p class="eyebrow error-copy">Quá trình đã dừng an toàn</p>
-          <h1 id="errorTitle">Chưa thể tạo video</h1>
+          <p class="eyebrow error-copy">Đã dừng an toàn</p>
+          <h1 id="errorTitle" tabindex="-1">Chưa thể tạo video</h1>
           <p id="errorMessage" class="lead"></p>
         </header>
         <section class="surface error-surface">
-          <button id="retryRuntimeBtn" class="primary" type="button" hidden>Thử chuẩn bị lại</button>
-          <button id="backToSetupBtn" class="primary" type="button">Quay lại thiết lập</button>
+          <div class="result-actions">
+            <button id="retryRuntimeBtn" class="primary" type="button" hidden>Thử chuẩn bị lại</button>
+            <button id="backToSetupBtn" type="button">Quay lại thiết lập</button>
+          </div>
           <details id="errorDetails" class="advanced-disclosure">
             <summary>Chi tiết xử lý lỗi</summary>
             <pre id="technicalOutput" class="safe-output"></pre>
@@ -220,6 +304,6 @@
         </section>
       </section>
     </main>
-    <script src="/app.js?v=first-run-runtime" defer></script>
+    <script src="/app.js?v=fluent-settings-v1" defer></script>
   </body>
 </html>
