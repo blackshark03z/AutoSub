@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import re
 import sys
 from pathlib import Path
@@ -42,6 +43,29 @@ def test_launcher_entry_is_single_obvious_double_click_command():
 def test_resolve_project_root_requires_prepared_project(tmp_path):
     with pytest.raises(launcher.LaunchError, match="prepared AutoSub"):
         launcher.resolve_project_root(tmp_path)
+
+
+def test_start_server_wires_all_machine_local_dependencies_under_project_root(monkeypatch, tmp_path):
+    root = make_project_root(tmp_path)
+    captured = {}
+
+    class DummyPopen:
+        def __init__(self, command, **kwargs):
+            captured["command"] = command
+            captured.update(kwargs)
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", DummyPopen)
+    log_path = root / "runtime" / "logs" / "launcher.log"
+    log_path.parent.mkdir(parents=True)
+
+    launcher.start_server(root, log_path)
+
+    env = captured["env"]
+    assert env["TOOL_AUTO_SUB_ROOT"] == str(root)
+    assert env["TOOL_AUTO_SUB_RUNTIME_ROOT"] == str(root / "runtime" / "managed")
+    assert env["TOOL_AUTO_SUB_OCR_RUNTIME_CONFIG"] == str(root / "operator" / "ocr_runtime_config.local.json")
+    assert env["TOOL_AUTO_SUB_REVIEW_OVERRIDE_DIR"] == str(root / "data" / "review_overrides")
+    assert env is not os.environ
 
 
 def test_existing_verified_autosub_is_reused_without_starting(monkeypatch, tmp_path):

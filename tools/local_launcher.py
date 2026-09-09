@@ -111,6 +111,9 @@ def launch_lock(root: Path, timeout_seconds: float = DEFAULT_READY_TIMEOUT_SECON
 def start_server(root: Path, log_path: Path) -> subprocess.Popen[bytes]:
     environment = os.environ.copy()
     environment["TOOL_AUTO_SUB_ROOT"] = str(root)
+    environment["TOOL_AUTO_SUB_RUNTIME_ROOT"] = str(root / "runtime" / "managed")
+    environment["TOOL_AUTO_SUB_OCR_RUNTIME_CONFIG"] = str(root / "operator" / "ocr_runtime_config.local.json")
+    environment["TOOL_AUTO_SUB_REVIEW_OVERRIDE_DIR"] = str(root / "data" / "review_overrides")
     creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
     with log_path.open("ab") as log_file:
         return subprocess.Popen(

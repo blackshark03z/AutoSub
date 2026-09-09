@@ -38,6 +38,7 @@ addons/translation_runtime/packages/
 # AutoSubs is a machine-local external engine; source code discovers it but does
 # not redistribute its binaries, bundled resources, or model cache.
 addons/autosubs/
+addons/ocr_runtime/
 
 # Fresh development baseline: generated/build/runtime artifacts stay external.
 # CADS project context is ordinary tracked documentation; generated runtime/evidence remains external.
