@@ -1,5 +1,17 @@
 # Changelog
 
+## AutoSub 1.10.0 Stable — 2026-09-10
+
+- Replaced the opaque long-running processing card with a truthful Production Monitor using existing run evidence rather than synthetic telemetry.
+- Added live OCR/frame/provider/cache/retry/subtitle-inspector evidence and persisted FFmpeg render progress with final QC counts.
+- Preserved simultaneous source captions in distinct visual lanes while retaining overlap trimming within the same lane; real OCR acceptance renders 292/292 cues with zero caption loss.
+- Corrected pixel-coverage validation to measure the actual source-caption mask window including render padding.
+- Added durable render-only retry: a child of a `render_failed` run reuses a validated matching resolved-caption checkpoint and does not repeat OCR/Gemini or speech transcription.
+- Added safe result-state reconciliation for previously downgraded `invalid_completed_result` rows when current output validation and stored output hash both prove the artifact valid again.
+- Real monitored OCR+Gemini CUJ PASS: `run_20260909163453377807_558c472f`, 292 resolved cues -> 292 ASS Dialogue events, final validation PASS.
+- Real local speech CUJ remains PASS: `run_20260909112831523056_b7d74d66`, 7/7 ASS Dialogue events, Gemini calls 0.
+- Full regression and run/media/package storage gates PASS before release metadata closure.
+
 ## AutoSub 1.9.0 Stable — 2026-09-09
 
 - Promoted two truthful production journeys: local AutoSubs+Argos speech mode and PaddleOCR+Gemini embedded-caption mode.

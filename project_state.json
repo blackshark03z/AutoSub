@@ -7,19 +7,19 @@
     "legacy_build_os": "retired"
   },
   "canonical_release": {
-    "name": "AutoSub 1.9.0 Stable",
-    "release_id": "AUTOSUB_1_9_0_STABLE",
-    "version": "1.9.0",
-    "git_tag": "v1.9.0",
+    "name": "AutoSub 1.10.0 Stable",
+    "release_id": "AUTOSUB_1_10_0_STABLE",
+    "version": "1.10.0",
+    "git_tag": "v1.10.0",
     "distribution": "canonical D runtime plus Git-tagged source bundle",
-    "source_bundle_path": "release\\AutoSub-1.9.0\\AutoSub-1.9.0-source.zip",
+    "source_bundle_path": "release\\AutoSub-1.10.0\\AutoSub-1.10.0-source.zip",
     "source_bundle_integrity": "SHA-256 generated from the exact tagged commit after commit closure"
   },
   "runtime": {
-    "backend_version": "1.9.0",
+    "backend_version": "1.10.0",
     "primary_ui": "Simple UI",
     "primary_ui_path": "/",
-    "simple_ui_asset_version": "fluent-settings-v1",
+    "simple_ui_asset_version": "production-monitor-v1",
     "advanced_ui": "Operator UI",
     "advanced_ui_path": "/operator/",
     "operator_ui_asset_version": "cp09c",
@@ -57,12 +57,14 @@
     "youtube_publication": "outside active Product Goal"
   },
   "acceptance": {
-    "accepted_at": "2026-09-09",
+    "accepted_at": "2026-09-10",
     "speech_run_id": "run_20260909112831523056_b7d74d66",
-    "ocr_gemini_run_id": "run_20260909114149833349_fcd7afff",
-    "ocr_live_provider_evidence_run_id": "run_20260909112225050772_05bb7b7a",
+    "ocr_gemini_run_id": "run_20260909163453377807_558c472f",
+    "ocr_live_provider_evidence_run_id": "run_20260909163453377807_558c472f",
     "speech_status": "PASS",
     "ocr_gemini_status": "PASS",
+    "production_monitor_status": "PASS",
+    "render_resume_status": "PASS",
     "normal_full_regression": "PASS"
   },
   "beta": {
@@ -73,9 +75,9 @@
   "storage": {
     "gate": "tiered_operation_storage_gate",
     "fixed_15_gib_gate": "retired",
-    "current_free_bytes": 10379632640,
+    "current_free_bytes": 12296216576,
     "drive_path_checked": "D:\\AutoSub",
-    "measurement_timestamp": "2026-09-09T11:31:34Z",
+    "measurement_timestamp": "2026-09-10T03:41:03Z",
     "required_operator_action": "run_operation_specific_storage_preflight_immediately_before_execution",
     "tiered_thresholds": {
       "run": 1073741824,
@@ -83,9 +85,9 @@
       "package": 4294967296
     },
     "operation_status": {
-      "run": {"status": "allowed", "margin_bytes": 9305890816},
-      "media": {"status": "allowed", "margin_bytes": 8232148992},
-      "package": {"status": "allowed", "margin_bytes": 6084665344}
+      "run": {"status": "allowed", "margin_bytes": 11222474752},
+      "media": {"status": "allowed", "margin_bytes": 10148732928},
+      "package": {"status": "allowed", "margin_bytes": 8001249280}
     }
   },
   "process": {

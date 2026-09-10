@@ -79,6 +79,32 @@ def test_3_gap_no_exclusion_fails():
     assert len(unc) == 1
     assert unc[0]["coverage_verdict"] == "FAIL_UNCOVERED_SOURCE_CAPTION_GAP"
 
+def test_3b_sampling_sized_gap_is_covered_by_real_mask_padding():
+    windows = [{
+        "window_id": "caption_active_sampling_gap",
+        "start_time": 10.0,
+        "end_time": 13.0,
+        "representative_times": [10.0, 11.5, 13.0],
+        "source_bbox": {"top_y": 900, "bottom_y": 1000},
+        "pixel_confidence": 1.0,
+        "schema_version": "v1",
+    }]
+    cues = [
+        {"cue_id": "CUE1", "start_ms": 10000, "end_ms": 11250},
+        {"cue_id": "CUE2", "start_ms": 11750, "end_ms": 13000},
+    ]
+
+    _adj, rec, unc = _source_caption_coverage_adjustments(
+        cues,
+        windows,
+        source_video_sha256="fake_sha",
+        reviewed_coverage_exclusions=[],
+    )
+
+    assert unc == []
+    assert rec[0]["coverage_verdict"] == "PASS_MATCHED_SOURCE_CUE"
+
+
 def test_4_invalid_video_hash_fails():
     windows = [{"window_id": "w1", "start_time": 10.0, "end_time": 15.0, "representative_times": [10.0, 12.5, 15.0], "source_bbox": {}, "pixel_confidence": 1.0, "schema_version": "v1"}]
     cues = []

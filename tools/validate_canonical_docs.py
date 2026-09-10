@@ -18,10 +18,10 @@ REQUIRED_STATE_FIELDS = {
     "process",
 }
 EXPECTED_RELEASE = {
-    "name": "AutoSub 1.9.0 Stable",
-    "release_id": "AUTOSUB_1_9_0_STABLE",
-    "version": "1.9.0",
-    "git_tag": "v1.9.0",
+    "name": "AutoSub 1.10.0 Stable",
+    "release_id": "AUTOSUB_1_10_0_STABLE",
+    "version": "1.10.0",
+    "git_tag": "v1.10.0",
 }
 EXPECTED_STORAGE_THRESHOLDS = {
     "run": 1073741824,
@@ -74,13 +74,13 @@ def main() -> None:
         if value not in current:
             fail(f"CURRENT_STATE.md does not contain canonical release value: {value}")
     if release["name"] not in readme or release["version"] not in readme:
-        fail("README.md does not identify AutoSub 1.9.0 Stable")
+        fail("README.md does not identify AutoSub 1.10.0 Stable")
 
     runtime = state["runtime"]
-    if runtime.get("backend_version") != "1.9.0":
-        fail("runtime backend version is not 1.9.0")
-    if runtime.get("simple_ui_asset_version") != "fluent-settings-v1":
-        fail("runtime Simple UI asset version is not fluent-settings-v1")
+    if runtime.get("backend_version") != "1.10.0":
+        fail("runtime backend version is not 1.10.0")
+    if runtime.get("simple_ui_asset_version") != "production-monitor-v1":
+        fail("runtime Simple UI asset version is not production-monitor-v1")
 
     schema = state["database"].get("schema")
     if schema != "0009_subtitle_tracks":
@@ -128,7 +128,7 @@ def main() -> None:
     if present:
         fail(f"obsolete authority documents remain active: {present}")
 
-    print("PASS: canonical documentation is consistent with AutoSub 1.9.0 Stable")
+    print("PASS: canonical documentation is consistent with AutoSub 1.10.0 Stable")
 
 
 if __name__ == "__main__":

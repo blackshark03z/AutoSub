@@ -170,13 +170,13 @@ def test_task36_has_responsive_no_overflow_contract_and_clean_vietnamese():
     html, js, css = _sources()
     combined = f"{html}\n{js}"
 
-    assert "width: min(960px, calc(100vw - 32px));" in css
+    assert "width: min(1180px, calc(100vw - 32px));" in css
     assert "@media (max-width: 720px)" in css
     assert "@media (max-width: 430px)" in css
     assert "width: 100%;" in css
     assert "overflow-wrap: anywhere;" in css
-    assert "/app.js?v=fluent-settings-v1" in html
-    assert "/styles.css?v=fluent-settings-v1" in html
+    assert "/app.js?v=production-monitor-v1" in html
+    assert "/styles.css?v=production-monitor-v1" in html
     for bad in ("\ufffd", "Ãƒ", "Ã‚", "Táº", "Ä‘"):
         assert bad not in combined
     for unexpected in (

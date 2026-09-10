@@ -222,6 +222,57 @@ def create_or_reuse_run(path_value: str, settings: dict[str, Any] | None = None,
         return _serialize_run(row, reused=False)
 
 
+def _load_render_resume_checkpoint(run_id: str, requested: dict[str, Any]) -> dict[str, Any] | None:
+    """Reuse only a validated render checkpoint from a failed parent run.
+
+    The failed parent remains immutable evidence. A retry child may skip expensive
+    OCR/translation only when source, settings, failure seam, and resolved subtitle
+    content all still match the original run.
+    """
+    with session_scope() as session:
+        row = _get_run(session, run_id)
+        parent_id = str(row.retry_parent_run_id or "").strip()
+        if not parent_id:
+            return None
+        parent = session.query(SimpleWorkflowRun).filter(SimpleWorkflowRun.run_id == parent_id).one_or_none()
+        if parent is None:
+            return None
+        if parent.project_id != row.project_id or parent.source_hash != row.source_hash:
+            return None
+        if parent.failure_category != "render_failed":
+            return None
+        if not _settings_compatible_for_reuse(parent, requested):
+            return None
+        parent_run_directory = Path(parent.run_directory)
+        parent_metadata = json.loads(parent.source_metadata_json or "{}")
+
+    checkpoint_path = parent_run_directory / "subtitles" / "resolved_active_track.json"
+    if not checkpoint_path.is_file():
+        return None
+    try:
+        payload = json.loads(checkpoint_path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or not list(payload.get("cues") or []):
+        return None
+    duration_ms = max(int(float(parent_metadata.get("duration_seconds") or 0) * 1000), 1)
+    validation = validate_resolved_subtitle_content(
+        payload,
+        duration_ms=duration_ms,
+        allow_test_fixture=test_fixture_context_enabled(),
+    )
+    if validation.get("eligible") is not True:
+        return None
+    resumed = dict(payload)
+    resumed["content_validation"] = validation
+    resumed["resume_checkpoint"] = {
+        "kind": "render_only",
+        "parent_run_id": parent_id,
+        "source_hash": row.source_hash,
+    }
+    return resumed
+
+
 def accept_processing(run_id: str, idempotency_key: str | None = None) -> dict[str, Any]:
     with session_scope() as session:
         row = _get_run(session, run_id)
@@ -296,95 +347,97 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                 row.requested_settings_json = json.dumps(requested, ensure_ascii=False)
                 _write_manifest(Path(row.run_directory), row, status="processing")
 
-        provenance = active_track_provenance(run_id)
-        if (
-            not test_fixture_context_enabled()
-            and provenance not in {"user_import", "user_authored", "local_transcription", "provider_transcription"}
-            and provenance not in SOURCE_CAPTION_MODES
-        ):
-            requested_mode = str(requested.get("caption_mode") or LOCAL_AUDIO_MODE)
-            if requested_mode == SOURCE_CAPTION_MODE:
-                _set_processing_phase(run_id, "Check OCR runtime")
-                ocr_status = get_ocr_runtime_status()
-                if ocr_status.get("available") is not True:
-                    _persist_ocr_runtime_block(run_id, ocr_status)
-                    raise RuntimeReadinessBlockedError(
-                        str(ocr_status.get("actionable_fix_message") or "Bộ đọc phụ đề OCR chưa sẵn sàng.")
-                    )
-                _set_processing_phase(run_id, "Check Gemini")
-                try:
-                    ensure_gemini_caption_ready()
-                except GeminiCaptionTranslationError as exc:
-                    _persist_gemini_runtime_block(run_id, exc)
-                    raise RuntimeReadinessBlockedError(str(exc)) from exc
-                _set_processing_phase(run_id, "Read and translate embedded captions")
-                try:
-                    source_caption = run_caption_analysis_worker(source_path, run_directory)
-                except CaptionAnalysisError as exc:
-                    _persist_processing_failure(run_id, exc.code, "Read and translate embedded captions", exc)
-                    raise
-                except Exception as exc:
-                    _persist_processing_failure(
+        resolved = _load_render_resume_checkpoint(run_id, requested)
+        if resolved is None:
+            provenance = active_track_provenance(run_id)
+            if (
+                not test_fixture_context_enabled()
+                and provenance not in {"user_import", "user_authored", "local_transcription", "provider_transcription"}
+                and provenance not in SOURCE_CAPTION_MODES
+            ):
+                requested_mode = str(requested.get("caption_mode") or LOCAL_AUDIO_MODE)
+                if requested_mode == SOURCE_CAPTION_MODE:
+                    _set_processing_phase(run_id, "Check OCR runtime")
+                    ocr_status = get_ocr_runtime_status()
+                    if ocr_status.get("available") is not True:
+                        _persist_ocr_runtime_block(run_id, ocr_status)
+                        raise RuntimeReadinessBlockedError(
+                            str(ocr_status.get("actionable_fix_message") or "Bộ đọc phụ đề OCR chưa sẵn sàng.")
+                        )
+                    _set_processing_phase(run_id, "Check Gemini")
+                    try:
+                        ensure_gemini_caption_ready()
+                    except GeminiCaptionTranslationError as exc:
+                        _persist_gemini_runtime_block(run_id, exc)
+                        raise RuntimeReadinessBlockedError(str(exc)) from exc
+                    _set_processing_phase(run_id, "Read and translate embedded captions")
+                    try:
+                        source_caption = run_caption_analysis_worker(source_path, run_directory)
+                    except CaptionAnalysisError as exc:
+                        _persist_processing_failure(run_id, exc.code, "Read and translate embedded captions", exc)
+                        raise
+                    except Exception as exc:
+                        _persist_processing_failure(
+                            run_id,
+                            "EMBEDDED_CAPTION_ANALYSIS_FAILED",
+                            "Read and translate embedded captions",
+                            exc,
+                        )
+                        raise
+                    create_source_caption_translation_track(
                         run_id,
-                        "EMBEDDED_CAPTION_ANALYSIS_FAILED",
-                        "Read and translate embedded captions",
-                        exc,
+                        cues=source_caption["cues"],
+                        metadata={
+                            **source_caption["metadata"],
+                            "source_filename": source_path.name,
+                            "source_sha256": row.source_hash,
+                        },
                     )
-                    raise
-                create_source_caption_translation_track(
-                    run_id,
-                    cues=source_caption["cues"],
-                    metadata={
-                        **source_caption["metadata"],
-                        "source_filename": source_path.name,
-                        "source_sha256": row.source_hash,
-                    },
-                )
-                _persist_resolved_mode(
-                    run_id,
-                    str(source_caption["metadata"].get("mode") or SOURCE_CAPTION_GEMINI_MODE),
-                )
-            elif requested_mode == EXTERNAL_AUDIO_MODE:
-                _set_processing_phase(run_id, "Prepare audio")
-                try:
-                    ensure_product_runtime_ready(
-                        get_settings().root,
-                        progress=lambda state, message: _set_runtime_readiness_phase(run_id, state, message),
+                    _persist_resolved_mode(
+                        run_id,
+                        str(source_caption["metadata"].get("mode") or SOURCE_CAPTION_GEMINI_MODE),
                     )
-                except RuntimeReadinessError as exc:
-                    _persist_runtime_readiness_block(run_id, exc)
-                    raise RuntimeReadinessBlockedError(str(exc)) from exc
-                _set_processing_phase(run_id, "Recognize speech")
-                external_result = ensure_external_transcription_track(
-                    run_id,
-                    source_path=source_path,
-                    run_directory=run_directory,
-                    source_duration_seconds=float(source_metadata.get("duration_seconds") or 0),
-                    target_language=str(requested.get("target_language") or "English"),
-                    source_language=requested.get("source_language"),
-                )
-                if external_result.get("status") == "PASS" and not _same_language(
-                    external_result.get("metadata", {}).get("source_language"), requested.get("target_language"),
-                ):
-                    _create_external_translation_track(run_id, external_result, str(requested.get("target_language") or "English"))
-                _persist_resolved_mode(run_id, EXTERNAL_AUDIO_MODE)
-            elif requested_mode == LOCAL_AUDIO_MODE:
-                _set_processing_phase(run_id, "Prepare audio")
-                _set_processing_phase(run_id, "Recognize speech")
-                ensure_local_transcription_track(
-                    run_id,
-                    source_path=source_path,
-                    run_directory=run_directory,
-                    source_duration_seconds=float(source_metadata.get("duration_seconds") or 0),
-                    target_language=str(requested.get("target_language") or "English"),
-                    source_language=requested.get("source_language"),
-                    model_name=SIMPLE_UI_MODEL_NAME,
-                )
-                _persist_resolved_mode(run_id, LOCAL_AUDIO_MODE)
-            else:
-                raise SourceCaptionUnavailableError("Unsupported caption workflow mode")
+                elif requested_mode == EXTERNAL_AUDIO_MODE:
+                    _set_processing_phase(run_id, "Prepare audio")
+                    try:
+                        ensure_product_runtime_ready(
+                            get_settings().root,
+                            progress=lambda state, message: _set_runtime_readiness_phase(run_id, state, message),
+                        )
+                    except RuntimeReadinessError as exc:
+                        _persist_runtime_readiness_block(run_id, exc)
+                        raise RuntimeReadinessBlockedError(str(exc)) from exc
+                    _set_processing_phase(run_id, "Recognize speech")
+                    external_result = ensure_external_transcription_track(
+                        run_id,
+                        source_path=source_path,
+                        run_directory=run_directory,
+                        source_duration_seconds=float(source_metadata.get("duration_seconds") or 0),
+                        target_language=str(requested.get("target_language") or "English"),
+                        source_language=requested.get("source_language"),
+                    )
+                    if external_result.get("status") == "PASS" and not _same_language(
+                        external_result.get("metadata", {}).get("source_language"), requested.get("target_language"),
+                    ):
+                        _create_external_translation_track(run_id, external_result, str(requested.get("target_language") or "English"))
+                    _persist_resolved_mode(run_id, EXTERNAL_AUDIO_MODE)
+                elif requested_mode == LOCAL_AUDIO_MODE:
+                    _set_processing_phase(run_id, "Prepare audio")
+                    _set_processing_phase(run_id, "Recognize speech")
+                    ensure_local_transcription_track(
+                        run_id,
+                        source_path=source_path,
+                        run_directory=run_directory,
+                        source_duration_seconds=float(source_metadata.get("duration_seconds") or 0),
+                        target_language=str(requested.get("target_language") or "English"),
+                        source_language=requested.get("source_language"),
+                        model_name=SIMPLE_UI_MODEL_NAME,
+                    )
+                    _persist_resolved_mode(run_id, LOCAL_AUDIO_MODE)
+                else:
+                    raise SourceCaptionUnavailableError("Unsupported caption workflow mode")
+            resolved = resolved_cues(run_id)
         _set_processing_phase(run_id, "Create subtitles")
-        resolved = resolved_cues(run_id)
         (run_directory / "subtitles" / "resolved_active_track.json").write_text(
             json.dumps(resolved, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -683,6 +736,128 @@ def _write_manifest(run_dir: Path, row: SimpleWorkflowRun, status: str, result_v
     (run_dir / "run_manifest.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _render_progress_path(run_dir: Path) -> Path:
+    return run_dir / "diagnostics" / "render_progress.json"
+
+
+def _write_render_progress(run_dir: Path, payload: dict[str, Any]) -> None:
+    path = _render_progress_path(run_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    safe_payload = {
+        key: value
+        for key, value in payload.items()
+        if key in {
+            "state",
+            "processed_seconds",
+            "duration_seconds",
+            "percentage",
+            "speed",
+            "frame",
+            "expected_dialogues",
+            "ass_dialogue_count",
+            "updated_at",
+            "error_code",
+        }
+    }
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(safe_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _load_render_progress(run_dir: Path) -> dict[str, Any] | None:
+    path = _render_progress_path(run_dir)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {"state": "progress_unavailable", "error_code": "RENDER_PROGRESS_READ_FAILED"}
+    return payload if isinstance(payload, dict) else None
+
+
+def _ffmpeg_out_time_seconds(value: str) -> float | None:
+    try:
+        hours, minutes, seconds = value.strip().split(":", 2)
+        return max(0.0, int(hours) * 3600 + int(minutes) * 60 + float(seconds))
+    except (TypeError, ValueError):
+        return None
+
+
+def _run_ffmpeg_with_progress(
+    command: list[str],
+    *,
+    run_dir: Path,
+    duration_seconds: float,
+) -> None:
+    duration = max(0.0, float(duration_seconds or 0))
+    progress_command = [*command[:-1], "-progress", "pipe:1", "-nostats", command[-1]]
+    state: dict[str, Any] = {
+        "state": "starting",
+        "processed_seconds": 0.0,
+        "duration_seconds": duration,
+        "percentage": 0.0 if duration > 0 else None,
+        "speed": None,
+        "frame": None,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_render_progress(run_dir, state)
+    process = subprocess.Popen(
+        progress_command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    assert process.stderr is not None
+    last_processed = 0.0
+    for raw_line in process.stdout:
+        line = raw_line.strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key == "out_time":
+            parsed = _ffmpeg_out_time_seconds(value)
+            if parsed is not None:
+                last_processed = max(last_processed, parsed)
+                state["processed_seconds"] = round(last_processed, 3)
+                if duration > 0:
+                    state["percentage"] = round(min(100.0, (last_processed / duration) * 100.0), 1)
+        elif key == "speed":
+            state["speed"] = value.strip() or None
+        elif key == "frame":
+            try:
+                state["frame"] = max(int(state.get("frame") or 0), int(value))
+            except ValueError:
+                pass
+        elif key == "progress":
+            state["state"] = "rendering" if value.strip() != "end" else "ffmpeg_completed"
+            state["updated_at"] = datetime.now(timezone.utc).isoformat()
+            _write_render_progress(run_dir, state)
+    stderr_text = process.stderr.read()
+    return_code = process.wait()
+    if return_code != 0:
+        state.update(
+            state="failed",
+            error_code="FFMPEG_RENDER_FAILED",
+            updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        _write_render_progress(run_dir, state)
+        raise subprocess.CalledProcessError(
+            return_code,
+            progress_command,
+            output="",
+            stderr=stderr_text,
+        )
+    state.update(
+        state="ffmpeg_completed",
+        updated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _write_render_progress(run_dir, state)
+
+
 def _bounded_subtitle_process(row: SimpleWorkflowRun, resolved: dict[str, Any]) -> None:
     run_dir = Path(row.run_directory)
     source = Path(row.source_path)
@@ -764,7 +939,12 @@ def _bounded_subtitle_process(row: SimpleWorkflowRun, resolved: dict[str, Any]) 
         ]
     else:
         command = _subtitle_render_command(source, ass_path, temp_output)
-    subprocess.run(command, check=True, capture_output=True, text=True)
+    source_duration_seconds = float(json.loads(row.source_metadata_json or "{}").get("duration_seconds") or 0)
+    _run_ffmpeg_with_progress(
+        command,
+        run_dir=run_dir,
+        duration_seconds=source_duration_seconds,
+    )
     _validate_subtitle_render(
         source=source,
         output=temp_output,
@@ -773,6 +953,17 @@ def _bounded_subtitle_process(row: SimpleWorkflowRun, resolved: dict[str, Any]) 
         render_command=command,
         expect_masked=use_source_mask,
         filter_script_path=filter_script_path,
+    )
+    render_progress = _load_render_progress(run_dir) or {}
+    _write_render_progress(
+        run_dir,
+        {
+            **render_progress,
+            "state": "validated",
+            "expected_dialogues": expected_dialogues,
+            "ass_dialogue_count": _valid_ass_dialogue_count(ass_path),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
     )
     os.replace(temp_output, output)
 
@@ -893,24 +1084,43 @@ def _get_run(session, run_id: str) -> SimpleWorkflowRun:
 
 
 def repair_invalid_completed_results() -> dict[str, Any]:
-    """Downgrade legacy false-completed rows without deleting their audit artifacts."""
+    """Reconcile result state against current fail-closed validation without deleting audit artifacts."""
     repaired: list[str] = []
+    restored: list[str] = []
     with session_scope() as session:
-        rows = (
-            session.query(SimpleWorkflowRun)
-            .filter(
-                SimpleWorkflowRun.is_test_fixture.is_(False),
-                SimpleWorkflowRun.internal_state.in_(["completed", "approved"]),
-            )
-            .all()
-        )
+        rows = session.query(SimpleWorkflowRun).filter(SimpleWorkflowRun.is_test_fixture.is_(False)).all()
         for row in rows:
-            validation = _completed_result_validation(row)
-            if validation["eligible"]:
+            if row.internal_state in {"completed", "approved"}:
+                validation = _completed_result_validation(row)
+                if validation["eligible"]:
+                    continue
+                _invalidate_completed_result(row, validation)
+                repaired.append(row.run_id)
                 continue
-            _invalidate_completed_result(row, validation)
-            repaired.append(row.run_id)
-    return {"status": "PASS", "repaired_count": len(repaired), "repaired_run_ids": repaired}
+            if row.internal_state != "blocked" or row.failure_category != INVALID_COMPLETED_RESULT:
+                continue
+            validation = _completed_result_validation(row)
+            if validation["eligible"] is not True or not row.output_path or not row.output_hash:
+                continue
+            output = Path(row.output_path)
+            if not output.is_file() or sha256_file(output).lower() != str(row.output_hash).lower():
+                continue
+            row.internal_state = "completed"
+            row.current_phase = "Preview"
+            row.approval_state = "not_reviewed"
+            row.failure_category = None
+            row.updated_at = datetime.now(timezone.utc)
+            if row.completed_at is None:
+                row.completed_at = row.updated_at
+            _write_manifest(Path(row.run_directory), row, status="completed", result_validation=validation)
+            restored.append(row.run_id)
+    return {
+        "status": "PASS",
+        "repaired_count": len(repaired),
+        "repaired_run_ids": repaired,
+        "restored_count": len(restored),
+        "restored_run_ids": restored,
+    }
 
 
 def _persist_subtitle_source_block(run_id: str, exc: Exception) -> None:
@@ -1097,6 +1307,8 @@ def _completed_result_validation(row: SimpleWorkflowRun) -> dict[str, Any]:
         content_validation = _subtitle_content_validation(row, ass_path)
         if not content_validation["eligible"]:
             reason_code = content_validation["reason_code"]
+        elif dialogue_count != int(content_validation.get("cue_count") or 0):
+            reason_code = "subtitle_render_count_mismatch"
 
     eligible = reason_code is None
     content_failure = reason_code in {
@@ -1114,6 +1326,15 @@ def _completed_result_validation(row: SimpleWorkflowRun) -> dict[str, Any]:
         "subtitle_required": subtitle_required,
         "ass_dialogue_count": dialogue_count,
         "subtitle_content_validation": content_validation,
+        "caption_integrity": {
+            "resolved_cue_count": int(content_validation.get("cue_count") or 0) if content_validation else None,
+            "ass_dialogue_count": dialogue_count,
+            "counts_match": (
+                dialogue_count == int(content_validation.get("cue_count") or 0)
+                if subtitle_required and content_validation is not None and dialogue_count is not None
+                else None
+            ),
+        },
     }
 
 
@@ -1273,9 +1494,110 @@ def _serialize_run(row: SimpleWorkflowRun | None, **extra: Any) -> dict[str, Any
         "upload_publish": {"upload": "not_performed", "publish": "not_performed"},
         "subtitle_tracks": _subtitle_track_summary(row.run_id),
         "analysis_progress": load_caption_analysis_progress(Path(row.run_directory)),
+        "monitor": _monitor_summary(row, validation),
+        "render_progress": _load_render_progress(Path(row.run_directory)),
     }
     payload.update(extra)
     return payload
+
+
+def _parse_monitor_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _monitor_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _monitor_summary(row: SimpleWorkflowRun, validation: dict[str, Any]) -> dict[str, Any]:
+    run_dir = Path(row.run_directory)
+    requested = json.loads(row.requested_settings_json or "{}")
+    analysis = load_caption_analysis_progress(run_dir) or {}
+    render = _load_render_progress(run_dir)
+    resolved = _monitor_json(run_dir / "subtitles" / "resolved_active_track.json")
+    active_track = resolved.get("active_track") if isinstance(resolved.get("active_track"), dict) else {}
+    metadata = active_track.get("metadata") if isinstance(active_track.get("metadata"), dict) else {}
+    usage = metadata.get("provider_usage") if isinstance(metadata.get("provider_usage"), dict) else {}
+    captions = list(analysis.get("preview_cues") or [])
+    if not captions:
+        captions = [
+            {
+                "cue_id": str(cue.get("cue_id") or ""),
+                "start_ms": int(cue.get("start_ms") or 0),
+                "end_ms": int(cue.get("end_ms") or 0),
+                "source_text": str(cue.get("source_text") or "")[:240],
+                "translated_text": str(cue.get("resolved_text") or cue.get("translation_text") or "")[:240],
+                "ocr_confidence": cue.get("ocr_confidence"),
+                "status": "resolved",
+                "attention": False,
+            }
+            for cue in list(resolved.get("cues") or [])[-24:]
+        ]
+    now = datetime.now(timezone.utc)
+    started = _parse_monitor_datetime(row.started_at)
+    elapsed = max(0.0, (now - started).total_seconds()) if started else 0.0
+    candidates = [
+        _parse_monitor_datetime(analysis.get("last_progress_at")),
+        _parse_monitor_datetime(analysis.get("last_heartbeat_at")),
+        _parse_monitor_datetime(row.updated_at),
+    ]
+    latest_activity = max((item for item in candidates if item is not None), default=None)
+    activity_age = max(0.0, (now - latest_activity).total_seconds()) if latest_activity else None
+    worker_state = str(analysis.get("worker_state") or "")
+    stalled = bool(
+        row.internal_state == "processing"
+        and row.current_phase != "Render video"
+        and (
+            worker_state == "failed"
+            or analysis.get("error_code") == "EMBEDDED_CAPTION_ANALYSIS_STALLED"
+            or (activity_age is not None and activity_age >= 45)
+        )
+    )
+    provider = {
+        "name": "Gemini" if requested.get("caption_mode") == SOURCE_CAPTION_MODE else "Local only",
+        "model": metadata.get("translation_model") or metadata.get("gemini_model"),
+        "request_count": int(analysis.get("gemini_requests") or usage.get("request_count") or 0),
+        "retry_count": int(analysis.get("gemini_retries") or usage.get("retry_count") or 0),
+        "cache_hits": int(analysis.get("gemini_cache_hits") or usage.get("cache_hits") or 0),
+        "cache_misses": int(analysis.get("gemini_cache_misses") or usage.get("cache_misses") or 0),
+        "prevalidated_evidence_reused": bool(analysis.get("prevalidated_evidence_reused")),
+    }
+    resolved_count = len(list(resolved.get("cues") or []))
+    ass_count = validation.get("ass_dialogue_count")
+    content_validation = validation.get("subtitle_content_validation") if isinstance(validation.get("subtitle_content_validation"), dict) else {}
+    return {
+        "elapsed_seconds": round(elapsed, 1),
+        "last_progress_at": analysis.get("last_progress_at"),
+        "last_heartbeat_at": analysis.get("last_heartbeat_at"),
+        "activity_age_seconds": round(activity_age, 1) if activity_age is not None else None,
+        "worker_state": worker_state or ("active" if row.internal_state == "processing" else row.internal_state),
+        "stalled": stalled,
+        "analysis": analysis,
+        "provider": provider,
+        "captions": captions[-24:],
+        "render_progress": render,
+        "qc": {
+            "detected_caption_count": int(analysis.get("caption_intervals_total") or 0),
+            "resolved_caption_count": resolved_count,
+            "rendered_dialogue_count": int(ass_count) if ass_count is not None else None,
+            "caption_loss_detected": bool(ass_count is not None and resolved_count > 0 and int(ass_count) != resolved_count),
+            "content_validation": content_validation.get("status") or validation.get("status"),
+            "output_validation": validation.get("status"),
+            "output_eligible": bool(validation.get("eligible")),
+        },
+    }
 
 
 def _load_failure_detail(run_directory: Path) -> dict[str, str] | None:
@@ -1287,6 +1609,12 @@ def _load_failure_detail(run_directory: Path) -> dict[str, str] | None:
         code = payload.get("code")
         message = payload.get("message")
         if isinstance(code, str) and isinstance(message, str):
+            return {"code": code, "message": message}
+    progress = load_caption_analysis_progress(run_directory)
+    if isinstance(progress, dict):
+        code = progress.get("error_code")
+        message = progress.get("error_message")
+        if isinstance(code, str) and code and isinstance(message, str) and message:
             return {"code": code, "message": message}
     return None
 
@@ -1302,11 +1630,43 @@ def _subtitle_track_summary(run_id: str) -> dict[str, Any]:
             None,
         )
         active_metadata = (active or {}).get("metadata") or {}
+        provider_usage = active_metadata.get("provider_usage") if isinstance(active_metadata.get("provider_usage"), dict) else {}
+        active_cues = active_metadata.get("cues") if isinstance(active_metadata.get("cues"), list) else []
+        preview_cues = []
+        for cue in active_cues[-24:]:
+            if not isinstance(cue, dict):
+                continue
+            confidence = cue.get("ocr_confidence")
+            try:
+                attention = confidence is not None and float(confidence) < 0.75
+            except (TypeError, ValueError):
+                attention = False
+            preview_cues.append(
+                {
+                    "cue_id": str(cue.get("cue_id") or ""),
+                    "start_ms": int(cue.get("start_ms") or 0),
+                    "end_ms": int(cue.get("end_ms") or 0),
+                    "source_text": str(cue.get("source_text") or "")[:240],
+                    "translated_text": str(cue.get("resolved_text") or cue.get("text") or "")[:240],
+                    "ocr_confidence": confidence,
+                    "status": "ready",
+                    "attention": attention,
+                }
+            )
         return {
             "active_track_id": active_id,
             "operator_notice": active_metadata.get("operator_notice"),
-            "automatic_caption_count": int(active_metadata.get("automatic_caption_count") or 0),
+            "automatic_caption_count": int(active_metadata.get("automatic_caption_count") or len(active_cues) or 0),
             "human_reviewed_caption_count": int(active_metadata.get("human_reviewed_caption_count") or 0),
+            "subtitle_provenance": active_metadata.get("subtitle_provenance"),
+            "translation_model": active_metadata.get("translation_model"),
+            "provider_usage": {
+                "request_count": int(provider_usage.get("request_count") or 0),
+                "retry_count": int(provider_usage.get("retry_count") or 0),
+                "cache_hits": int(provider_usage.get("cache_hits") or 0),
+                "cache_misses": int(provider_usage.get("cache_misses") or 0),
+            },
+            "preview_cues": preview_cues,
             "tracks": [
                 {
                     "track_id": track["track_id"],

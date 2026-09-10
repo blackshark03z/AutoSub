@@ -290,7 +290,7 @@ def test_ocr_render_plan_masks_detected_top_region_and_scales(monkeypatch):
     assert plan["dropped_cue_count"] == 0
 
 
-def test_ocr_render_plan_preserves_adjacent_cues_when_detection_intervals_overlap(monkeypatch):
+def test_ocr_render_plan_preserves_overlap_across_distinct_visual_lanes(monkeypatch):
     monkeypatch.setattr("app.services.source_caption_translation.media_summary", lambda _: {
         "duration_seconds": 12.1,
         "video": {"width": 1920, "height": 1080},
@@ -319,7 +319,9 @@ def test_ocr_render_plan_preserves_adjacent_cues_when_detection_intervals_overla
     plan = build_source_caption_render_plan(Path("source.mp4"), cues, font_path=Path(r"C:\Windows\Fonts\arial.ttf"))
 
     assert [cue["cue_id"] for cue in plan["render_cues"]] == ["OCR_0001", "OCR_0002"]
-    assert plan["render_cues"][0]["end_ms"] == plan["render_cues"][1]["start_ms"] == 7250
+    assert plan["render_cues"][0]["end_ms"] == 7750
+    assert plan["render_cues"][1]["start_ms"] == 7250
+    assert plan["render_cues"][0]["end_ms"] > plan["render_cues"][1]["start_ms"]
     assert plan["dropped_cue_count"] == 0
     assert {layout["segment_id"] for layout in plan["layouts"]} == {"OCR_0001", "OCR_0002"}
 

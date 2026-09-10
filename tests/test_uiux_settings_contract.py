@@ -70,7 +70,7 @@ def test_visual_system_has_accessible_targets_focus_reflow_and_reduced_motion():
     assert "@media (max-width: 720px)" in css
     assert "@media (max-width: 430px)" in css
     assert "@media (max-width: 340px)" in css
-    assert "width: min(960px, calc(100vw - 32px));" in css
+    assert "width: min(1180px, calc(100vw - 32px));" in css
     assert "@media (prefers-reduced-motion: reduce)" in css
     assert "@media (forced-colors: active)" in css
 

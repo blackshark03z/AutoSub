@@ -10,6 +10,7 @@ from app.services.clean_subtitle_render import (
     wrap_subtitle_text,
     write_clean_subtitles_ass,
 )
+from app.services.source_caption_translation import _normalize_source_caption_render_cues
 
 
 FONT = ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", 40)
@@ -53,6 +54,40 @@ def test_valid_timing_is_preserved_and_overlap_is_rejected():
     ]
     result = normalize_render_cues(cues, duration_seconds=3)
     assert [(cue["start_ms"], cue["end_ms"]) for cue in result] == [(100, 1100), (1100, 2100)]
+
+
+def test_source_caption_normalization_preserves_simultaneous_spatial_lanes():
+    cues = [
+        {
+            "cue_id": "upper",
+            "start_ms": 100,
+            "end_ms": 600,
+            "resolved_text": "Upper caption",
+            "source_bbox": {"left_x": 100, "top_y": 90, "right_x": 900, "bottom_y": 160},
+        },
+        {
+            "cue_id": "lower",
+            "start_ms": 100,
+            "end_ms": 900,
+            "resolved_text": "Lower caption",
+            "source_bbox": {"left_x": 100, "top_y": 820, "right_x": 900, "bottom_y": 920},
+        },
+        {
+            "cue_id": "lower_next",
+            "start_ms": 800,
+            "end_ms": 1200,
+            "resolved_text": "Next lower caption",
+            "source_bbox": {"left_x": 100, "top_y": 830, "right_x": 900, "bottom_y": 930},
+        },
+    ]
+
+    result = _normalize_source_caption_render_cues(cues, duration_seconds=2, frame_height=1080)
+
+    assert [cue["cue_id"] for cue in result] == ["upper", "lower", "lower_next"]
+    by_id = {cue["cue_id"]: cue for cue in result}
+    assert (by_id["upper"]["start_ms"], by_id["upper"]["end_ms"]) == (100, 600)
+    assert (by_id["lower"]["start_ms"], by_id["lower"]["end_ms"]) == (100, 800)
+    assert (by_id["lower_next"]["start_ms"], by_id["lower_next"]["end_ms"]) == (800, 1200)
 
 
 def test_layout_is_tight_centered_and_within_1920_safe_bounds():

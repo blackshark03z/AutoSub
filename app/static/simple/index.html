@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AutoSub</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/styles.css?v=fluent-settings-v1" />
+    <link rel="stylesheet" href="/styles.css?v=production-monitor-v1" />
   </head>
   <body data-flow-state="setup">
     <main class="app-shell">
@@ -233,22 +233,64 @@
         </section>
       </section>
 
-      <section id="processingView" class="flow-view centered-view" data-flow-view="processing" aria-labelledby="processingTitle" hidden>
-        <header class="state-header">
-          <p class="eyebrow">Đang xử lý</p>
-          <h1 id="processingTitle" tabindex="-1">Đang tạo video có phụ đề</h1>
-          <p id="processingFilename" class="lead"></p>
+      <section id="processingView" class="flow-view monitor-view" data-flow-view="processing" aria-labelledby="processingTitle" hidden>
+        <header class="state-header monitor-header">
+          <div>
+            <p class="eyebrow">Production Monitor</p>
+            <h1 id="processingTitle" tabindex="-1">Đang tạo video có phụ đề</h1>
+            <p id="processingFilename" class="lead"></p>
+          </div>
+          <div class="monitor-header-meta" aria-label="Trạng thái lượt chạy">
+            <span id="monitorMode" class="monitor-chip">Đang xác định chế độ</span>
+            <span id="monitorElapsed" class="monitor-chip">0:00</span>
+            <span id="monitorActivity" class="monitor-chip neutral" role="status" aria-live="polite">Đang khởi động</span>
+          </div>
         </header>
-        <section class="surface processing-surface">
-          <div class="activity-bar" aria-hidden="true"><span></span></div>
-          <p id="processingCurrent" class="processing-current">Đang bắt đầu xử lý...</p>
-          <p id="processingDescription" class="message">Bạn có thể giữ cửa sổ này mở để theo dõi trạng thái thực.</p>
-          <ol id="processingStages" class="stage-list" aria-label="Tiến độ xử lý"></ol>
-          <details id="processingDetails" class="advanced-disclosure">
-            <summary>Xem chi tiết</summary>
-            <pre id="processingTechnicalOutput" class="safe-output"></pre>
-          </details>
-        </section>
+
+        <div class="production-monitor-grid">
+          <section class="surface monitor-caption-panel" aria-labelledby="monitorCaptionsTitle">
+            <div class="monitor-panel-heading">
+              <div>
+                <p class="eyebrow">Dữ liệu đang tạo</p>
+                <h2 id="monitorCaptionsTitle">Phụ đề đang tạo</h2>
+                <p id="monitorCaptionSummary" class="message no-margin">Chưa có phụ đề để hiển thị.</p>
+              </div>
+              <span id="monitorCaptionCount" class="pill">0 câu</span>
+            </div>
+            <div id="monitorCaptionList" class="monitor-caption-list" role="log" aria-live="polite" aria-relevant="additions text">
+              <div class="monitor-empty">
+                <strong>Đang chờ dữ liệu phụ đề</strong>
+                <span>Khi OCR hoặc nhận dạng lời nói tạo được câu có mốc thời gian, chúng sẽ xuất hiện tại đây.</span>
+              </div>
+            </div>
+          </section>
+
+          <aside class="monitor-side" aria-label="Tiến trình và bằng chứng">
+            <section class="surface processing-surface">
+              <div id="processingProgress" class="activity-bar" aria-hidden="true"><span></span></div>
+              <p id="processingCurrent" class="processing-current" role="status" aria-live="polite">Đang bắt đầu xử lý...</p>
+              <p id="processingDescription" class="message">AutoSub đang chuẩn bị lượt chạy.</p>
+              <div id="monitorMetrics" class="monitor-metrics" aria-label="Số liệu tiến trình"></div>
+              <ol id="processingStages" class="stage-list" aria-label="Các bước xử lý"></ol>
+            </section>
+
+            <section class="surface monitor-evidence" aria-labelledby="monitorEvidenceTitle">
+              <div class="monitor-panel-heading compact">
+                <div>
+                  <p class="eyebrow">Bằng chứng vận hành</p>
+                  <h2 id="monitorEvidenceTitle">Đang chạy đúng không?</h2>
+                </div>
+              </div>
+              <div id="monitorEvidenceGrid" class="monitor-evidence-grid"></div>
+              <p id="monitorWarning" class="monitor-warning" role="status" aria-live="polite"></p>
+            </section>
+          </aside>
+        </div>
+
+        <details id="processingDetails" class="advanced-disclosure monitor-technical">
+          <summary>Chi tiết kỹ thuật</summary>
+          <pre id="processingTechnicalOutput" class="safe-output"></pre>
+        </details>
       </section>
 
       <section id="completedView" class="flow-view centered-view" data-flow-view="completed" aria-labelledby="completedTitle" hidden>
@@ -260,6 +302,15 @@
         <section class="surface result-surface">
           <video id="previewVideo" controls preload="metadata"></video>
           <div id="outputSummary" class="summary-grid"></div>
+          <section class="result-qc" aria-labelledby="resultQcTitle">
+            <div class="monitor-panel-heading compact">
+              <div>
+                <p class="eyebrow">QC evidence</p>
+                <h2 id="resultQcTitle">Kiểm tra tính toàn vẹn</h2>
+              </div>
+            </div>
+            <div id="resultQcSummary" class="monitor-evidence-grid"></div>
+          </section>
           <p class="quality-note">Phụ đề được tạo tự động. Hãy xem lại nội dung trước khi sử dụng chính thức.</p>
           <div class="result-actions">
             <button id="openFolderBtn" class="primary" type="button">Mở thư mục kết quả</button>
@@ -304,6 +355,6 @@
         </section>
       </section>
     </main>
-    <script src="/app.js?v=fluent-settings-v1" defer></script>
+    <script src="/app.js?v=production-monitor-v1" defer></script>
   </body>
 </html>

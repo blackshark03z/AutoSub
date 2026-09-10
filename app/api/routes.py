@@ -219,7 +219,7 @@ def operator_runtime_build() -> dict:
         commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=Path.cwd(), text=True, stderr=subprocess.DEVNULL).strip()
     except Exception:
         pass
-    simple_asset = os.environ.get("TOOL_AUTO_SUB_SIMPLE_UI_VERSION", "").strip() or "fluent-settings-v1"
+    simple_asset = os.environ.get("TOOL_AUTO_SUB_SIMPLE_UI_VERSION", "").strip() or "production-monitor-v1"
     operator_asset = os.environ.get("TOOL_AUTO_SUB_OPERATOR_UI_VERSION", "").strip() or "cp09c"
     try:
         product_version = (get_settings().root / "VERSION").read_text(encoding="utf-8").strip() or "1.9.0"

@@ -174,6 +174,42 @@ def _load_prevalidated_source_caption_evidence(
     return {"cues": cues, "metadata": metadata, "evidence_path": str(evidence_path)}
 
 
+def _monitor_preview_cues(
+    intervals: list[dict[str, Any]],
+    translated_by_id: dict[str, dict[str, Any]],
+    *,
+    limit: int = 24,
+) -> list[dict[str, Any]]:
+    # Bounded, sanitized subtitle evidence for the Production Monitor.
+    preview: list[dict[str, Any]] = []
+    for interval in intervals[-max(1, limit):]:
+        interval_id = str(interval.get("id") or "")
+        translated = translated_by_id.get(interval_id) or {}
+        confidence = _safe_float(interval.get("ocr_confidence"))
+        attention = bool(
+            interval.get("ocr_gate_pass") is False
+            or (confidence is not None and confidence < MIN_OCR_CONFIDENCE)
+        )
+        translated_text = str(translated.get("translated_text") or "")
+        preview.append(
+            {
+                "cue_id": interval_id,
+                "start_ms": round(float(interval.get("start_time") or 0) * 1000),
+                "end_ms": round(float(interval.get("end_time") or 0) * 1000),
+                "source_text": str(
+                    translated.get("corrected_source_text")
+                    or interval.get("source_text")
+                    or ""
+                )[:240],
+                "translated_text": translated_text[:240],
+                "ocr_confidence": confidence,
+                "status": "translated" if translated_text.strip() else "detected",
+                "attention": attention,
+            }
+        )
+    return preview
+
+
 def create_source_caption_translation(
     source_path: Path,
     run_directory: Path,
@@ -204,6 +240,34 @@ def create_source_caption_translation(
         duration=duration,
     )
     if cached_evidence is not None:
+        cached_cues = list(cached_evidence.get("cues") or [])
+        cached_usage = dict((cached_evidence.get("metadata") or {}).get("provider_usage") or {})
+        progress.update(
+            force=True,
+            analysis_stage="track_creation",
+            caption_intervals_total=len(cached_cues),
+            translations_total=len(cached_cues),
+            translations_completed=len(cached_cues),
+            gemini_requests=0,
+            gemini_retries=0,
+            gemini_cache_hits=max(len(cached_cues), int(cached_usage.get("cache_hits") or 0)),
+            gemini_cache_misses=0,
+            prevalidated_evidence_reused=True,
+            preview_cues=[
+                {
+                    "cue_id": str(cue.get("cue_id") or ""),
+                    "start_ms": int(cue.get("start_ms") or 0),
+                    "end_ms": int(cue.get("end_ms") or 0),
+                    "source_text": str(cue.get("source_text") or "")[:240],
+                    "translated_text": str(cue.get("text") or "")[:240],
+                    "ocr_confidence": cue.get("ocr_confidence"),
+                    "status": "cached",
+                    "attention": False,
+                }
+                for cue in cached_cues[-24:]
+            ],
+            current_item_id="cached_translation_track",
+        )
         return cached_evidence
     frame_dir = run_directory / "work" / "source_caption_frames"
     frame_dir.mkdir(parents=True, exist_ok=True)
@@ -330,6 +394,13 @@ def create_source_caption_translation(
             interval["id"] = f"OCR_{index:04d}"
             interval["previous_source_text"] = intervals[index - 2]["source_text"] if index > 1 else ""
             interval["next_source_text"] = intervals[index]["source_text"] if index < len(intervals) else ""
+        progress.update(
+            force=True,
+            caption_intervals_total=len(intervals),
+            translations_total=len(intervals),
+            preview_cues=_monitor_preview_cues(intervals, {}),
+            current_item_id="caption_intervals",
+        )
         if analysis_only:
             progress.update(force=True, analysis_stage="track_creation", current_item_id="diagnostic_tracks")
             return {
@@ -434,12 +505,24 @@ def create_source_caption_translation(
             "cache_misses": 0,
             "request_ids": [],
         }
+        progress.update(
+            force=True,
+            translations_completed=len(translated_by_id),
+            preview_cues=_monitor_preview_cues(intervals, translated_by_id),
+            current_item_id="translation_queue",
+        )
         executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="caption-translation")
         try:
             futures = []
             if caption_requests:
                 futures.append(
-                    executor.submit(_resolve_text_only_requests, caption_translator, caption_requests)
+                    executor.submit(
+                        _resolve_text_only_requests,
+                        caption_translator,
+                        caption_requests,
+                        progress=progress,
+                        base_completed=len(translated_by_id),
+                    )
                 )
             if blocked_requests:
                 futures.append(
@@ -462,6 +545,16 @@ def create_source_caption_translation(
                 provider_usage["cache_hits"] += batch_usage["cache_hits"]
                 provider_usage["cache_misses"] += batch_usage["cache_misses"]
                 provider_usage["request_ids"].extend(batch_usage["request_ids"])
+                progress.update(
+                    force=True,
+                    translations_completed=len(translated_by_id),
+                    gemini_requests=provider_usage["request_count"],
+                    gemini_retries=provider_usage["retry_count"],
+                    gemini_cache_hits=provider_usage["cache_hits"],
+                    gemini_cache_misses=provider_usage["cache_misses"],
+                    preview_cues=_monitor_preview_cues(intervals, translated_by_id),
+                    current_item_id=item_id,
+                )
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
         translated = []
@@ -567,7 +660,17 @@ def create_source_caption_translation(
         evidence_path = run_directory / "subtitles" / "source_caption_gemini_translation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
-        progress.update(force=True, analysis_stage="track_creation", current_item_id="translated_tracks")
+        progress.update(
+            force=True,
+            analysis_stage="track_creation",
+            translations_completed=len(translated_by_id),
+            gemini_requests=provider_usage["request_count"],
+            gemini_retries=provider_usage["retry_count"],
+            gemini_cache_hits=provider_usage["cache_hits"],
+            gemini_cache_misses=provider_usage["cache_misses"],
+            preview_cues=_monitor_preview_cues(intervals, translated_by_id),
+            current_item_id="translated_tracks",
+        )
         return {"cues": cues, "metadata": metadata, "evidence_path": str(evidence_path)}
     finally:
         _cleanup_sampled_frames(frames, frame_dir)
@@ -769,8 +872,52 @@ def _await_translation_batch_with_heartbeat(
 def _resolve_text_only_requests(
     translator: GeminiCaptionTranslator,
     caption_requests: list[dict[str, Any]],
+    *,
+    progress: CaptionAnalysisProgress | None = None,
+    base_completed: int = 0,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
-    result = translator.translate(caption_requests)
+    def _on_progress(snapshot: dict[str, Any]) -> None:
+        if progress is None:
+            return
+        current = progress.snapshot()
+        translated_map = {
+            str(item.get("id") or ""): str(item.get("english") or "")
+            for item in snapshot.get("translations") or []
+        }
+        preview_cues = []
+        for cue in current.get("preview_cues") or []:
+            updated = dict(cue)
+            translated_text = translated_map.get(str(updated.get("cue_id") or ""))
+            if translated_text:
+                updated["translated_text"] = translated_text[:240]
+                updated["status"] = "translated"
+            preview_cues.append(updated)
+        progress.update(
+            force=True,
+            analysis_stage="translation_resolution",
+            translations_completed=base_completed + int(snapshot.get("translated_count") or 0),
+            gemini_requests=max(int(current.get("gemini_requests") or 0), int(snapshot.get("request_count") or 0)),
+            gemini_retries=max(int(current.get("gemini_retries") or 0), int(snapshot.get("retry_count") or 0)),
+            gemini_cache_hits=max(int(current.get("gemini_cache_hits") or 0), int(snapshot.get("cache_hits") or 0)),
+            gemini_cache_misses=max(int(current.get("gemini_cache_misses") or 0), int(snapshot.get("cache_misses") or 0)),
+            preview_cues=preview_cues,
+            current_item_id=f"text_translation_{int(snapshot.get('translated_count') or 0):04d}_of_{len(caption_requests):04d}",
+        )
+
+    try:
+        result = translator.translate(caption_requests, progress_callback=_on_progress)
+    except GeminiCaptionTranslationError as exc:
+        if progress is not None:
+            current = progress.snapshot()
+            failed_ids = ",".join(exc.failed_caption_ids[:3]) if exc.failed_caption_ids else "batch"
+            progress.update(
+                force=True,
+                analysis_stage="translation_resolution",
+                gemini_requests=max(int(current.get("gemini_requests") or 0), int(exc.request_count or 0)),
+                gemini_retries=max(int(current.get("gemini_retries") or 0), int(exc.retry_count or 0)),
+                current_item_id=f"text_translation_failed:{failed_ids}",
+            )
+        raise
     resolved: dict[str, dict[str, Any]] = {}
     benchmark_rows: list[dict[str, Any]] = []
     for request, translation in zip(caption_requests, result.translations):
@@ -2002,6 +2149,62 @@ def build_caption_intervals(
     return _merge_duplicate_intervals(intervals, sample_seconds)
 
 
+def _normalize_source_caption_render_cues(
+    cues: list[dict[str, Any]],
+    *,
+    duration_seconds: float,
+    frame_height: int,
+) -> list[dict[str, Any]]:
+    """Normalize timing per visual lane so simultaneous spatial captions survive."""
+    lanes: dict[str, list[dict[str, Any]]] = {"upper": [], "lower": [], "unknown": []}
+    split_y = frame_height * 0.55
+    for cue in cues:
+        copied = {**cue}
+        bbox = copied.get("source_bbox")
+        if isinstance(bbox, dict):
+            try:
+                center_y = (int(bbox["top_y"]) + int(bbox["bottom_y"])) / 2
+            except (KeyError, TypeError, ValueError):
+                lane = "unknown"
+            else:
+                lane = "upper" if center_y < split_y else "lower"
+        else:
+            lane = "unknown"
+        lanes[lane].append(copied)
+
+    normalized: list[dict[str, Any]] = []
+    for lane_cues in lanes.values():
+        lane_cues.sort(
+            key=lambda item: (
+                int(item.get("start_ms") or 0),
+                int(item.get("end_ms") or 0),
+                str(item.get("cue_id") or item.get("id") or ""),
+            )
+        )
+        for index in range(len(lane_cues) - 1):
+            current = lane_cues[index]
+            following = lane_cues[index + 1]
+            try:
+                current_start = int(current.get("start_ms"))
+                current_end = int(current.get("end_ms"))
+                following_start = int(following.get("start_ms"))
+            except (TypeError, ValueError):
+                continue
+            if current_start < following_start < current_end:
+                current["end_ms"] = following_start
+        normalized.extend(normalize_render_cues(lane_cues, duration_seconds=duration_seconds))
+
+    normalized.sort(
+        key=lambda item: (
+            int(item.get("start_ms") or 0),
+            int((item.get("source_bbox") or {}).get("top_y") or 0),
+            int(item.get("end_ms") or 0),
+            str(item.get("cue_id") or item.get("id") or ""),
+        )
+    )
+    return normalized
+
+
 def build_source_caption_render_plan(
     source_path: Path,
     cues: list[dict[str, Any]],
@@ -2016,19 +2219,11 @@ def build_source_caption_render_plan(
     duration = float(media.get("duration_seconds") or 0)
     font_size = max(36, round(height * 0.041))
     font = ImageFont.truetype(str(font_path), font_size)
-    render_candidates = [{**cue} for cue in cues]
-    for index in range(len(render_candidates) - 1):
-        current = render_candidates[index]
-        following = render_candidates[index + 1]
-        try:
-            current_start = int(current.get("start_ms"))
-            current_end = int(current.get("end_ms"))
-            following_start = int(following.get("start_ms"))
-        except (TypeError, ValueError):
-            continue
-        if current_start < following_start < current_end:
-            current["end_ms"] = following_start
-    render_cues = normalize_render_cues(render_candidates, duration_seconds=duration)
+    render_cues = _normalize_source_caption_render_cues(
+        cues,
+        duration_seconds=duration,
+        frame_height=height,
+    )
     pad_x = max(12, round(width * 0.00625))
     pad_y = max(8, round(height * 0.0074))
     intervals = []
@@ -2533,9 +2728,12 @@ def _source_caption_coverage_adjustments(
         adjusted_spans = []
         for match in matches:
             adjusted = adjustments.get(match["cue_id"], match)
+            # This oracle verifies source-caption suppression coverage, not English
+            # dialogue continuity. The actual replacement mask intentionally starts
+            # before and ends after each cue, so evaluate the same padded mask span.
             adjusted_spans.append((
-                max(window_start, float(adjusted["start_time"])),
-                min(window_end, float(adjusted["end_time"])),
+                max(window_start, float(adjusted["start_time"]) - REPLACEMENT_MASK_PREROLL_SECONDS),
+                min(window_end, float(adjusted["end_time"]) + REPLACEMENT_MASK_POSTROLL_SECONDS),
             ))
         for exc in valid_excs:
             adjusted_spans.append((

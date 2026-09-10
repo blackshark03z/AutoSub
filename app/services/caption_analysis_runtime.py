@@ -58,6 +58,15 @@ class CaptionAnalysisProgress:
             "dense_crops_completed": 0,
             "ocr_batches_total": 0,
             "ocr_batches_completed": 0,
+            "caption_intervals_total": 0,
+            "translations_total": 0,
+            "translations_completed": 0,
+            "gemini_requests": 0,
+            "gemini_retries": 0,
+            "gemini_cache_hits": 0,
+            "gemini_cache_misses": 0,
+            "preview_cues": [],
+            "prevalidated_evidence_reused": False,
             "current_item_id": None,
             "last_progress_at": _utc_now(),
             "last_heartbeat_at": _utc_now(),
@@ -101,7 +110,17 @@ class CaptionAnalysisProgress:
                 changes["stage_history"] = history
                 changes["stage_started_at"] = _utc_now()
                 self._stage_started_monotonic = time.monotonic()
-            for key in ("sampled_frames_completed", "dense_crops_completed", "ocr_batches_completed", "retry_count"):
+            for key in (
+                "sampled_frames_completed",
+                "dense_crops_completed",
+                "ocr_batches_completed",
+                "translations_completed",
+                "gemini_requests",
+                "gemini_retries",
+                "gemini_cache_hits",
+                "gemini_cache_misses",
+                "retry_count",
+            ):
                 if key in changes:
                     value = int(changes[key])
                     if value < int(self._state.get(key) or 0):
@@ -112,6 +131,7 @@ class CaptionAnalysisProgress:
                 ("sampled_frames_completed", "sampled_frames_total"),
                 ("dense_crops_completed", "dense_crops_total"),
                 ("ocr_batches_completed", "ocr_batches_total"),
+                ("translations_completed", "translations_total"),
             ):
                 completed_value = int(changes.get(completed, self._state.get(completed) or 0))
                 total_value = int(changes.get(total, self._state.get(total) or 0))

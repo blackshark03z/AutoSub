@@ -2,10 +2,10 @@
 
 AutoSub is a local, single-user Windows application that turns local video into a validated English-subtitled MP4.
 
-## AutoSub 1.9.0 Stable
+## AutoSub 1.10.0 Stable
 
-Release ID: `AUTOSUB_1_9_0_STABLE`
-Git tag: `v1.9.0`
+Release ID: `AUTOSUB_1_10_0_STABLE`
+Git tag: `v1.10.0`
 
 The canonical daily-use installation is `D:\\AutoSub`. Historical CP12B/CP13A/CP13A1 packages are provenance only and are not relabeled as this release.
 
@@ -22,15 +22,16 @@ The create-video screen contains frequent per-run choices. Infrequent provider c
 
 ## Acceptance
 
-AutoSub 1.9.0 Stable is accepted from real product journeys, not inferred from isolated tests:
+AutoSub 1.10.0 Stable is accepted from real product journeys and Production Monitor evidence, not inferred from isolated tests:
 
-- Speech CUJ: `run_20260909112831523056_b7d74d66` — completed, result eligible, validation PASS, 7 ASS Dialogue events.
-- OCR+Gemini CUJ: `run_20260909114149833349_fcd7afff` — completed, result eligible, validation PASS, 2 OCR intervals -> 2 ASS Dialogue events.
-- Live Gemini provider evidence: `run_20260909112225050772_05bb7b7a` made a real Gemini request; the final OCR acceptance reused the exact provider cache entry.
+- Speech CUJ: `run_20260909112831523056_b7d74d66` — completed, result eligible, validation PASS, 7/7 ASS Dialogue events, provider `Local only`, Gemini calls `0`.
+- OCR+Gemini CUJ: `run_20260909163453377807_558c472f` — completed, result eligible, validation PASS, 292 detected/resolved/rendered captions, 292 ASS Dialogue events, render progress `458.233 / 458.3s`.
+- Production Monitor surfaces truthful OCR/frame/provider/cache/retry/render/QC evidence while keeping secrets and raw provider payloads hidden.
+- Render retry is checkpoint-aware: a child retry from a `render_failed` parent reuses only a validated `resolved_active_track.json` with matching source/settings, so OCR/Gemini is not repeated unnecessarily.
 - Normal full regression: PASS.
-- Storage preflight: run PASS; package PASS.
+- Storage preflight: run PASS; media PASS; package PASS.
 
-The source release bundle is generated after commit closure from the exact `v1.9.0` tagged commit at `release\\AutoSub-1.9.0\\AutoSub-1.9.0-source.zip`; its SHA-256 is recorded in release evidence and `SHA256SUMS.txt`.
+The source release bundle is generated after commit closure from the exact `v1.10.0` tagged commit at `release\\AutoSub-1.10.0\\AutoSub-1.10.0-source.zip`; its SHA-256 is recorded in release evidence and `SHA256SUMS.txt`.
 
 ## Engineering authority
 

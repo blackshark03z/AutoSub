@@ -294,6 +294,117 @@ function subtitleSourceLabel(run) {
   return "Phụ đề đã xác minh";
 }
 
+function formatMonitorTime(milliseconds) {
+  const seconds = Math.max(0, Number(milliseconds || 0) / 1000);
+  const minutes = Math.floor(seconds / 60);
+  return `${String(minutes).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}.${String(Math.floor((seconds % 1) * 10))}`;
+}
+
+function monitorMetric(label, value, detail = "") {
+  return `<div class="monitor-metric"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong>${detail ? `<span>${escapeHtml(detail)}</span>` : ""}</div>`;
+}
+
+function progressMetric(label, completed, total) {
+  const done = Number(completed || 0);
+  const max = Number(total || 0);
+  if (max > 0) return monitorMetric(label, `${done}/${max}`, `${Math.min(100, Math.round(done * 100 / max))}%`);
+  if (done > 0) return monitorMetric(label, String(done), "Đang cập nhật");
+  return "";
+}
+
+function renderCaptionMonitor(run) {
+  const captions = run?.monitor?.captions || [];
+  $("monitorCaptionCount").textContent = `${captions.length} câu`;
+  $("monitorCaptionSummary").textContent = captions.length
+    ? "Danh sách giới hạn các câu mới nhất mà pipeline đã thực sự nhận diện/giải quyết."
+    : "Chưa có phụ đề để hiển thị. Dữ liệu sẽ xuất hiện ngay khi pipeline tạo được interval có thời gian.";
+  if (!captions.length) {
+    $("monitorCaptionList").innerHTML = `<div class="monitor-empty"><strong>Đang chờ dữ liệu phụ đề</strong><span>Khi OCR hoặc nhận dạng lời nói tạo được câu có mốc thời gian, chúng sẽ xuất hiện tại đây.</span></div>`;
+    return;
+  }
+  $("monitorCaptionList").innerHTML = captions.map((cue) => {
+    const confidence = Number(cue.ocr_confidence);
+    const hasConfidence = Number.isFinite(confidence);
+    const confidenceLabel = hasConfidence ? `OCR ${Math.round(confidence * (confidence <= 1 ? 100 : 1))}%` : "";
+    const attention = Boolean(cue.attention);
+    return `<article class="monitor-caption ${attention ? "attention" : ""}">
+      <div class="monitor-caption-meta"><strong>${escapeHtml(formatMonitorTime(cue.start_ms))} → ${escapeHtml(formatMonitorTime(cue.end_ms))}</strong>${confidenceLabel ? `<span>${escapeHtml(confidenceLabel)}</span>` : ""}${attention ? '<span class="attention-label">Cần chú ý</span>' : ""}</div>
+      ${cue.source_text ? `<p class="monitor-source"><span>Gốc</span>${escapeHtml(cue.source_text)}</p>` : ""}
+      <p class="monitor-translation"><span>${isOcrMode(run) ? "English" : "Phụ đề"}</span>${escapeHtml(cue.translated_text || "Đang chờ bản dịch...")}</p>
+    </article>`;
+  }).join("");
+}
+
+function renderMonitorEvidence(run) {
+  const monitor = run?.monitor || {};
+  const analysis = monitor.analysis || run?.analysis_progress || {};
+  const provider = monitor.provider || {};
+  const render = monitor.render_progress || {};
+  const metrics = [
+    progressMetric("Frame đã lấy", analysis.sampled_frames_completed, analysis.sampled_frames_total),
+    progressMetric("Crop phụ đề", analysis.dense_crops_completed, analysis.dense_crops_total),
+    progressMetric("OCR batch", analysis.ocr_batches_completed, analysis.ocr_batches_total),
+    progressMetric("Dịch", analysis.translations_completed, analysis.translations_total),
+  ].filter(Boolean);
+  if (isOcrMode(run)) {
+    metrics.push(monitorMetric("Gemini", `${Number(provider.request_count || 0)} request`, `${Number(provider.cache_hits || 0)} cache hit · ${Number(provider.retry_count || 0)} retry`));
+  }
+  if (render.duration_seconds > 0) {
+    metrics.push(monitorMetric("Render", `${formatDuration(Number(render.processed_seconds || 0))}/${formatDuration(Number(render.duration_seconds))}`, render.speed || "Đang xuất"));
+  }
+  $("monitorMetrics").innerHTML = metrics.join("") || monitorMetric("Tiến trình", "Đang khởi tạo", "Chưa có counter định lượng");
+
+  const modeText = isOcrMode(run) ? "PaddleOCR → Gemini" : "AutoSubs → Argos";
+  $("monitorMode").textContent = modeText;
+  $("monitorElapsed").textContent = `Đã chạy ${formatDuration(Number(monitor.elapsed_seconds || 0))}`;
+  const age = Number(monitor.activity_age_seconds);
+  const stalled = Boolean(monitor.stalled);
+  $("monitorActivity").textContent = stalled ? "Có dấu hiệu đứng" : Number.isFinite(age) ? `Hoạt động ${Math.round(age)}s trước` : "Đang hoạt động";
+  $("monitorActivity").classList.toggle("warning", stalled);
+  $("monitorActivity").classList.toggle("neutral", !stalled);
+
+  const evidence = [
+    ["Worker", stalled ? "Cần kiểm tra" : (monitor.worker_state || "Đang chạy")],
+    ["Provider", provider.name || (isOcrMode(run) ? "Gemini" : "Chỉ chạy local")],
+    ["Model", provider.model || (isOcrMode(run) ? "Đang xác định" : "Không áp dụng")],
+    ["Interval", String(Number(analysis.caption_intervals_total || 0))],
+  ];
+  $("monitorEvidenceGrid").innerHTML = evidence.map(([label, value]) => `<div><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`).join("");
+  $("monitorWarning").textContent = stalled
+    ? "Không có tiến triển vật chất gần đây. AutoSub sẽ không báo hoàn tất nếu worker đã dừng hoặc kết quả chưa hợp lệ."
+    : provider.prevalidated_evidence_reused
+      ? "Đang tái sử dụng kết quả Gemini đã được xác minh/cache; đây không phải request mới."
+      : "Các số liệu trên lấy từ evidence của run hiện tại; không dùng phần trăm tổng giả.";
+
+  const renderBar = $("processingProgress");
+  const renderPercent = Number(render.percentage);
+  renderBar.classList.toggle("determinate", Number.isFinite(renderPercent));
+  if (Number.isFinite(renderPercent)) {
+    renderBar.setAttribute("role", "progressbar");
+    renderBar.setAttribute("aria-valuemin", "0");
+    renderBar.setAttribute("aria-valuemax", "100");
+    renderBar.setAttribute("aria-valuenow", String(Math.round(renderPercent)));
+    renderBar.querySelector("span").style.width = `${Math.max(0, Math.min(100, renderPercent))}%`;
+  } else {
+    renderBar.removeAttribute("role");
+    renderBar.removeAttribute("aria-valuenow");
+    renderBar.querySelector("span").style.width = "32%";
+  }
+}
+
+function renderResultQc(run) {
+  const qc = run?.monitor?.qc || {};
+  const values = [
+    ["Đã phát hiện", qc.detected_caption_count || "—"],
+    ["Đã giải quyết", qc.resolved_caption_count || "—"],
+    ["ASS Dialogue", qc.rendered_dialogue_count ?? "—"],
+    ["Mất câu", qc.caption_loss_detected ? "Có — bị chặn" : "Không phát hiện"],
+    ["Nội dung", qc.content_validation || run?.result_validation?.status || "—"],
+    ["Output", qc.output_eligible ? "Hợp lệ" : "Chưa hợp lệ"],
+  ];
+  $("resultQcSummary").innerHTML = values.map(([label, value]) => `<div class="qc-card ${String(value).includes("bị chặn") ? "bad" : ""}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`).join("");
+}
+
 function renderProcessing(run) {
   const progress = run?.progress || {};
   const currentStage = progress.current_stage || "checking_video";
@@ -311,6 +422,8 @@ function renderProcessing(run) {
         ? "AutoSub đang kiểm tra hoặc chuẩn bị các khả năng cục bộ cần thiết. Bạn không cần tải hay cấu hình thủ công."
         : "Trạng thái được cập nhật từ tiến trình xử lý thực trên máy.";
   $("processingTechnicalOutput").textContent = JSON.stringify(run || {}, null, 2);
+  renderCaptionMonitor(run);
+  renderMonitorEvidence(run);
   $("processingStages").innerHTML = workflowSteps(run).map((step) => {
     const active = step.stages.includes(currentStage);
     const done = run?.internal_state === "completed"
@@ -350,6 +463,7 @@ function renderCompleted(run) {
       <strong>${escapeHtml(value)}</strong>
     </div>
   `).join("");
+  renderResultQc(run);
   setResultMessage(run.subtitle_tracks?.operator_notice || "");
 }
 

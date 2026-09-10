@@ -261,6 +261,42 @@ def test_task35_render_failure_marks_run_failed(monkeypatch, tmp_path):
         log_path = Path(failed["run_directory"]) / "logs" / "simple_workflow_error.log"
         assert "RuntimeError: ffmpeg failed" in log_path.read_text(encoding="utf-8")
 
+        parent_resolved = json.loads(
+            (Path(failed["run_directory"]) / "subtitles" / "resolved_active_track.json").read_text(encoding="utf-8")
+        )
+        captured: dict[str, object] = {}
+
+        def retry_render(_row, resolved):
+            captured["cue_count"] = len(resolved.get("cues") or [])
+            captured["resume_checkpoint"] = resolved.get("resume_checkpoint")
+            raise RuntimeError("retry render sentinel")
+
+        monkeypatch.setattr(
+            "app.services.simple_workflow.ensure_local_transcription_track",
+            lambda *_args, **_kwargs: pytest.fail("render retry must not run transcription again"),
+        )
+        monkeypatch.setattr("app.services.simple_workflow._bounded_subtitle_process", retry_render)
+        retried = (await client.post(
+            "/api/simple/runs/retry",
+            json={
+                "source_path": str(source),
+                "retry_parent_run_id": failed["run_id"],
+                "settings": {"caption_mode": "local_audio_transcription"},
+            },
+        )).json()["run"]
+        assert retried["run_id"] != failed["run_id"]
+        assert retried["retry_parent_run_id"] == failed["run_id"]
+        retry_started = await client.post(f"/api/simple/runs/{retried['run_id']}/start")
+        assert retry_started.status_code == 200
+        retry_failed = (await client.get(f"/api/simple/runs/{retried['run_id']}")).json()["run"]
+        assert retry_failed["failure_category"] == "render_failed"
+        assert captured["cue_count"] == len(parent_resolved.get("cues") or [])
+        assert captured["resume_checkpoint"]["kind"] == "render_only"
+        child_resolved = json.loads(
+            (Path(retry_failed["run_directory"]) / "subtitles" / "resolved_active_track.json").read_text(encoding="utf-8")
+        )
+        assert child_resolved["resume_checkpoint"]["parent_run_id"] == failed["run_id"]
+
     asyncio.run(_with_client(run))
 
 

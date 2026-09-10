@@ -126,6 +126,11 @@ def test_task33_repairs_empty_ass_and_identical_output_but_preserves_valid_run(m
         dialogue=True,
         updated_at=now,
     )
+    with session_scope() as session:
+        row = session.query(SimpleWorkflowRun).filter(SimpleWorkflowRun.run_id == "run_valid").one()
+        row.internal_state = "blocked"
+        row.failure_category = "invalid_completed_result"
+        row.approval_state = "needs_adjustment"
 
     async def run(client):
         current = await client.get("/api/simple/runs/current")
@@ -161,6 +166,8 @@ def test_task33_repairs_empty_ass_and_identical_output_but_preserves_valid_run(m
         assert rows["run_invalid_empty_ass"].internal_state == "blocked"
         assert rows["run_invalid_identical"].internal_state == "blocked"
         assert rows["run_valid"].internal_state == "completed"
+        assert rows["run_valid"].failure_category is None
+        assert rows["run_valid"].approval_state == "not_reviewed"
 
 
 def test_task33_history_ui_warns_without_result_link_for_invalid_rows():

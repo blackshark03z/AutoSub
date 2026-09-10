@@ -10,7 +10,7 @@ from collections import Counter
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -40,10 +40,24 @@ class GeminiTranslationConfig:
 
 
 class GeminiCaptionTranslationError(RuntimeError):
-    def __init__(self, reason_code: str, message: str, *, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        reason_code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        request_count: int = 0,
+        retry_count: int = 0,
+        http_status: int | None = None,
+        failed_caption_ids: list[str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.reason_code = reason_code
         self.retryable = retryable
+        self.request_count = max(0, int(request_count))
+        self.retry_count = max(0, int(retry_count))
+        self.http_status = http_status
+        self.failed_caption_ids = list(failed_caption_ids or [])
 
 
 @dataclass(frozen=True)
@@ -108,6 +122,20 @@ def _native_api_root(config: GeminiTranslationConfig) -> str:
     if base.endswith("/models"):
         return base.rsplit("/models", 1)[0].rstrip("/")
     return base
+
+
+def _response_indicates_invalid_api_key(response: httpx.Response) -> bool:
+    if response.status_code != 400:
+        return False
+    try:
+        payload = response.json()
+    except Exception:
+        return False
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return False
+    message = str(error.get("message") or "").casefold()
+    return "api key not valid" in message or "invalid api key" in message
 
 
 def _selected_credential_name(config: GeminiTranslationConfig) -> str | None:
@@ -442,7 +470,12 @@ class GeminiCaptionTranslator:
         self._active_key = self._keys[next_index]
         return True
 
-    def translate(self, captions: list[dict[str, str]]) -> GeminiCaptionTranslationResult:
+    def translate(
+        self,
+        captions: list[dict[str, str]],
+        *,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> GeminiCaptionTranslationResult:
         _validate_caption_inputs(captions)
         translated: list[dict[str, str]] = []
         request_count = retry_count = cache_hits = cache_misses = 0
@@ -465,7 +498,12 @@ class GeminiCaptionTranslator:
                 parsed = _validate_caption_response(cached, batch)
                 cache_hits += 1
             else:
-                parsed, metrics = self._request_batch(batch)
+                try:
+                    parsed, metrics = self._request_batch_resilient(batch)
+                except GeminiCaptionTranslationError as exc:
+                    exc.request_count += request_count
+                    exc.retry_count += retry_count
+                    raise
                 write_cached_response(self.provider_name, request_hash, parsed)
                 cache_misses += 1
                 request_count += metrics["request_count"]
@@ -475,6 +513,19 @@ class GeminiCaptionTranslator:
                 if metrics["request_id"]:
                     request_ids.append(metrics["request_id"])
             translated.extend(parsed["translations"])
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "translated_count": len(translated),
+                        "request_count": request_count,
+                        "retry_count": retry_count,
+                        "cache_hits": cache_hits,
+                        "cache_misses": cache_misses,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "translations": list(translated),
+                    }
+                )
         return GeminiCaptionTranslationResult(
             translations=translated,
             model=self.model,
@@ -487,8 +538,192 @@ class GeminiCaptionTranslator:
             request_ids=request_ids,
         )
 
-    def _request_batch(self, batch: list[dict[str, str]]) -> tuple[dict[str, Any], dict[str, Any]]:
-        body = _caption_request_body(self.model, batch)
+    def _request_batch_resilient(self, batch: list[dict[str, str]]) -> tuple[dict[str, Any], dict[str, Any]]:
+        try:
+            return self._request_batch(batch)
+        except GeminiCaptionTranslationError as exc:
+            if exc.reason_code != "GEMINI_CAPTION_BAD_REQUEST":
+                raise
+            initial_requests = exc.request_count
+            initial_retries = exc.retry_count
+            if len(batch) > 1:
+                midpoint = max(1, len(batch) // 2)
+                try:
+                    left, left_metrics = self._request_batch_resilient(batch[:midpoint])
+                except GeminiCaptionTranslationError as nested:
+                    nested.request_count += initial_requests
+                    nested.retry_count += initial_retries + 1
+                    raise
+                try:
+                    right, right_metrics = self._request_batch_resilient(batch[midpoint:])
+                except GeminiCaptionTranslationError as nested:
+                    nested.request_count += initial_requests + int(left_metrics.get("request_count") or 0)
+                    nested.retry_count += initial_retries + int(left_metrics.get("retry_count") or 0) + 1
+                    raise
+                return {
+                    "translations": [*left["translations"], *right["translations"]],
+                }, {
+                    "request_count": initial_requests + int(left_metrics.get("request_count") or 0) + int(right_metrics.get("request_count") or 0),
+                    "retry_count": initial_retries + int(left_metrics.get("retry_count") or 0) + int(right_metrics.get("retry_count") or 0) + 1,
+                    "input_tokens": int(left_metrics.get("input_tokens") or 0) + int(right_metrics.get("input_tokens") or 0),
+                    "output_tokens": int(left_metrics.get("output_tokens") or 0) + int(right_metrics.get("output_tokens") or 0),
+                    "request_id": str(right_metrics.get("request_id") or left_metrics.get("request_id") or ""),
+                }
+            try:
+                parsed, fallback_metrics = self._request_batch(batch, response_mode="json_object")
+            except GeminiCaptionTranslationError as nested:
+                if nested.reason_code != "GEMINI_CAPTION_BAD_REQUEST":
+                    nested.request_count += initial_requests
+                    nested.retry_count += initial_retries + 1
+                    if not nested.failed_caption_ids:
+                        nested.failed_caption_ids = [str(batch[0].get("id") or "")]
+                    raise
+                compat_requests = initial_requests + nested.request_count
+                compat_retries = initial_retries + nested.retry_count + 1
+                try:
+                    parsed, native_metrics = self._request_single_native(batch[0])
+                except GeminiCaptionTranslationError as native_error:
+                    native_error.request_count += compat_requests
+                    native_error.retry_count += compat_retries + 1
+                    if not native_error.failed_caption_ids:
+                        native_error.failed_caption_ids = [str(batch[0].get("id") or "")]
+                    raise
+                return parsed, {
+                    "request_count": compat_requests + int(native_metrics.get("request_count") or 0),
+                    "retry_count": compat_retries + int(native_metrics.get("retry_count") or 0) + 1,
+                    "input_tokens": int(native_metrics.get("input_tokens") or 0),
+                    "output_tokens": int(native_metrics.get("output_tokens") or 0),
+                    "request_id": str(native_metrics.get("request_id") or ""),
+                }
+            return parsed, {
+                "request_count": initial_requests + int(fallback_metrics.get("request_count") or 0),
+                "retry_count": initial_retries + int(fallback_metrics.get("retry_count") or 0) + 1,
+                "input_tokens": int(fallback_metrics.get("input_tokens") or 0),
+                "output_tokens": int(fallback_metrics.get("output_tokens") or 0),
+                "request_id": str(fallback_metrics.get("request_id") or ""),
+            }
+
+    def _request_single_native(self, item: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
+        endpoint = _native_interactions_endpoint(self.config, self.model)
+        user_payload = {
+            "captions": [
+                {
+                    "id": item["id"],
+                    "chinese": item["source_text"],
+                    "previous_chinese": item.get("previous_source_text") or "",
+                    "next_chinese": item.get("next_source_text") or "",
+                }
+            ]
+        }
+        body = {
+            "systemInstruction": {
+                "parts": [
+                    {
+                        "text": (
+                            "Translate the single Chinese dialogue caption into concise, natural en-US subtitle text. "
+                            "Return JSON only as {\"translations\":[{\"id\":\"...\",\"english\":\"...\"}]}. "
+                            "Preserve the requested ID exactly once. Previous and next captions are context only. "
+                            "Do not summarize, explain, add facts, merge captions, or return markdown."
+                        )
+                    }
+                ]
+            },
+            "contents": [{"role": "user", "parts": [{"text": json.dumps(user_payload, ensure_ascii=False)}]}],
+            "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+        }
+        request_count = retry_count = 0
+        transient_attempt = 0
+        while True:
+            try:
+                with httpx.Client(timeout=self.config.timeout_seconds, transport=self._transport) as client:
+                    response = client.post(
+                        endpoint,
+                        headers={"x-goog-api-key": self._active_key, "Content-Type": "application/json"},
+                        json=body,
+                    )
+                    response.raise_for_status()
+                request_count += 1
+                payload = response.json()
+                text = _extract_interaction_text(payload)
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError as exc:
+                    raise GeminiCaptionTranslationError(
+                        "GEMINI_CAPTION_NATIVE_INVALID_JSON",
+                        "Gemini native fallback returned invalid JSON.",
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        failed_caption_ids=[str(item.get("id") or "")],
+                    ) from exc
+                validated = _validate_caption_response(parsed, [item])
+                usage = payload.get("usageMetadata") if isinstance(payload.get("usageMetadata"), dict) else {}
+                return validated, {
+                    "request_count": request_count,
+                    "retry_count": retry_count,
+                    "input_tokens": int(usage.get("promptTokenCount") or usage.get("prompt_tokens") or 0),
+                    "output_tokens": int(usage.get("candidatesTokenCount") or usage.get("completion_tokens") or 0),
+                    "request_id": str(response.headers.get("x-request-id") or payload.get("id") or ""),
+                }
+            except httpx.HTTPStatusError as exc:
+                request_count += 1
+                status = exc.response.status_code
+                invalid_api_key = _response_indicates_invalid_api_key(exc.response)
+                if (invalid_api_key or status in {401, 403, 429}) and self._advance_key():
+                    retry_count += 1
+                    transient_attempt = 0
+                    continue
+                if invalid_api_key or status in {401, 403}:
+                    raise GeminiCaptionTranslationError(
+                        "GEMINI_CAPTION_AUTH_UNAVAILABLE",
+                        "No configured Gemini credential authenticated successfully.",
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        http_status=status,
+                        failed_caption_ids=[str(item.get("id") or "")],
+                    ) from exc
+                if status == 429 or status >= 500:
+                    if transient_attempt < self.max_transient_retries:
+                        transient_attempt += 1
+                        retry_count += 1
+                        time.sleep(min(0.5 * transient_attempt, 1.0))
+                        continue
+                    raise GeminiCaptionTranslationError(
+                        "GEMINI_CAPTION_PROVIDER_UNAVAILABLE",
+                        f"Gemini native fallback failed with HTTP {status}.",
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        http_status=status,
+                        failed_caption_ids=[str(item.get("id") or "")],
+                    ) from exc
+                raise GeminiCaptionTranslationError(
+                    "GEMINI_CAPTION_NATIVE_BAD_REQUEST" if status == 400 else "GEMINI_CAPTION_NATIVE_HTTP_ERROR",
+                    f"Gemini native fallback failed with HTTP {status}.",
+                    request_count=request_count,
+                    retry_count=retry_count,
+                    http_status=status,
+                    failed_caption_ids=[str(item.get("id") or "")],
+                ) from exc
+            except httpx.TransportError as exc:
+                request_count += 1
+                if transient_attempt < self.max_transient_retries:
+                    transient_attempt += 1
+                    retry_count += 1
+                    continue
+                raise GeminiCaptionTranslationError(
+                    "GEMINI_CAPTION_NATIVE_NETWORK_ERROR",
+                    "Gemini native fallback failed after a bounded network retry.",
+                    request_count=request_count,
+                    retry_count=retry_count,
+                    failed_caption_ids=[str(item.get("id") or "")],
+                ) from exc
+
+    def _request_batch(
+        self,
+        batch: list[dict[str, str]],
+        *,
+        response_mode: str = "json_schema",
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        body = _caption_request_body(self.model, batch, response_mode=response_mode)
         last_error: Exception | None = None
         request_count = retry_count = 0
         transient_attempt = 0
@@ -535,10 +770,29 @@ class GeminiCaptionTranslator:
                 request_count += 1
                 last_error = exc
                 status = exc.response.status_code
-                if status in {401, 403, 429} and self._advance_key():
+                invalid_api_key = _response_indicates_invalid_api_key(exc.response)
+                if (invalid_api_key or status in {401, 403, 429}) and self._advance_key():
                     retry_count += 1
                     transient_attempt = 0
                     continue
+                if invalid_api_key or status in {401, 403}:
+                    raise GeminiCaptionTranslationError(
+                        "GEMINI_CAPTION_AUTH_UNAVAILABLE",
+                        "No configured Gemini credential authenticated successfully.",
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        http_status=status,
+                        failed_caption_ids=[str(item.get("id") or "") for item in batch],
+                    ) from exc
+                if status == 400:
+                    raise GeminiCaptionTranslationError(
+                        "GEMINI_CAPTION_BAD_REQUEST",
+                        "Gemini rejected this caption batch. AutoSub will retry it in smaller bounded batches.",
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        http_status=status,
+                        failed_caption_ids=[str(item.get("id") or "") for item in batch],
+                    ) from exc
                 if status in {401, 403}:
                     raise GeminiCaptionTranslationError(
                         "GEMINI_CAPTION_AUTH_UNAVAILABLE",
@@ -708,11 +962,12 @@ class GeminiMultimodalCaptionResolver:
             except httpx.HTTPStatusError as exc:
                 request_count += 1
                 status = exc.response.status_code
-                if status in {401, 403, 429} and self._advance_key():
+                invalid_api_key = _response_indicates_invalid_api_key(exc.response)
+                if (invalid_api_key or status in {401, 403, 429}) and self._advance_key():
                     retry_count += 1
                     transient_attempt = 0
                     continue
-                if status in {401, 403}:
+                if invalid_api_key or status in {401, 403}:
                     raise GeminiCaptionTranslationError(
                         "GEMINI_MULTIMODAL_AUTH_UNAVAILABLE",
                         "No configured Gemini credential authenticated successfully.",
@@ -984,7 +1239,12 @@ def _validate_multimodal_response(payload: dict[str, Any], interval_request: Any
     }
 
 
-def _caption_request_body(model: str, captions: list[dict[str, str]]) -> dict[str, Any]:
+def _caption_request_body(
+    model: str,
+    captions: list[dict[str, str]],
+    *,
+    response_mode: str = "json_schema",
+) -> dict[str, Any]:
     schema = {
         "name": "caption_translations",
         "strict": True,
@@ -1019,17 +1279,23 @@ def _caption_request_body(model: str, captions: list[dict[str, str]]) -> dict[st
             for item in captions
         ]
     }
+    response_format = (
+        {"type": "json_object"}
+        if response_mode == "json_object"
+        else {"type": "json_schema", "json_schema": schema}
+    )
     return {
         "model": model,
         "temperature": 0,
-        "response_format": {"type": "json_schema", "json_schema": schema},
+        "response_format": response_format,
         "messages": [
             {
                 "role": "system",
                 "content": (
                     "Translate each Chinese dialogue caption into concise, natural en-US subtitle text. "
                     "Preserve meaning and one-to-one IDs. Previous and next captions are context only. "
-                    "Do not summarize, explain, add facts, merge captions, or return markdown."
+                    "Do not summarize, explain, add facts, merge captions, or return markdown. "
+                    "Return exactly one JSON object with a translations array; each item must contain only id and english."
                 ),
             },
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
@@ -1192,7 +1458,8 @@ def discover_gemini_models(
                 response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
-            if status in {401, 403, 429} and key_index + 1 < len(keys):
+            invalid_api_key = _response_indicates_invalid_api_key(exc.response)
+            if (invalid_api_key or status in {401, 403, 429}) and key_index + 1 < len(keys):
                 continue
             raise GeminiCaptionTranslationError(
                 "GEMINI_MODEL_DISCOVERY_HTTP_ERROR",

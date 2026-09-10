@@ -191,6 +191,95 @@ def test_transient_http_failure_has_one_bounded_retry(tmp_path, monkeypatch, fir
     assert result.retry_count == 1
 
 
+def test_bad_request_batch_is_bisected_and_preserves_order(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+    calls = 0
+    captions = [
+        {
+            "id": f"OCR_{index:04d}",
+            "source_text": text,
+            "previous_source_text": "",
+            "next_source_text": "",
+        }
+        for index, text in enumerate(["第一", "第二", "第三", "第四"], start=1)
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        body = json.loads(request.content)
+        payload = json.loads(body["messages"][1]["content"])
+        items = payload["captions"]
+        if len(items) > 1:
+            return httpx.Response(400, json={"error": {"message": "invalid argument"}})
+        caption_id = items[0]["id"]
+        return _response([{"id": caption_id, "english": f"Translated {caption_id}."}])
+
+    translator = GeminiCaptionTranslator(
+        _config(tmp_path),
+        batch_size=4,
+        max_transient_retries=0,
+        max_schema_retries=0,
+        transport=httpx.MockTransport(handler),
+    )
+    result = translator.translate(captions)
+
+    assert [item["id"] for item in result.translations] == [item["id"] for item in captions]
+    assert calls == 7
+    assert result.request_count == 7
+    assert result.retry_count == 3
+
+
+def test_single_bad_request_falls_back_to_json_object(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+    response_modes: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        response_modes.append(body["response_format"]["type"])
+        payload = json.loads(body["messages"][1]["content"])
+        caption_id = payload["captions"][0]["id"]
+        if body["response_format"]["type"] == "json_schema":
+            return httpx.Response(400, json={"error": {"message": "invalid argument"}})
+        return _response([{"id": caption_id, "english": "Hello there."}])
+
+    translator = GeminiCaptionTranslator(
+        _config(tmp_path),
+        batch_size=1,
+        max_transient_retries=0,
+        max_schema_retries=0,
+        transport=httpx.MockTransport(handler),
+    )
+    result = translator.translate([_captions()[0]])
+
+    assert response_modes == ["json_schema", "json_object"]
+    assert result.translations[0]["english"] == "Hello there."
+    assert result.request_count == 2
+    assert result.retry_count == 1
+
+
+def test_single_bad_request_failure_keeps_metrics_and_caption_id(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"message": "invalid argument"}})
+
+    translator = GeminiCaptionTranslator(
+        _config(tmp_path),
+        batch_size=1,
+        max_transient_retries=0,
+        max_schema_retries=0,
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(GeminiCaptionTranslationError) as exc_info:
+        translator.translate([_captions()[0]])
+
+    assert exc_info.value.reason_code == "GEMINI_CAPTION_NATIVE_BAD_REQUEST"
+    assert exc_info.value.request_count == 3
+    assert exc_info.value.retry_count == 2
+    assert exc_info.value.failed_caption_ids == ["OCR_0001"]
+
+
 def test_caption_translator_uses_next_key_after_quota_failure(tmp_path, monkeypatch):
     _disable_real_cache(monkeypatch)
     config = _config(tmp_path)
@@ -220,6 +309,109 @@ def test_caption_translator_uses_next_key_after_quota_failure(tmp_path, monkeypa
     assert "second-key-that-is-long-enough-0002" in seen_auth[1]
     assert result.retry_count == 1
     assert translator._active_key_index == 1
+
+
+def test_caption_translator_skips_invalid_api_key_reported_as_http_400(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+    config = _config(tmp_path)
+    config.key_file.write_text(
+        "quota-key-that-is-long-enough-0001\ninvalid-key-that-is-long-enough-0002\nworking-key-that-is-long-enough-0003\n",
+        encoding="utf-8",
+    )
+    seen_auth: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        auth = request.headers.get("authorization", "")
+        seen_auth.append(auth)
+        if "quota-key-that-is-long-enough-0001" in auth:
+            return httpx.Response(429, json={"error": {"message": "quota"}})
+        if "invalid-key-that-is-long-enough-0002" in auth:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "code": 400,
+                        "message": "API key not valid. Please pass a valid API key.",
+                        "status": "INVALID_ARGUMENT",
+                    }
+                },
+            )
+        return _response(
+            [
+                {"id": "OCR_0001", "english": "I'm here."},
+                {"id": "OCR_0002", "english": "I need to hurry back to my room."},
+            ]
+        )
+
+    translator = GeminiCaptionTranslator(config, transport=httpx.MockTransport(handler))
+    result = translator.translate(_captions())
+
+    assert len(seen_auth) == 3
+    assert result.retry_count == 2
+    assert translator._active_key_index == 2
+    assert [item["english"] for item in result.translations] == [
+        "I'm here.",
+        "I need to hurry back to my room.",
+    ]
+
+
+def test_caption_translator_uses_native_fallback_after_compatible_http_400(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+    config = _config(tmp_path)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if str(request.url).endswith("/chat/completions"):
+            return httpx.Response(
+                400,
+                json={"error": {"code": 400, "message": "Malformed request payload", "status": "INVALID_ARGUMENT"}},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {"content": {"parts": [{"text": json.dumps({"translations": [{"id": "OCR_0001", "english": "I'm here."}]})}]}}
+                ],
+                "usageMetadata": {"promptTokenCount": 11, "candidatesTokenCount": 4},
+            },
+        )
+
+    translator = GeminiCaptionTranslator(config, transport=httpx.MockTransport(handler))
+    result = translator.translate(_captions()[:1])
+
+    assert result.translations == [{"id": "OCR_0001", "english": "I'm here."}]
+    assert result.request_count == 3
+    assert result.retry_count == 2
+    assert calls[0].endswith("/chat/completions")
+    assert calls[1].endswith("/chat/completions")
+    assert calls[2].endswith("/models/gemini-test:generateContent")
+
+
+def test_caption_translator_does_not_treat_generic_http_400_as_bad_key(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+    config = _config(tmp_path)
+    config.key_file.write_text(
+        "first-key-that-is-long-enough-0001\nsecond-key-that-is-long-enough-0002\n",
+        encoding="utf-8",
+    )
+    seen_headers: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.append((request.headers.get("authorization", ""), request.headers.get("x-goog-api-key", "")))
+        return httpx.Response(
+            400,
+            json={"error": {"code": 400, "message": "Malformed request payload", "status": "INVALID_ARGUMENT"}},
+        )
+
+    translator = GeminiCaptionTranslator(config, transport=httpx.MockTransport(handler))
+    with pytest.raises(GeminiCaptionTranslationError) as exc_info:
+        translator.translate(_captions()[:1])
+
+    assert exc_info.value.reason_code == "GEMINI_CAPTION_NATIVE_BAD_REQUEST"
+    assert translator._active_key_index == 0
+    assert len(seen_headers) == 3  # json_schema + json_object + native, same key only
+    assert all("second-key" not in auth and "second-key" not in native for auth, native in seen_headers)
 
 
 def test_multimodal_resolver_key_selection_advances_once_and_sticks(tmp_path):
