@@ -114,6 +114,7 @@ def analyze_whole_frame_visual_text(
     sample_seconds: float = 0.5,
     max_gap_ms: int = 900,
     evidence_filename: str = "visual_text_evidence.json",
+    time_windows_ms: list[tuple[int, int]] | None = None,
 ) -> dict[str, Any]:
     if sample_seconds <= 0:
         raise ValueError("sample_seconds must be positive")
@@ -123,7 +124,20 @@ def analyze_whole_frame_visual_text(
         raise ValueError("source video duration is unavailable")
 
     frame_dir = run_directory / "work" / "visual_localization_frames"
-    frames = _sample_frames(source_path, frame_dir, duration, sample_seconds)
+    all_frames = _sample_frames(source_path, frame_dir, duration, sample_seconds)
+    frames = all_frames
+    normalized_windows: list[tuple[int, int]] = []
+    if time_windows_ms:
+        for start_ms, end_ms in time_windows_ms:
+            start = max(0, int(start_ms))
+            end = max(start, int(end_ms))
+            normalized_windows.append((start, end))
+        frames = [
+            frame for frame in all_frames
+            if any(start <= round(float(frame["time"]) * 1000) <= end for start, end in normalized_windows)
+        ]
+        if not frames:
+            raise ValueError("targeted visual OCR window selected no sampled frames")
     try:
         adaptive_frames, representative_indexes, adaptive_distances = _select_adaptive_ocr_frames(
             frames,
@@ -183,6 +197,8 @@ def analyze_whole_frame_visual_text(
             "source_duration_seconds": duration,
             "sample_seconds": sample_seconds,
             "sampled_frame_count": len(frames),
+            "full_sampled_frame_count": len(all_frames),
+            "targeted_time_windows_ms": [[start, end] for start, end in normalized_windows],
             "ocr_frame_count": len(adaptive_frames),
             "ocr_frame_reuse_count": max(0, len(frames) - len(adaptive_frames)),
             "ocr_frame_reuse_ratio": round(
@@ -201,4 +217,4 @@ def analyze_whole_frame_visual_text(
         output.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
         return evidence
     finally:
-        _cleanup_sampled_frames(frames, frame_dir)
+        _cleanup_sampled_frames(all_frames, frame_dir)

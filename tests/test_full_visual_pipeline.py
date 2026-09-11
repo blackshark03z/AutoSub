@@ -86,6 +86,7 @@ def test_full_visual_residual_qc_runs_one_bounded_repair_pass(tmp_path: Path, mo
     output = run_dir / "output" / "final_video.mp4"
     renders = []
     candidate_reads = 0
+    candidate_kwargs = []
 
     monkeypatch.setattr(pipeline, "media_summary", lambda _path: {"duration_seconds": 2.0, "video": {"width": 1280, "height": 720}})
 
@@ -94,6 +95,7 @@ def test_full_visual_residual_qc_runs_one_bounded_repair_pass(tmp_path: Path, mo
         if Path(path).name == "subtitle_stage.mp4":
             return _source_evidence()
         candidate_reads += 1
+        candidate_kwargs.append(dict(_kwargs))
         if candidate_reads == 1:
             return {
                 "track_count": 1,
@@ -127,10 +129,17 @@ def test_full_visual_residual_qc_runs_one_bounded_repair_pass(tmp_path: Path, mo
     )
     assert len(renders) == 2
     assert candidate_reads == 2
+    assert "time_windows_ms" not in candidate_kwargs[0]
+    assert candidate_kwargs[1]["time_windows_ms"] == [(0, 1500)]
     assert result["quality"]["status"] == "PASS"
+    assert result["quality"]["expected_localized_track_count"] == 1
+    assert result["quality"]["planned_replacement_count"] == 1
+    assert result["quality"]["repair_verification_mode"] == "targeted_residual_windows"
     assert result["summary"]["residual_repair_performed"] is True
     assert result["summary"]["residual_repair_mask_count"] == 1
     assert result["residual_repair"]["repair_pass_count"] == 1
+    assert result["residual_repair"]["verification_mode"] == "targeted_residual_windows"
+    assert result["residual_repair"]["verification_windows_ms"] == [[0, 1500]]
     assert (run_dir / "visual" / "visual_quality_first_pass.json").exists()
     assert (run_dir / "visual" / "visual_residual_repair.json").exists()
     assert output.read_bytes() == b"candidate-2"

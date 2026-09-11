@@ -97,6 +97,76 @@ def _build_residual_repair_masks(
     return repair_masks
 
 
+def _merge_time_windows(windows: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted((max(0, int(start)), max(0, int(end))) for start, end in windows):
+        if end < start:
+            start, end = end, start
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def _repair_verification_windows(
+    repair_masks: list[dict[str, Any]],
+    *,
+    sample_seconds: float,
+) -> list[tuple[int, int]]:
+    margin_ms = max(1, round(float(sample_seconds) * 1000))
+    return _merge_time_windows([
+        (
+            max(0, int(item.get("start_ms") or 0) - margin_ms),
+            int(item.get("end_ms") or 0) + margin_ms,
+        )
+        for item in repair_masks
+    ])
+
+
+def _localized_failure_subset(localized: dict[str, Any], quality: dict[str, Any]) -> dict[str, Any]:
+    failed_source_ids = {
+        str(item.get("source_track_id") or "")
+        for item in list(quality.get("failures") or [])
+        if item.get("code") == "SOURCE_LANGUAGE_RESIDUAL"
+    }
+    tracks = [
+        track for track in list(localized.get("tracks") or [])
+        if str(track.get("track_id") or "") in failed_source_ids
+    ]
+    return {
+        **localized,
+        "tracks": tracks,
+        "translated_track_count": len(tracks),
+    }
+
+
+def _merge_targeted_repair_quality(
+    first_pass_quality: dict[str, Any],
+    targeted_quality: dict[str, Any],
+) -> dict[str, Any]:
+    if targeted_quality.get("eligible") is True:
+        return {
+            **first_pass_quality,
+            "status": "PASS",
+            "eligible": True,
+            "residual_source_track_count": 0,
+            "failure_count": 0,
+            "failures": [],
+            "repair_verification_mode": "targeted_residual_windows",
+        }
+    failures = list(targeted_quality.get("failures") or [])
+    return {
+        **first_pass_quality,
+        "status": "FAIL",
+        "eligible": False,
+        "residual_source_track_count": int(targeted_quality.get("residual_source_track_count") or 0),
+        "failure_count": len(failures),
+        "failures": failures,
+        "repair_verification_mode": "targeted_residual_windows",
+    }
+
+
 def _render_tier_a_candidate(
     source_path: Path,
     candidate_path: Path,
@@ -289,6 +359,10 @@ def execute_full_visual_localization(
                 duration_seconds=duration,
                 render_runner=render_runner,
             )
+            verification_windows = _repair_verification_windows(
+                repair_masks,
+                sample_seconds=sample_seconds,
+            )
             repaired_final_evidence = analyze_whole_frame_visual_text(
                 candidate,
                 run_dir,
@@ -297,12 +371,14 @@ def execute_full_visual_localization(
                 model=ocr_model,
                 sample_seconds=sample_seconds,
                 evidence_filename="visual_text_final_repair.json",
+                time_windows_ms=verification_windows,
             )
-            repaired_quality = evaluate_visual_localization(
-                localized,
+            targeted_quality = evaluate_visual_localization(
+                _localized_failure_subset(localized, quality),
                 repaired_final_evidence,
-                replacement_plan=plan,
+                replacement_plan=None,
             )
+            repaired_quality = _merge_targeted_repair_quality(quality, targeted_quality)
             repair_evidence = {
                 "schema_version": 1,
                 "status": "PASS" if repaired_quality.get("eligible") is True else "FAIL",
@@ -310,6 +386,11 @@ def execute_full_visual_localization(
                 "repair_mask_count": len(repair_masks),
                 "first_pass_residual_source_track_count": int(quality.get("residual_source_track_count") or 0),
                 "final_residual_source_track_count": int(repaired_quality.get("residual_source_track_count") or 0),
+                "verification_mode": "targeted_residual_windows",
+                "verification_windows_ms": [[start, end] for start, end in verification_windows],
+                "verification_sampled_frame_count": int(repaired_final_evidence.get("sampled_frame_count") or 0),
+                "verification_full_sampled_frame_count": int(repaired_final_evidence.get("full_sampled_frame_count") or 0),
+                "verified_source_track_count": len(list(_localized_failure_subset(localized, quality).get("tracks") or [])),
                 "repair_masks": repair_masks,
             }
             _write_json(visual_dir / "visual_residual_repair.json", repair_evidence)

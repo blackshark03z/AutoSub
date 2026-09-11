@@ -113,6 +113,56 @@ def test_whole_frame_analysis_reuses_stable_frames_without_losing_media_identity
     assert evidence["tracks"][0]["end_ms"] == 1500
 
 
+def test_whole_frame_analysis_can_limit_ocr_to_targeted_time_windows(monkeypatch, tmp_path: Path) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    run_dir = tmp_path / "run"
+    frame_dir = run_dir / "work" / "visual_localization_frames"
+    frame_dir.mkdir(parents=True)
+    frame_paths = [frame_dir / f"frame_{index:05d}.jpg" for index in range(1, 6)]
+    for path in frame_paths:
+        path.write_bytes(b"frame")
+    sampled = [
+        {"path": path, "time": index * 0.5}
+        for index, path in enumerate(frame_paths)
+    ]
+    monkeypatch.setattr(module, "media_summary", lambda _: {"duration_seconds": 2.5})
+    monkeypatch.setattr(module, "_sample_frames", lambda *args, **kwargs: sampled)
+    monkeypatch.setattr(
+        module,
+        "_select_adaptive_ocr_frames",
+        lambda frames, *, sample_seconds: (list(frames), list(range(len(frames))), [1.0] * len(frames)),
+    )
+    cleaned = []
+    monkeypatch.setattr(module, "_cleanup_sampled_frames", lambda frames, directory: cleaned.append((list(frames), directory)))
+    calls = []
+
+    def ocr_runner(paths):
+        calls.append(list(paths))
+        return {
+            "provider": "local_paddleocr",
+            "runtime": "local",
+            "model_version": "2.10",
+            "frames": [{"name": Path(path).name, "texts": []} for path in paths],
+        }
+
+    evidence = module.analyze_whole_frame_visual_text(
+        source,
+        run_dir,
+        ocr_runner=ocr_runner,
+        provider="local_paddleocr",
+        model="2.10",
+        sample_seconds=0.5,
+        time_windows_ms=[(400, 1100)],
+    )
+
+    assert calls == [[frame_paths[1], frame_paths[2]]]
+    assert evidence["sampled_frame_count"] == 2
+    assert evidence["full_sampled_frame_count"] == 5
+    assert evidence["targeted_time_windows_ms"] == [[400, 1100]]
+    assert cleaned and cleaned[0][0] == sampled
+
+
 def test_adaptive_ocr_selects_changed_text_frame(tmp_path: Path) -> None:
     frame1 = tmp_path / "frame1.jpg"
     frame2 = tmp_path / "frame2.jpg"
