@@ -46,6 +46,7 @@ from app.services.runtime_readiness import RuntimeReadinessError, ensure_product
 from app.services.full_visual_pipeline import VisualLocalizationError, execute_full_visual_localization
 from app.services.narration_pipeline import NarrationFitError, generate_kokoro_narration
 from app.services.narration_repair import NarrationProjectionRepairError, repair_narration_spoken_projection
+from app.services.subtitle_projection_repair import SubtitleProjectionRepairError, repair_subtitle_display_projection
 from app.services.visual_ocr_runner import build_routed_whole_frame_ocr_runner, run_local_whole_frame_ocr
 from app.services.clean_subtitle_render import (
     build_source_replacement_filter,
@@ -482,6 +483,7 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
         source_duration_ms = max(1, round(float(source_metadata.get("duration_seconds") or 0) * 1000))
         render_resolved = resolved
         quality_repair_actions: list[dict[str, Any]] = []
+        subtitle_projection_overrides: dict[str, dict[str, Any]] = {}
         quality_enforced = _subtitle_quality_v2_enforced(requested)
         pre_repair = (
             _bounded_quality_repair(render_resolved, requested, source_duration_ms=source_duration_ms, allow_split=True)
@@ -492,17 +494,85 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
             render_resolved, repair_result = pre_repair
             quality_repair_actions.extend(list(repair_result.get("actions") or []))
             if repair_result.get("eligible") is not True:
-                _write_localization_quality_evidence(
-                    run_directory,
-                    render_resolved,
-                    requested,
-                    enforced=True,
-                    repair_actions=quality_repair_actions,
-                    evaluation_override=repair_result.get("evaluation"),
-                )
-                exc = ValueError("Subtitle quality remained outside the frozen V2 hard gates after bounded repair.")
-                _persist_processing_failure(run_id, "subtitle_quality_failed", "Create subtitles", exc)
-                raise exc
+                projection_path = run_directory / "subtitles" / "subtitle_projection_repair_evidence.json"
+                projection_error: Exception | None = None
+                try:
+                    if str(requested.get("translation_policy") or "quality_auto").strip().lower() != "quality_auto":
+                        raise SubtitleProjectionRepairError(
+                            "subtitle_projection_repair_policy_blocked",
+                            "Display condensation requires translation_policy=quality_auto.",
+                        )
+                    readiness = ensure_gemini_caption_ready()
+                    selected_model = str(readiness.get("selected_model") or "").strip()
+                    if not selected_model:
+                        raise SubtitleProjectionRepairError(
+                            "subtitle_projection_repair_provider_unavailable",
+                            "No compatible Gemini model is ready for bounded subtitle display repair.",
+                        )
+                    projection_translator = GeminiCaptionTranslator(
+                        replace(load_gemini_translation_config(), model=selected_model)
+                    )
+                    projection = repair_subtitle_display_projection(
+                        render_resolved,
+                        dict(repair_result.get("evaluation") or {}),
+                        translator=projection_translator,
+                    )
+                    projection_path.parent.mkdir(parents=True, exist_ok=True)
+                    projection_path.write_text(
+                        json.dumps(projection["evidence"], ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    render_resolved = projection["resolved"]
+                    subtitle_projection_overrides = {
+                        str(cue.get("cue_id") or cue.get("id") or ""): {
+                            key: cue.get(key)
+                            for key in ("resolved_text", "subtitle_text", "render_text", "subtitle_projection_repaired")
+                            if key in cue
+                        }
+                        for cue in list(render_resolved.get("cues") or [])
+                        if cue.get("subtitle_projection_repaired")
+                    }
+                    projection_repair = _bounded_quality_repair(
+                        render_resolved,
+                        requested,
+                        source_duration_ms=source_duration_ms,
+                        allow_split=True,
+                    )
+                    if projection_repair is not None:
+                        render_resolved, repair_result = projection_repair
+                        quality_repair_actions.extend(list(repair_result.get("actions") or []))
+                except (SubtitleProjectionRepairError, GeminiCaptionTranslationError, ValueError) as exc:
+                    projection_error = exc
+                    evidence = getattr(exc, "evidence", None)
+                    projection_path.parent.mkdir(parents=True, exist_ok=True)
+                    projection_path.write_text(
+                        json.dumps(
+                            {
+                                "schema_version": 1,
+                                "status": "FAIL",
+                                "code": getattr(exc, "code", type(exc).__name__),
+                                "message": _safe_user_failure_message(exc),
+                                "evidence": evidence if isinstance(evidence, dict) else {},
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        encoding="utf-8",
+                    )
+                if repair_result.get("eligible") is not True:
+                    _write_localization_quality_evidence(
+                        run_directory,
+                        render_resolved,
+                        requested,
+                        enforced=True,
+                        repair_actions=quality_repair_actions,
+                        evaluation_override=repair_result.get("evaluation"),
+                    )
+                    exc = ValueError("Subtitle quality remained outside the frozen V2 hard gates after bounded repair.")
+                    if projection_error is not None:
+                        exc.__cause__ = projection_error
+                    _persist_processing_failure(run_id, "subtitle_quality_failed", "Create subtitles", exc)
+                    raise exc
         narration_audio: Path | None = None
         if localization_mode == FULL_LOCALIZATION_VOICE:
             _set_processing_phase(run_id, "Generate narration")
@@ -565,6 +635,16 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                 raise ValueError("Generated narration did not satisfy the run quality contract.") from exc
             render_resolved = dict(narration["resolved"])
             narration_audio = Path(narration["mix_path"])
+            if subtitle_projection_overrides:
+                merged_cues: list[dict[str, Any]] = []
+                for narration_cue in list(render_resolved.get("cues") or []):
+                    merged = dict(narration_cue)
+                    cue_id = str(merged.get("cue_id") or merged.get("id") or "")
+                    override = subtitle_projection_overrides.get(cue_id)
+                    if override:
+                        merged.update(override)
+                    merged_cues.append(merged)
+                render_resolved = {**render_resolved, "cues": merged_cues}
             post_repair = _bounded_quality_repair(
                 render_resolved,
                 requested,
@@ -2358,6 +2438,7 @@ def _monitor_summary(row: SimpleWorkflowRun, validation: dict[str, Any]) -> dict
     }
     resolved_count = len(list(resolved.get("cues") or []))
     quality_evidence = _load_localization_quality_evidence(run_dir) or {}
+    subtitle_projection_repair = _monitor_json(run_dir / "subtitles" / "subtitle_projection_repair_evidence.json")
     asr_route = _monitor_json(run_dir / "logs" / "asr_compute_route.json")
     visual_ocr_route = _monitor_json(run_dir / "logs" / "visual_ocr_compute_route.json")
     visual_quality = _monitor_json(run_dir / "visual" / "visual_quality_evidence.json")
@@ -2376,6 +2457,17 @@ def _monitor_summary(row: SimpleWorkflowRun, validation: dict[str, Any]) -> dict
             "visual_ocr": visual_ocr_route or None,
         },
         "subtitle": quality_evidence or None,
+        "subtitle_projection_repair": ({
+            "status": subtitle_projection_repair.get("status"),
+            "repair_kind": subtitle_projection_repair.get("repair_kind"),
+            "repaired_cue_count": subtitle_projection_repair.get("repaired_cue_count"),
+            "provider": subtitle_projection_repair.get("provider"),
+            "model": subtitle_projection_repair.get("model"),
+            "request_count": subtitle_projection_repair.get("request_count"),
+            "retry_count": subtitle_projection_repair.get("retry_count"),
+            "cache_hits": subtitle_projection_repair.get("cache_hits"),
+            "cache_misses": subtitle_projection_repair.get("cache_misses"),
+        } if subtitle_projection_repair else None),
         "visual": ({
             "status": visual_quality.get("status"),
             "eligible": visual_quality.get("eligible"),
@@ -2541,6 +2633,9 @@ def _provider_calls_for_run(run_id: str, run_directory: Path | str | None = None
         visual_usage = visual.get("provider_usage") if isinstance(visual.get("provider_usage"), dict) else {}
         if visual_usage:
             gemini_calls += int(visual_usage.get("request_count") or 0)
+        subtitle_projection_repair = _monitor_json(run_dir / "subtitles" / "subtitle_projection_repair_evidence.json")
+        if subtitle_projection_repair:
+            gemini_calls += int(subtitle_projection_repair.get("request_count") or 0)
         narration_repair = _monitor_json(run_dir / "audio" / "narration_repair_evidence.json")
         if narration_repair:
             gemini_calls += int(narration_repair.get("request_count") or 0)

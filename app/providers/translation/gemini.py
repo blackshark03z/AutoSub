@@ -656,6 +656,11 @@ class GeminiCaptionTranslator:
                     **({"duration_ms": item.get("duration_ms")} if item.get("duration_ms") else {}),
                     **({"preferred_max_characters": item.get("preferred_max_characters")} if item.get("preferred_max_characters") else {}),
                     **({"hard_max_characters": item.get("hard_max_characters")} if item.get("hard_max_characters") else {}),
+                    **({"minimum_characters": item.get("minimum_characters")} if item.get("minimum_characters") else {}),
+
+                    **({"current_english": item.get("current_english")} if item.get("current_english") else {}),
+
+                    **({"rewrite_mode": item.get("rewrite_mode")} if item.get("rewrite_mode") else {}),
                 }
             ]
         }
@@ -670,6 +675,8 @@ class GeminiCaptionTranslator:
                             "paraphrase can fit; do not preserve Chinese word order or literal filler at the expense of readability. "
                             "Use concise subtitle phrasing and contractions while preserving names, numbers, negation, modality, choices, "
                             "causal meaning and all other material facts. Never invent or delete material meaning just to fit. "
+                            "If rewrite_mode=subtitle_display_condensation and current_english is present, rewrite that English projection shorter instead of retranslating literally. "
+                            "In that mode the returned english MUST be between minimum_characters and hard_max_characters inclusive, counting spaces and punctuation; never return current_english unchanged when it exceeds that ceiling. Preserve every participant/referent, comparison direction, negation, modality, name, and number; compress wording instead of dropping semantic roles. "
                             "Return JSON only as {\"translations\":[{\"id\":\"...\",\"english\":\"...\"}]}. "
                             "Preserve the requested ID exactly once. Previous and next captions are context only. "
                             "Do not summarize across captions, explain, add facts, merge captions, or return markdown."
@@ -1387,6 +1394,11 @@ def _caption_request_body(
                 **({"duration_ms": item.get("duration_ms")} if item.get("duration_ms") else {}),
                 **({"preferred_max_characters": item.get("preferred_max_characters")} if item.get("preferred_max_characters") else {}),
                 **({"hard_max_characters": item.get("hard_max_characters")} if item.get("hard_max_characters") else {}),
+                **({"minimum_characters": item.get("minimum_characters")} if item.get("minimum_characters") else {}),
+
+                **({"current_english": item.get("current_english")} if item.get("current_english") else {}),
+
+                **({"rewrite_mode": item.get("rewrite_mode")} if item.get("rewrite_mode") else {}),
             }
             for item in captions
         ]
@@ -1410,6 +1422,8 @@ def _caption_request_body(
                     "paraphrase can fit; do not preserve Chinese word order or literal filler at the expense of readability. "
                     "Use concise subtitle phrasing and contractions while preserving names, numbers, negation, modality, choices, "
                     "causal meaning and all other material facts; never invent or delete material meaning just to fit. "
+                    "If rewrite_mode=subtitle_display_condensation and current_english is present, rewrite that English projection shorter instead of retranslating literally. "
+                    "In that mode the returned english MUST be between minimum_characters and hard_max_characters inclusive, counting spaces and punctuation; never return current_english unchanged when it exceeds that ceiling. Preserve every participant/referent, comparison direction, negation, modality, name, and number; compress wording instead of dropping semantic roles. "
                     "Preserve meaning and one-to-one IDs. Previous and next captions are context only. "
                     "Do not summarize across captions, explain, add facts, merge captions, or return markdown. "
                     "Return exactly one JSON object with a translations array; each item must contain only id and english."
