@@ -342,16 +342,18 @@ Source:
 
 - https://research.google.com/colaboratory/faq.html
 
-#### Modal Starter — PASS policy-candidate; technical spike still required
+#### Modal Starter — PASS technical/policy candidate; FAIL strict no-paid-overage gate on current Starter plan
 
 Current Modal terms permit use of the Service for the Customer's internal business, with No-Fee Use subject to its plan limitations. Modal states that the customer retains Customer Data rights, processed Customer Data is expunged promptly after processing, and Modal will not train AI models on Customer Data without prior written consent.
 
-Current Starter pricing advertises $30/month free compute credit, GPU concurrency, scheduled/web functions, and per-second GPU pricing. These are mutable pricing facts and must not become product invariants.
+Current Starter pricing advertises included monthly compute credit, GPU concurrency, scheduled/web functions, and per-second GPU pricing. The current pricing matrix advertises environment-level budgets on Team/Enterprise, not Starter. Included credit therefore cannot be treated as a hard no-overage control. These are mutable pricing facts and must not become product invariants.
+
+Live technical qualification has now passed for authentication, T4 execution, Whisper, PP-OCRv6, staged hash-bound artifact transfer, retry/idempotent cache behavior and remote cleanup. The remaining Starter blocker is the frozen provider-side hard-budget requirement, not compute functionality.
 
 Decision:
 
-- Promote Modal to primary automated burst-compute candidate for commercial AutoSub work.
-- Still require a live technical spike for authentication, upload/job/result flow, cold start, actual GPU/model compatibility, retry/resume, deletion, budget controls and E2E speed.
+- Keep Modal as the primary automated burst-compute technical candidate for commercial AutoSub work.
+- Keep `no_paid_overage_verified=false` on Starter unless a real provider-side hard budget/spend protection becomes available and is verified. Do not promote remaining free credit into a safety guarantee.
 
 Sources:
 

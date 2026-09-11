@@ -11,7 +11,7 @@ from app.providers.ocr.compute_ppocrv6_provider import (
     ComputePPocrV6UnavailableError,
 )
 from app.services.compute_router import choose_compute_route
-from app.services.ocr_runtime import run_ocr_on_images
+from app.services.ocr_runtime import OCRRuntimeError, run_ocr_on_images
 
 
 def _polygon_from_box(value: Any) -> list[list[float]] | None:
@@ -74,8 +74,40 @@ def normalize_local_whole_frame_ocr_payload(
     }
 
 
-LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE = 3
+LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE = 90
+LOCAL_WHOLE_FRAME_OCR_STABLE_FLOOR = 3
 CLOUD_WHOLE_FRAME_OCR_BATCH_SIZE = 64
+
+
+def _run_local_ocr_batch_with_fallback(
+    paths: list[Path],
+    *,
+    config_path: Path | None,
+) -> tuple[list[dict[str, Any]], list[str], list[str], list[int], int]:
+    """Keep one Paddle model load for large batches, then bisect only on runtime failure."""
+    try:
+        payload = run_ocr_on_images(paths, config_path=config_path)
+        normalized = normalize_local_whole_frame_ocr_payload(paths, payload)
+        return (
+            list(normalized.get("frames") or []),
+            [str(normalized.get("runtime") or "local_ocr")],
+            [str(normalized.get("model_version") or "unknown")],
+            [len(paths)],
+            0,
+        )
+    except OCRRuntimeError:
+        if len(paths) <= LOCAL_WHOLE_FRAME_OCR_STABLE_FLOOR:
+            raise
+        midpoint = len(paths) // 2
+        left = _run_local_ocr_batch_with_fallback(paths[:midpoint], config_path=config_path)
+        right = _run_local_ocr_batch_with_fallback(paths[midpoint:], config_path=config_path)
+        return (
+            left[0] + right[0],
+            left[1] + right[1],
+            left[2] + right[2],
+            left[3] + right[3],
+            left[4] + right[4] + 1,
+        )
 
 
 def run_local_whole_frame_ocr(
@@ -85,30 +117,46 @@ def run_local_whole_frame_ocr(
 ) -> dict[str, Any]:
     paths = [Path(path).resolve() for path in image_paths]
     if not paths:
-        return {"frames": [], "runtime": "local_ocr", "model_version": "unknown", "batch_size": LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE}
+        return {
+            "frames": [],
+            "runtime": "local_ocr",
+            "model_version": "unknown",
+            "batch_size": LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE,
+            "batch_count": 0,
+            "batch_sizes": [],
+            "fallback_split_count": 0,
+        }
 
-    # The pinned Windows PaddleOCR 2.10 runtime was verified on the real fixture
-    # to be stable for three frames per process but can fail with
-    # `could not create a primitive` on larger repeated-inference batches.
-    # Chunking here keeps the model/provider contract unchanged and makes the
-    # local fallback reliable; qualified cloud OCR remains the throughput path.
+    # Real golden-source evidence on this Windows runtime: one persistent worker
+    # completed 90 full 1920x1080 frames without the historical primitive error.
+    # Paying model startup once per large bounded batch materially improves local
+    # throughput. If the runtime regresses under memory/primitive pressure, bisect
+    # the failed batch recursively; <=3 frames remains the known-stable floor.
     frames: list[dict[str, Any]] = []
     runtimes: list[str] = []
     models: list[str] = []
+    batch_sizes: list[int] = []
+    fallback_split_count = 0
     for offset in range(0, len(paths), LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE):
         chunk = paths[offset : offset + LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE]
-        payload = run_ocr_on_images(chunk, config_path=config_path)
-        normalized = normalize_local_whole_frame_ocr_payload(chunk, payload)
-        frames.extend(list(normalized.get("frames") or []))
-        runtimes.append(str(normalized.get("runtime") or "local_ocr"))
-        models.append(str(normalized.get("model_version") or "unknown"))
+        chunk_frames, chunk_runtimes, chunk_models, chunk_sizes, chunk_splits = _run_local_ocr_batch_with_fallback(
+            chunk,
+            config_path=config_path,
+        )
+        frames.extend(chunk_frames)
+        runtimes.extend(chunk_runtimes)
+        models.extend(chunk_models)
+        batch_sizes.extend(chunk_sizes)
+        fallback_split_count += chunk_splits
     return {
         "frames": frames,
         "provider": "local_paddleocr",
         "runtime": runtimes[0] if runtimes and len(set(runtimes)) == 1 else "local_ocr_chunked",
         "model_version": models[0] if models and len(set(models)) == 1 else "+".join(sorted(set(models))),
         "batch_size": LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE,
-        "batch_count": (len(paths) + LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE - 1) // LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE,
+        "batch_count": len(batch_sizes),
+        "batch_sizes": batch_sizes,
+        "fallback_split_count": fallback_split_count,
     }
 
 
@@ -136,11 +184,12 @@ class RoutedWholeFrameOCRRunner:
         self.call_count += 1
         capabilities = self.modal_provider.capabilities()
         frame_count = len(paths)
-        # Real Windows fallback evidence: 9 frames / 3 fresh Paddle workers took
-        # ~26 s. Real Modal PP-OCRv6 evidence has material fixed cold/model load
-        # plus sub-second-per-frame warm inference. Keep estimates conservative
-        # and compare total wall time, not GPU inference alone.
-        local_estimated = max(0.0, frame_count * 2.9)
+        # Current real Windows evidence after keeping the Paddle model alive:
+        # 9 golden full frames took ~8.5 s and 90 frames took ~94 s in one
+        # bounded worker. Keep a conservative startup allowance and compare
+        # total wall time, not inference-only marketing numbers. Modal retains
+        # a material cold/model-load fixed cost, so small workloads stay local.
+        local_estimated = 3.0 + frame_count * 1.10
         cloud_estimated = 20.0 + frame_count * 0.30
         decision = choose_compute_route(
             policy=self.compute_policy,

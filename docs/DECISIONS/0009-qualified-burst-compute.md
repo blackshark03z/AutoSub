@@ -30,8 +30,8 @@ Policy research also found the standard Kaggle consumer terms unsuitable for the
 8. Retry/preemption with the same shard identity must be idempotent. Completed verified shards survive provider failure and are not recomputed unless their identity becomes invalid.
 9. Remote temporary data has explicit cleanup after local verification. Cleanup failure is recorded separately; it cannot corrupt an already verified local artifact.
 10. Provider terms and model/code/weight/dependency license chain are independent qualification gates for intended commercial/monetized use.
-11. `Cloud allowed, no paid overage` requires provider-side budget/spend protection to be configured/verified. If protection cannot be verified, the cloud path is unavailable under that policy; AutoSub never silently incurs paid overage.
-12. Current disposition: Modal = primary automated candidate; Kaggle standard consumer = research/non-commercial only; Colab Free = manual research only; Lightning Free = hold pending terms clarification. These dispositions may change without changing the architecture.
+11. `Cloud allowed, no paid overage` requires provider-side budget/spend protection to be configured/verified. If protection cannot be verified, the cloud path is unavailable under that policy; AutoSub never silently incurs paid overage. Included/free credits alone do not satisfy this gate because they are not a hard provider-side spend cap.
+12. Current disposition: Modal = primary automated technical candidate, but Modal Starter does not currently expose the environment-level budget feature advertised on higher plans, so Starter remains unavailable to the strict no-paid-overage production route. Kaggle standard consumer = research/non-commercial only; Colab Free = manual research only; Lightning Free = hold pending terms clarification. These dispositions may change without changing the architecture.
 
 ## Consequences
 

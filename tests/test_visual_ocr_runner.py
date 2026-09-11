@@ -7,6 +7,7 @@ import app.services.visual_ocr_runner as runner
 from app.core.hashing import sha256_file
 from app.providers.compute.base import ComputeArtifact, ComputeProviderCapabilities, ComputeShardResult
 from app.providers.ocr.compute_ppocrv6_provider import PPOCRV6_SMALL_MODEL, PPOCRV6_SMALL_REVISION
+from app.services.ocr_runtime import OCRRuntimeError
 from app.services.visual_ocr_runner import RoutedWholeFrameOCRRunner, normalize_local_whole_frame_ocr_payload
 
 
@@ -32,31 +33,57 @@ def test_local_ocr_payload_rejects_frame_count_mismatch(tmp_path: Path) -> None:
         normalize_local_whole_frame_ocr_payload([tmp_path / "one.jpg"], {"frames": []})
 
 
-def test_local_whole_frame_ocr_chunks_pinned_windows_runtime_safely(tmp_path: Path, monkeypatch) -> None:
-    paths = [tmp_path / f"frame_{index:05d}.jpg" for index in range(7)]
+def _fake_local_ocr_payload(chunk):
+    return {
+        "runtime": "paddleocr",
+        "model_version": "paddleocr-2.10.0",
+        "frames": [
+            {"items": [{"text": "中文", "confidence": 0.99, "box": [[1, 1], [10, 1], [10, 10], [1, 10]]}]}
+            for _ in chunk
+        ],
+    }
+
+
+def test_local_whole_frame_ocr_keeps_model_alive_for_bounded_large_batch(tmp_path: Path, monkeypatch) -> None:
+    paths = [tmp_path / f"frame_{index:05d}.jpg" for index in range(90)]
     calls: list[list[str]] = []
 
     def fake_batch(chunk, config_path=None):
         assert config_path is None
-        assert len(chunk) <= 3
         calls.append([Path(path).name for path in chunk])
-        return {
-            "runtime": "paddleocr",
-            "model_version": "paddleocr-2.10.0",
-            "frames": [
-                {"items": [{"text": "中文", "confidence": 0.99, "box": [[1, 1], [10, 1], [10, 10], [1, 10]]}]}
-                for _ in chunk
-            ],
-        }
+        return _fake_local_ocr_payload(chunk)
 
     monkeypatch.setattr(runner, "run_ocr_on_images", fake_batch)
     result = runner.run_local_whole_frame_ocr(paths)
-    assert [len(call) for call in calls] == [3, 3, 1]
+    assert [len(call) for call in calls] == [90]
     assert [frame["name"] for frame in result["frames"]] == [path.name for path in paths]
     assert result["runtime"] == "paddleocr"
     assert result["model_version"] == "paddleocr-2.10.0"
-    assert result["batch_size"] == 3
+    assert result["batch_size"] == 90
+    assert result["batch_count"] == 1
+    assert result["batch_sizes"] == [90]
+    assert result["fallback_split_count"] == 0
+
+
+def test_local_whole_frame_ocr_bisects_failed_large_batch_to_stable_floor(tmp_path: Path, monkeypatch) -> None:
+    paths = [tmp_path / f"frame_{index:05d}.jpg" for index in range(7)]
+    calls: list[int] = []
+
+    def fake_batch(chunk, config_path=None):
+        assert config_path is None
+        calls.append(len(chunk))
+        if len(chunk) > 3:
+            raise OCRRuntimeError("simulated primitive pressure")
+        return _fake_local_ocr_payload(chunk)
+
+    monkeypatch.setattr(runner, "run_ocr_on_images", fake_batch)
+    result = runner.run_local_whole_frame_ocr(paths)
+    assert calls == [7, 3, 4, 2, 2]
+    assert [frame["name"] for frame in result["frames"]] == [path.name for path in paths]
+    assert result["batch_size"] == 90
     assert result["batch_count"] == 3
+    assert result["batch_sizes"] == [3, 2, 2]
+    assert result["fallback_split_count"] == 2
 
 
 class _FakeModal:
@@ -122,7 +149,7 @@ def test_routed_visual_ocr_uses_cloud_only_when_materially_faster_and_no_overage
         modal_provider=modal,
         local_runner=lambda paths: local_calls.append(paths) or {"provider": "local_paddleocr", "runtime": "local", "model_version": "2.10", "frames": []},
     )
-    paths = _routing_frames(tmp_path, 12)
+    paths = _routing_frames(tmp_path, 40)
     payload = routed(paths)
     assert payload["provider"] == "modal"
     assert modal.calls and local_calls == []
