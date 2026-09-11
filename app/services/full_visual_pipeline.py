@@ -29,6 +29,74 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+MAX_RESIDUAL_REPAIR_MASKS = 64
+
+
+def _build_residual_repair_masks(
+    quality: dict[str, Any],
+    final_evidence: dict[str, Any],
+    *,
+    output_width: int,
+    output_height: int,
+    sample_seconds: float,
+) -> list[dict[str, Any]]:
+    failures = list(quality.get("failures") or [])
+    if not failures or any(item.get("code") != "SOURCE_LANGUAGE_RESIDUAL" for item in failures):
+        return []
+    tracks = {
+        str(track.get("track_id") or ""): track
+        for track in list(final_evidence.get("tracks") or [])
+    }
+    uncertainty_ms = max(1, round(sample_seconds * 1000))
+    repair_masks: list[dict[str, Any]] = []
+    seen: set[tuple[int, tuple[int, int, int, int]]] = set()
+    for failure_index, failure in enumerate(failures):
+        final_track_id = str(failure.get("final_track_id") or "")
+        track = tracks.get(final_track_id)
+        if track is None:
+            return []
+        observations = [
+            item for item in list(track.get("observations") or [])
+            if isinstance(item, dict) and isinstance(item.get("bbox"), list) and len(item["bbox"]) == 4
+        ]
+        if not observations:
+            return []
+        for observation_index, observation in enumerate(observations):
+            left, top, right, bottom = [int(value) for value in observation["bbox"]]
+            if right <= left or bottom <= top:
+                return []
+            time_ms = int(observation.get("time_ms") or track.get("start_ms") or 0)
+            key = (time_ms, (left, top, right, bottom))
+            if key in seen:
+                continue
+            seen.add(key)
+            box_width = right - left
+            box_height = bottom - top
+            pad_x = max(6, round(box_width * 0.15))
+            pad_y = max(4, round(box_height * 0.18))
+            x = max(0, left - pad_x)
+            y = max(0, top - pad_y)
+            x2 = min(output_width - 1, right + pad_x)
+            y2 = min(output_height - 1, bottom + pad_y)
+            repair_masks.append({
+                "track_id": f"residual_repair_{failure_index:03d}_{observation_index:03d}",
+                "start_ms": max(0, time_ms - uncertainty_ms),
+                "end_ms": time_ms + uncertainty_ms,
+                "mask": {
+                    "x": x,
+                    "y": y,
+                    "width": x2 - x + 1,
+                    "height": y2 - y + 1,
+                },
+                "mask_only": True,
+                "repair_for_source_track_id": failure.get("source_track_id"),
+                "repair_for_final_track_id": final_track_id,
+            })
+            if len(repair_masks) > MAX_RESIDUAL_REPAIR_MASKS:
+                return []
+    return repair_masks
+
+
 def _render_tier_a_candidate(
     source_path: Path,
     candidate_path: Path,
@@ -163,6 +231,7 @@ def execute_full_visual_localization(
     candidate = run_dir / "work" / "full_visual_candidate.mp4"
     candidate.unlink(missing_ok=True)
     replacements = list(plan.get("replacements") or [])
+    ass_path: Path | None = None
     if replacements:
         ass_path = visual_dir / "visual_localization.ass"
         write_tier_a_ass(
@@ -193,13 +262,68 @@ def execute_full_visual_localization(
         evidence_filename="visual_text_final.json",
     )
     quality = evaluate_visual_localization(localized, final_evidence, replacement_plan=plan)
-    _write_json(visual_dir / "visual_quality_evidence.json", quality)
+    repair_evidence: dict[str, Any] | None = None
+    repair_masks: list[dict[str, Any]] = []
+    residual_repair_performed = False
     if quality.get("eligible") is not True:
-        raise VisualLocalizationError(
-            "VISUAL_LOCALIZATION_QC_FAILED",
-            "Final Full Visual OCR still contains unresolved source-language text",
+        _write_json(visual_dir / "visual_quality_first_pass.json", quality)
+        repair_masks = _build_residual_repair_masks(
             quality,
+            final_evidence,
+            output_width=width,
+            output_height=height,
+            sample_seconds=sample_seconds,
         )
+        if repair_masks and ass_path is not None:
+            residual_repair_performed = True
+            repair_plan = {
+                **plan,
+                "replacements": [*replacements, *repair_masks],
+            }
+            candidate.unlink(missing_ok=True)
+            _render_tier_a_candidate(
+                source,
+                candidate,
+                plan=repair_plan,
+                ass_path=ass_path,
+                duration_seconds=duration,
+                render_runner=render_runner,
+            )
+            repaired_final_evidence = analyze_whole_frame_visual_text(
+                candidate,
+                run_dir,
+                ocr_runner=ocr_runner,
+                provider=ocr_provider,
+                model=ocr_model,
+                sample_seconds=sample_seconds,
+                evidence_filename="visual_text_final_repair.json",
+            )
+            repaired_quality = evaluate_visual_localization(
+                localized,
+                repaired_final_evidence,
+                replacement_plan=plan,
+            )
+            repair_evidence = {
+                "schema_version": 1,
+                "status": "PASS" if repaired_quality.get("eligible") is True else "FAIL",
+                "repair_pass_count": 1,
+                "repair_mask_count": len(repair_masks),
+                "first_pass_residual_source_track_count": int(quality.get("residual_source_track_count") or 0),
+                "final_residual_source_track_count": int(repaired_quality.get("residual_source_track_count") or 0),
+                "repair_masks": repair_masks,
+            }
+            _write_json(visual_dir / "visual_residual_repair.json", repair_evidence)
+            final_evidence = repaired_final_evidence
+            quality = repaired_quality
+        _write_json(visual_dir / "visual_quality_evidence.json", quality)
+        if quality.get("eligible") is not True:
+            raise VisualLocalizationError(
+                "VISUAL_LOCALIZATION_QC_FAILED",
+                "Final Full Visual OCR still contains unresolved source-language text",
+                quality,
+            )
+    else:
+        _write_json(visual_dir / "visual_quality_evidence.json", quality)
 
     final_output.parent.mkdir(parents=True, exist_ok=True)
     os.replace(candidate, final_output)
@@ -210,6 +334,8 @@ def execute_full_visual_localization(
         "localizable_track_count": int(evidence.get("localizable_track_count") or 0),
         "translated_track_count": int(localized.get("translated_track_count") or 0),
         "replacement_count": int(plan.get("replacement_count") or 0),
+        "residual_repair_performed": residual_repair_performed,
+        "residual_repair_mask_count": len(repair_masks) if residual_repair_performed else 0,
         "final_residual_source_track_count": int(quality.get("residual_source_track_count") or 0),
         "output_path": str(final_output),
     }
@@ -220,6 +346,7 @@ def execute_full_visual_localization(
         "replacement_plan": plan,
         "final_evidence": final_evidence,
         "quality": quality,
+        "residual_repair": repair_evidence,
         "output_path": final_output,
         "summary": summary,
     }

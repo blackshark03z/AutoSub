@@ -137,7 +137,10 @@ def build_tier_a_replacement_plan(
         raise ValueError("invalid Tier-A visual replacement geometry")
     replacements: list[dict[str, Any]] = []
     escalations: list[dict[str, Any]] = []
-    half_sample_ms = round(sample_seconds * 500)
+    # A detection at a sampled frame represents visual state that can persist
+    # until the adjacent sample. Cover the full sampling interval on both sides
+    # so replacement lifetime matches the QC time tolerance.
+    sample_uncertainty_ms = round(sample_seconds * 1000)
     for track in list(localized.get("tracks") or []):
         classification = track.get("classification") or {}
         if classification.get("action") != "localize":
@@ -190,8 +193,8 @@ def build_tier_a_replacement_plan(
             output_width=output_width,
             output_height=output_height,
         )
-        start_ms = max(0, int(track.get("start_ms") or 0) - half_sample_ms)
-        end_ms = max(start_ms + 1, int(track.get("end_ms") or 0) + half_sample_ms)
+        start_ms = max(0, int(track.get("start_ms") or 0) - sample_uncertainty_ms)
+        end_ms = max(start_ms + 1, int(track.get("end_ms") or 0) + sample_uncertainty_ms)
         base_item = {
             "track_id": track_id,
             "source_text": str(track.get("canonical_text") or ""),
@@ -232,7 +235,7 @@ def build_tier_a_replacement_plan(
                     escalations.append({"track_id": track_id, "reason": "invalid_mask_geometry", "observation": ordinal})
                     break
                 timestamp = int(observation.get("time_ms") or track.get("start_ms") or 0)
-                replacements.append({**base_item, "track_id": f"{track_id}__{ordinal:03d}", "parent_track_id": track_id, "start_ms": max(0, timestamp - half_sample_ms), "end_ms": timestamp + half_sample_ms, "source_bbox": box, "mask": observation_mask, "center_x": round((ol+oright)/2), "center_y": round((ot+obottom)/2), "font_size": ofont, "render_text": otext, "motion_segment": True})
+                replacements.append({**base_item, "track_id": f"{track_id}__{ordinal:03d}", "parent_track_id": track_id, "start_ms": max(0, timestamp - sample_uncertainty_ms), "end_ms": timestamp + sample_uncertainty_ms, "source_bbox": box, "mask": observation_mask, "center_x": round((ol+oright)/2), "center_y": round((ot+obottom)/2), "font_size": ofont, "render_text": otext, "motion_segment": True})
             if escalations and escalations[-1].get("track_id") == track_id:
                 replacements[:] = [item for item in replacements if item.get("parent_track_id") != track_id]
             continue

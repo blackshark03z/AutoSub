@@ -36,8 +36,8 @@ def test_stable_track_builds_source_matched_tier_a_plan() -> None:
     assert plan["replacement_count"] == 1
     assert plan["escalation_count"] == 0
     item = plan["replacements"][0]
-    assert item["start_ms"] == 750
-    assert item["end_ms"] == 2250
+    assert item["start_ms"] == 500
+    assert item["end_ms"] == 2500
     assert item["tier"] == "A"
     assert item["center_y"] < 200
 

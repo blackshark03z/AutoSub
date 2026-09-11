@@ -39,6 +39,22 @@ def test_unresolved_tier_escalation_blocks_visual_validity() -> None:
     assert any(item["code"] == "VISUAL_REPLACEMENT_UNRESOLVED" for item in result["failures"])
 
 
+def test_piecewise_replacement_parent_satisfies_plan_coverage() -> None:
+    localized = {"tracks": [_track("moving", "source", (100, 100, 250, 140))]}
+    final = {"tracks": []}
+    plan = {
+        "replacements": [
+            {"track_id": "moving__000", "parent_track_id": "moving"},
+            {"track_id": "moving__001", "parent_track_id": "moving"},
+        ],
+        "escalations": [],
+    }
+    result = evaluate_visual_localization(localized, final, replacement_plan=plan)
+    assert result["status"] == "PASS"
+    assert result["planned_replacement_count"] == 2
+    assert not any(item["code"] == "VISUAL_REPLACEMENT_PLAN_MISSING" for item in result["failures"])
+
+
 def test_unrelated_source_text_elsewhere_does_not_false_match_expected_track() -> None:
     localized = {"tracks": [_track("source", "管理员", (100, 100, 250, 140))]}
     final = {"tracks": [_track("other", "强化身体", (800, 400, 1000, 450))]}

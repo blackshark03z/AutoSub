@@ -82,9 +82,13 @@ def evaluate_visual_localization(
             "reason": item.get("reason"),
         })
 
-    replacement_ids = {
-        str(item.get("track_id") or "") for item in list(plan.get("replacements") or [])
-    }
+    replacement_items = list(plan.get("replacements") or [])
+    replacement_ids: set[str] = set()
+    for item in replacement_items:
+        replacement_ids.add(str(item.get("track_id") or ""))
+        parent_track_id = str(item.get("parent_track_id") or "")
+        if parent_track_id:
+            replacement_ids.add(parent_track_id)
     expected_ids = {str(item.get("track_id") or "") for item in expected}
     if replacement_plan is not None:
         for missing in sorted(expected_ids - replacement_ids - {str(item.get("track_id") or "") for item in escalations}):
@@ -94,7 +98,7 @@ def evaluate_visual_localization(
         "status": "PASS" if not failures else "FAIL",
         "eligible": not failures,
         "expected_localized_track_count": len(expected),
-        "planned_replacement_count": len(replacement_ids),
+        "planned_replacement_count": len(replacement_items),
         "residual_source_track_count": len(residuals),
         "unresolved_replacement_count": len(escalations),
         "failure_count": len(failures),

@@ -79,6 +79,110 @@ def test_full_visual_composition_only_publishes_after_final_ocr_qc(tmp_path: Pat
     assert not (run_dir / "work" / "full_visual_candidate.mp4").exists()
 
 
+def test_full_visual_residual_qc_runs_one_bounded_repair_pass(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "subtitle_stage.mp4"
+    source.write_bytes(b"source-stage")
+    run_dir = tmp_path / "run"
+    output = run_dir / "output" / "final_video.mp4"
+    renders = []
+    candidate_reads = 0
+
+    monkeypatch.setattr(pipeline, "media_summary", lambda _path: {"duration_seconds": 2.0, "video": {"width": 1280, "height": 720}})
+
+    def analyze(path, *_args, **_kwargs):
+        nonlocal candidate_reads
+        if Path(path).name == "subtitle_stage.mp4":
+            return _source_evidence()
+        candidate_reads += 1
+        if candidate_reads == 1:
+            return {
+                "track_count": 1,
+                "localizable_track_count": 1,
+                "tracks": [{
+                    "track_id": "residual",
+                    "canonical_text": "管理员",
+                    "confidence": 0.99,
+                    "start_ms": 500,
+                    "end_ms": 500,
+                    "classification": {"action": "localize"},
+                    "observations": [{"bbox": [100, 100, 220, 140], "time_ms": 500}],
+                }],
+            }
+        return {"track_count": 0, "localizable_track_count": 0, "tracks": []}
+
+    monkeypatch.setattr(pipeline, "analyze_whole_frame_visual_text", analyze)
+
+    def render(command, _duration):
+        renders.append(command)
+        Path(command[-1]).write_bytes(f"candidate-{len(renders)}".encode())
+
+    result = pipeline.execute_full_visual_localization(
+        source,
+        run_dir,
+        output,
+        ocr_runner=lambda _paths: {},
+        translator=_Translator(),
+        font_path=Path(r"C:\\Windows\\Fonts\\arial.ttf"),
+        render_runner=render,
+    )
+    assert len(renders) == 2
+    assert candidate_reads == 2
+    assert result["quality"]["status"] == "PASS"
+    assert result["summary"]["residual_repair_performed"] is True
+    assert result["summary"]["residual_repair_mask_count"] == 1
+    assert result["residual_repair"]["repair_pass_count"] == 1
+    assert (run_dir / "visual" / "visual_quality_first_pass.json").exists()
+    assert (run_dir / "visual" / "visual_residual_repair.json").exists()
+    assert output.read_bytes() == b"candidate-2"
+
+
+def test_full_visual_residual_repair_fails_closed_after_one_retry(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "subtitle_stage.mp4"
+    source.write_bytes(b"source-stage")
+    run_dir = tmp_path / "run"
+    output = run_dir / "output" / "final_video.mp4"
+    renders = []
+
+    monkeypatch.setattr(pipeline, "media_summary", lambda _path: {"duration_seconds": 2.0, "video": {"width": 1280, "height": 720}})
+
+    def analyze(path, *_args, **_kwargs):
+        if Path(path).name == "subtitle_stage.mp4":
+            return _source_evidence()
+        return {
+            "track_count": 1,
+            "localizable_track_count": 1,
+            "tracks": [{
+                "track_id": "residual",
+                "canonical_text": "管理员",
+                "confidence": 0.99,
+                "start_ms": 500,
+                "end_ms": 500,
+                "classification": {"action": "localize"},
+                "observations": [{"bbox": [100, 100, 220, 140], "time_ms": 500}],
+            }],
+        }
+
+    monkeypatch.setattr(pipeline, "analyze_whole_frame_visual_text", analyze)
+
+    def render(command, _duration):
+        renders.append(command)
+        Path(command[-1]).write_bytes(b"candidate")
+
+    with pytest.raises(pipeline.VisualLocalizationError) as exc:
+        pipeline.execute_full_visual_localization(
+            source,
+            run_dir,
+            output,
+            ocr_runner=lambda _paths: {},
+            translator=_Translator(),
+            font_path=Path(r"C:\\Windows\\Fonts\\arial.ttf"),
+            render_runner=render,
+        )
+    assert exc.value.code == "VISUAL_LOCALIZATION_QC_FAILED"
+    assert len(renders) == 2
+    assert not output.exists()
+
+
 def test_full_visual_escalation_fails_before_publish(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "subtitle_stage.mp4"
     source.write_bytes(b"source-stage")
