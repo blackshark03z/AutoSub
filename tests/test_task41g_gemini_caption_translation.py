@@ -171,6 +171,7 @@ def test_semantic_invalid_output_is_not_retried_or_cached(tmp_path, monkeypatch,
 @pytest.mark.parametrize("first_status", [429, 500, 503])
 def test_transient_http_failure_has_one_bounded_retry(tmp_path, monkeypatch, first_status):
     _disable_real_cache(monkeypatch)
+    monkeypatch.setattr(gemini_module.time, "sleep", lambda _seconds: None)
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -189,6 +190,119 @@ def test_transient_http_failure_has_one_bounded_retry(tmp_path, monkeypatch, fir
     result = translator.translate(_captions())
     assert calls == 2
     assert result.retry_count == 1
+
+
+def test_repeated_output_guard_allows_identical_source_text_reuse(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+    captions = [
+        {"id": f"OCR_{index:04d}", "source_text": "管理员", "previous_source_text": "", "next_source_text": ""}
+        for index in range(1, 5)
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response([
+            {"id": item["id"], "english": "Administrator"}
+            for item in captions
+        ])
+
+    translator = GeminiCaptionTranslator(_config(tmp_path), batch_size=4, transport=httpx.MockTransport(handler))
+    result = translator.translate(captions)
+    assert [item["english"] for item in result.translations] == ["Administrator"] * 4
+    assert result.request_count == 1
+
+
+def test_repeated_generic_output_across_distinct_sources_retries_once_then_fails(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+    captions = [
+        {"id": f"OCR_{index:04d}", "source_text": text, "previous_source_text": "", "next_source_text": ""}
+        for index, text in enumerate(["管理员", "所有东西", "返回房间", "开始游戏"], start=1)
+    ]
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _response([
+            {"id": item["id"], "english": "Administrator"}
+            for item in captions
+        ])
+
+    translator = GeminiCaptionTranslator(_config(tmp_path), batch_size=4, transport=httpx.MockTransport(handler))
+    with pytest.raises(GeminiCaptionTranslationError) as caught:
+        translator.translate(captions)
+    assert caught.value.reason_code == "GEMINI_CAPTION_REPEATED_GENERIC_OUTPUT"
+    assert caught.value.request_count == 2
+    assert caught.value.retry_count == 1
+    assert calls == 2
+
+
+def test_repeated_503_uses_bounded_backoff_without_switching_key(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+    sleeps: list[float] = []
+    monkeypatch.setattr(gemini_module.time, "sleep", lambda seconds: sleeps.append(float(seconds)))
+    calls = 0
+    auth_headers: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        auth_headers.append(str(request.headers.get("authorization") or ""))
+        if calls <= 3:
+            return httpx.Response(503, json={"error": {"message": "temporarily overloaded"}})
+        return _response([
+            {"id": "OCR_0001", "english": "I'm here."},
+            {"id": "OCR_0002", "english": "I need to hurry back to my room."},
+        ])
+
+    translator = GeminiCaptionTranslator(_config(tmp_path), transport=httpx.MockTransport(handler))
+    result = translator.translate(_captions())
+
+    assert calls == 4
+    assert result.retry_count == 3
+    assert sleeps == [2.0, 4.0, 8.0]
+    assert len(set(auth_headers)) == 1
+
+
+def test_503_retry_after_hint_is_respected_and_capped(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+    sleeps: list[float] = []
+    monkeypatch.setattr(gemini_module.time, "sleep", lambda seconds: sleeps.append(float(seconds)))
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(503, headers={"Retry-After": "7"}, json={"error": {"message": "temporary"}})
+        return _response([
+            {"id": "OCR_0001", "english": "I'm here."},
+            {"id": "OCR_0002", "english": "I need to hurry back to my room."},
+        ])
+
+    translator = GeminiCaptionTranslator(_config(tmp_path), transport=httpx.MockTransport(handler))
+    translator.translate(_captions())
+    assert sleeps == [7.0]
+
+
+def test_persistent_503_fails_after_server_retry_budget(tmp_path, monkeypatch):
+    _disable_real_cache(monkeypatch)
+    monkeypatch.setattr(gemini_module.time, "sleep", lambda _seconds: None)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503, json={"error": {"message": "still overloaded"}})
+
+    translator = GeminiCaptionTranslator(_config(tmp_path), transport=httpx.MockTransport(handler))
+    with pytest.raises(GeminiCaptionTranslationError) as caught:
+        translator.translate(_captions())
+
+    assert caught.value.reason_code == "GEMINI_CAPTION_PROVIDER_UNAVAILABLE"
+    assert caught.value.http_status == 503
+    assert caught.value.request_count == gemini_module.GEMINI_SERVER_RETRY_LIMIT + 1
+    assert caught.value.retry_count == gemini_module.GEMINI_SERVER_RETRY_LIMIT
+    assert calls == gemini_module.GEMINI_SERVER_RETRY_LIMIT + 1
 
 
 def test_bad_request_batch_is_bisected_and_preserves_order(tmp_path, monkeypatch):
@@ -695,6 +809,119 @@ def test_sample_frames_falls_back_to_ffmpeg_when_cv2_jpeg_write_fails(tmp_path, 
 
     assert [frame["time"] for frame in frames] == [0.0, 0.5]
     assert all(frame["path"].exists() for frame in frames)
+
+
+def test_frame_extraction_retries_unsigned_enomem_with_bounded_threads(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"fake")
+    frame_dir = tmp_path / "frames"
+    calls = 0
+    commands = []
+
+    class Stream:
+        def __init__(self, text):
+            self.text = text
+
+        def read(self):
+            return self.text
+
+    class FakePopen:
+        def __init__(self, command, **_kwargs):
+            nonlocal calls
+            calls += 1
+            commands.append(command)
+            self.returncode = 4294967284 if calls == 1 else 0
+            self.stderr = Stream("Cannot allocate memory" if calls == 1 else "")
+            if calls == 2:
+                output_pattern = Path(command[-1])
+                output_pattern.parent.mkdir(parents=True, exist_ok=True)
+                for index in range(2):
+                    Image.new("RGB", (32, 18), color=(index * 20, 0, 0)).save(
+                        output_pattern.parent / f"frame_{index + 1:05d}.jpg",
+                        format="JPEG",
+                    )
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(source_caption_module.shutil, "which", lambda name: "ffmpeg" if name == "ffmpeg" else None)
+    monkeypatch.setattr(source_caption_module.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(source_caption_module, "FFMPEG_RESOURCE_RETRY_DELAYS_SECONDS", (0.0,))
+
+    frames = source_caption_module._sample_frames_with_ffmpeg(source, frame_dir, duration=1.0, step=0.5)
+
+    assert calls == 2
+    assert len(frames) == 2
+    assert all("-threads" in command and "-filter_threads" in command for command in commands)
+    assert all(command[command.index("-threads") + 1] == "4" for command in commands)
+    assert all(command[command.index("-filter_threads") + 1] == "2" for command in commands)
+
+
+def test_frame_extraction_retries_windows_pagefile_error(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"fake")
+    frame_dir = tmp_path / "frames"
+    calls = 0
+
+    class Stream:
+        def read(self):
+            return ""
+
+    class FakePopen:
+        def __init__(self, command, **_kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                error = OSError("The paging file is too small for this operation to complete")
+                error.winerror = 1455
+                raise error
+            self.returncode = 0
+            self.stderr = Stream()
+            output_pattern = Path(command[-1])
+            output_pattern.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (32, 18), color=(0, 20, 0)).save(
+                output_pattern.parent / "frame_00001.jpg",
+                format="JPEG",
+            )
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(source_caption_module.shutil, "which", lambda name: "ffmpeg" if name == "ffmpeg" else None)
+    monkeypatch.setattr(source_caption_module.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(source_caption_module, "FFMPEG_RESOURCE_RETRY_DELAYS_SECONDS", (0.0,))
+
+    frames = source_caption_module._sample_frames_with_ffmpeg(source, frame_dir, duration=0.5, step=0.5)
+
+    assert calls == 2
+    assert len(frames) == 1
+
+
+def test_frame_extraction_persistent_memory_pressure_is_specific(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"fake")
+    frame_dir = tmp_path / "frames"
+
+    class Stream:
+        def read(self):
+            return "Cannot allocate memory"
+
+    class FakePopen:
+        def __init__(self, _command, **_kwargs):
+            self.returncode = 4294967284
+            self.stderr = Stream()
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(source_caption_module.shutil, "which", lambda name: "ffmpeg" if name == "ffmpeg" else None)
+    monkeypatch.setattr(source_caption_module.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(source_caption_module, "FFMPEG_RESOURCE_RETRY_DELAYS_SECONDS", (0.0, 0.0))
+
+    with pytest.raises(source_caption_module.CaptionAnalysisError) as exc_info:
+        source_caption_module._sample_frames_with_ffmpeg(source, frame_dir, duration=1.0, step=0.5)
+
+    assert exc_info.value.code == "SYSTEM_MEMORY_PRESSURE"
 
 
 def test_multimodal_interval_request_falls_back_to_ffmpeg_when_cv2_cannot_open_source(tmp_path, monkeypatch):

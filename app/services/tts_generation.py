@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,7 +12,7 @@ from app.core.provider_cache import build_request_hash
 from app.db.session import session_scope
 from app.domain.models import TTSGeneration, TTSRequestReservation
 from app.providers.tts.base import TTSProvider, TTSRateLimitError, TTSRequest, TTSUncertainError
-from app.providers.tts.fake import tts_request_payload
+from app.providers.tts.request import tts_request_payload
 from app.services.timeline import load_latest_timeline
 from app.services.tts_units import attach_tts_synthesis_units
 
@@ -34,6 +35,7 @@ def generate_tts_for_segment(
     previous_text: str | None = None,
     next_text: str | None = None,
     provider_request_version: str | None = None,
+    speed: float = 1.0,
     **single_flight_options,
 ) -> dict:
     return generate_tts_for_unit(
@@ -45,6 +47,7 @@ def generate_tts_for_segment(
         previous_text=previous_text,
         next_text=next_text,
         provider_request_version=provider_request_version,
+        speed=speed,
         **single_flight_options,
     )
 
@@ -58,6 +61,7 @@ def generate_tts_for_unit(
     previous_text: str | None = None,
     next_text: str | None = None,
     provider_request_version: str | None = None,
+    speed: float = 1.0,
     *,
     lease_seconds: float = 300.0,
     wait_timeout_seconds: float = 310.0,
@@ -81,6 +85,7 @@ def generate_tts_for_unit(
         previous_text=previous_text,
         next_text=next_text,
         output_format=getattr(provider, "output_format", "mp3_44100_128"),
+        speed=float(speed),
         provider_request_version=provider_request_version or getattr(provider, "provider_request_version", "tts-v2"),
     )
     request_hash = build_request_hash(tts_request_payload(provider.provider_name, request))
@@ -177,10 +182,11 @@ def generate_tts_for_unit(
         "status": status,
         "tts_unit_id": unit["id"],
         "segment_ids": list(unit.get("segment_ids", [unit["id"]])),
+        "alignment": _alignment_metadata_for_audio(result.audio_path, digest),
     }
 
 
-def generate_tts_for_timeline(project_id: str, timeline: dict, provider: TTSProvider, voice_id: str) -> list[dict]:
+def generate_tts_for_timeline(project_id: str, timeline: dict, provider: TTSProvider, voice_id: str, *, speed: float = 1.0) -> list[dict]:
     units = attach_tts_synthesis_units(timeline)
     generations: list[dict] = []
     previous_request_ids: list[str] = []
@@ -193,6 +199,7 @@ def generate_tts_for_timeline(project_id: str, timeline: dict, provider: TTSProv
             voice_id,
             previous_request_ids=previous_request_ids,
             next_text=next_text,
+            speed=speed,
         )
         if result.get("request_id"):
             previous_request_ids.append(result["request_id"])
@@ -224,7 +231,30 @@ def find_ready_generation_by_hash(request_hash: str) -> dict | None:
             "character_count": generation.character_count,
             "status": generation.status,
             "tts_unit_id": generation.segment_id,
+            "alignment": _alignment_metadata_for_audio(path, generation.sha256),
         }
+
+
+def _alignment_metadata_for_audio(audio_path: Path, expected_audio_sha256: str) -> dict | None:
+    sidecar = audio_path.with_suffix(audio_path.suffix + ".alignment.json")
+    if not sidecar.is_file():
+        return None
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("audio_sha256") != expected_audio_sha256:
+        return None
+    tokens = payload.get("tokens")
+    if not isinstance(tokens, list):
+        return None
+    return {
+        "path": str(sidecar.resolve()),
+        "identity_sha256": payload.get("identity_sha256"),
+        "duration_seconds": payload.get("duration_seconds"),
+        "sample_rate": payload.get("sample_rate"),
+        "tokens": tokens,
+    }
 
 
 def record_uncertain_generation(

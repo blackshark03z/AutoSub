@@ -105,6 +105,9 @@ FREE_TIER_MODEL_CANDIDATES = (
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_GEMINI_TIMEOUT_SECONDS = 180.0
+GEMINI_SERVER_RETRY_LIMIT = 5
+GEMINI_SERVER_BACKOFF_BASE_SECONDS = 2.0
+GEMINI_SERVER_BACKOFF_CAP_SECONDS = 30.0
 DEFAULT_GEMINI_KEY_FILE = r"secrets\gemini_api.txt"
 DEFAULT_GEMINI_CREDENTIAL_NAME = "tool_auto_sub_worker_handoff_v0_2_gemini_api"
 GEMINI_DISCOVERY_PROVIDER = "gemini_model_discovery"
@@ -113,6 +116,44 @@ SUPPORTED_GENERATION_METHODS = {"generateContent", "generateContentStream", "int
 DEFAULT_FREE_TIER_EVIDENCE_PATH = (
     Path(tempfile.gettempdir()) / "task41h_free_tier_verification.json"
 )
+
+
+def _retry_after_hint_seconds(response: httpx.Response) -> float | None:
+    values: list[float] = []
+    header = str(response.headers.get("retry-after") or "").strip()
+    if header:
+        try:
+            values.append(float(header))
+        except ValueError:
+            pass
+    try:
+        payload: Any = response.json()
+    except (ValueError, json.JSONDecodeError):
+        payload = None
+    stack = [payload]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for key, value in item.items():
+                if str(key).lower() in {"retrydelay", "retry_after", "retryafter"}:
+                    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)s?", str(value).strip())
+                    if match:
+                        values.append(float(match.group(1)))
+                elif isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(item, list):
+            stack.extend(item)
+    valid = [value for value in values if value >= 0]
+    return max(valid) if valid else None
+
+
+def _server_retry_delay_seconds(response: httpx.Response, attempt: int) -> float:
+    exponential = min(
+        GEMINI_SERVER_BACKOFF_BASE_SECONDS * (2 ** max(0, attempt - 1)),
+        GEMINI_SERVER_BACKOFF_CAP_SECONDS,
+    )
+    hinted = _retry_after_hint_seconds(response)
+    return min(max(exponential, hinted or 0.0), GEMINI_SERVER_BACKOFF_CAP_SECONDS)
 
 
 def _native_api_root(config: GeminiTranslationConfig) -> str:
@@ -439,7 +480,7 @@ class GeminiOpenAICompatibleProvider:
 
 class GeminiCaptionTranslator:
     provider_name = "gemini_caption_translation"
-    prompt_version = "caption-translation-v1"
+    prompt_version = "caption-translation-v2-timing-budget"
     schema_version = 1
 
     def __init__(
@@ -612,6 +653,9 @@ class GeminiCaptionTranslator:
                     "chinese": item["source_text"],
                     "previous_chinese": item.get("previous_source_text") or "",
                     "next_chinese": item.get("next_source_text") or "",
+                    **({"duration_ms": item.get("duration_ms")} if item.get("duration_ms") else {}),
+                    **({"preferred_max_characters": item.get("preferred_max_characters")} if item.get("preferred_max_characters") else {}),
+                    **({"hard_max_characters": item.get("hard_max_characters")} if item.get("hard_max_characters") else {}),
                 }
             ]
         }
@@ -621,9 +665,14 @@ class GeminiCaptionTranslator:
                     {
                         "text": (
                             "Translate the single Chinese dialogue caption into concise, natural en-US subtitle text. "
+                            "When duration_ms/preferred_max_characters/hard_max_characters are provided, write for the actual screen-time budget. "
+                            "Aim for the preferred budget. Treat hard_max_characters as a hard ceiling whenever any faithful idiomatic English "
+                            "paraphrase can fit; do not preserve Chinese word order or literal filler at the expense of readability. "
+                            "Use concise subtitle phrasing and contractions while preserving names, numbers, negation, modality, choices, "
+                            "causal meaning and all other material facts. Never invent or delete material meaning just to fit. "
                             "Return JSON only as {\"translations\":[{\"id\":\"...\",\"english\":\"...\"}]}. "
                             "Preserve the requested ID exactly once. Previous and next captions are context only. "
-                            "Do not summarize, explain, add facts, merge captions, or return markdown."
+                            "Do not summarize across captions, explain, add facts, merge captions, or return markdown."
                         )
                     }
                 ]
@@ -633,6 +682,7 @@ class GeminiCaptionTranslator:
         }
         request_count = retry_count = 0
         transient_attempt = 0
+        server_attempt = 0
         while True:
             try:
                 with httpx.Client(timeout=self.config.timeout_seconds, transport=self._transport) as client:
@@ -671,6 +721,7 @@ class GeminiCaptionTranslator:
                 if (invalid_api_key or status in {401, 403, 429}) and self._advance_key():
                     retry_count += 1
                     transient_attempt = 0
+                    server_attempt = 0
                     continue
                 if invalid_api_key or status in {401, 403}:
                     raise GeminiCaptionTranslationError(
@@ -681,15 +732,29 @@ class GeminiCaptionTranslator:
                         http_status=status,
                         failed_caption_ids=[str(item.get("id") or "")],
                     ) from exc
-                if status == 429 or status >= 500:
-                    if transient_attempt < self.max_transient_retries:
-                        transient_attempt += 1
+                if status >= 500:
+                    if server_attempt < GEMINI_SERVER_RETRY_LIMIT:
+                        server_attempt += 1
                         retry_count += 1
-                        time.sleep(min(0.5 * transient_attempt, 1.0))
+                        time.sleep(_server_retry_delay_seconds(exc.response, server_attempt))
                         continue
                     raise GeminiCaptionTranslationError(
                         "GEMINI_CAPTION_PROVIDER_UNAVAILABLE",
                         f"Gemini native fallback failed with HTTP {status}.",
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        http_status=status,
+                        failed_caption_ids=[str(item.get("id") or "")],
+                    ) from exc
+                if status == 429:
+                    if transient_attempt < self.max_transient_retries:
+                        transient_attempt += 1
+                        retry_count += 1
+                        time.sleep(_server_retry_delay_seconds(exc.response, transient_attempt))
+                        continue
+                    raise GeminiCaptionTranslationError(
+                        "GEMINI_CAPTION_PROVIDER_UNAVAILABLE",
+                        "Gemini quota is temporarily unavailable across the configured key pool.",
                         request_count=request_count,
                         retry_count=retry_count,
                         http_status=status,
@@ -727,6 +792,7 @@ class GeminiCaptionTranslator:
         last_error: Exception | None = None
         request_count = retry_count = 0
         transient_attempt = 0
+        server_attempt = 0
         schema_attempt = 0
         while True:
             try:
@@ -757,6 +823,10 @@ class GeminiCaptionTranslator:
                         schema_attempt += 1
                         retry_count += 1
                         continue
+                    exc.request_count += request_count
+                    exc.retry_count += retry_count
+                    if not exc.failed_caption_ids:
+                        exc.failed_caption_ids = [str(item.get("id") or "") for item in batch]
                     raise
                 usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
                 return validated, {
@@ -774,6 +844,7 @@ class GeminiCaptionTranslator:
                 if (invalid_api_key or status in {401, 403, 429}) and self._advance_key():
                     retry_count += 1
                     transient_attempt = 0
+                    server_attempt = 0
                     continue
                 if invalid_api_key or status in {401, 403}:
                     raise GeminiCaptionTranslationError(
@@ -798,15 +869,33 @@ class GeminiCaptionTranslator:
                         "GEMINI_CAPTION_AUTH_UNAVAILABLE",
                         "No configured Gemini credential authenticated successfully.",
                     ) from exc
-                if status == 429 or status >= 500:
-                    if transient_attempt < self.max_transient_retries:
-                        transient_attempt += 1
+                if status >= 500:
+                    if server_attempt < GEMINI_SERVER_RETRY_LIMIT:
+                        server_attempt += 1
                         retry_count += 1
-                        time.sleep(min(0.5 * transient_attempt, 1.0))
+                        time.sleep(_server_retry_delay_seconds(exc.response, server_attempt))
                         continue
                     raise GeminiCaptionTranslationError(
                         "GEMINI_CAPTION_PROVIDER_UNAVAILABLE",
                         f"Gemini request failed with HTTP {status}.",
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        http_status=status,
+                        failed_caption_ids=[str(item.get("id") or "") for item in batch],
+                    ) from exc
+                if status == 429:
+                    if transient_attempt < self.max_transient_retries:
+                        transient_attempt += 1
+                        retry_count += 1
+                        time.sleep(_server_retry_delay_seconds(exc.response, transient_attempt))
+                        continue
+                    raise GeminiCaptionTranslationError(
+                        "GEMINI_CAPTION_PROVIDER_UNAVAILABLE",
+                        "Gemini quota is temporarily unavailable across the configured key pool.",
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        http_status=status,
+                        failed_caption_ids=[str(item.get("id") or "") for item in batch],
                     ) from exc
                 raise GeminiCaptionTranslationError(
                     "GEMINI_CAPTION_HTTP_ERROR",
@@ -908,6 +997,7 @@ class GeminiMultimodalCaptionResolver:
         endpoint = _native_interactions_endpoint(self.config, self.model)
         request_count = retry_count = 0
         transient_attempt = 0
+        server_attempt = 0
         while True:
             try:
                 with httpx.Client(timeout=self.config.timeout_seconds, transport=self._transport) as client:
@@ -966,21 +1056,40 @@ class GeminiMultimodalCaptionResolver:
                 if (invalid_api_key or status in {401, 403, 429}) and self._advance_key():
                     retry_count += 1
                     transient_attempt = 0
+                    server_attempt = 0
                     continue
                 if invalid_api_key or status in {401, 403}:
                     raise GeminiCaptionTranslationError(
                         "GEMINI_MULTIMODAL_AUTH_UNAVAILABLE",
                         "No configured Gemini credential authenticated successfully.",
                     ) from exc
-                if status == 429 or status >= 500:
-                    if transient_attempt < self.max_transient_retries:
-                        transient_attempt += 1
+                if status >= 500:
+                    if server_attempt < GEMINI_SERVER_RETRY_LIMIT:
+                        server_attempt += 1
                         retry_count += 1
-                        time.sleep(min(0.5 * transient_attempt, 1.0))
+                        time.sleep(_server_retry_delay_seconds(exc.response, server_attempt))
                         continue
                     raise GeminiCaptionTranslationError(
                         "GEMINI_MULTIMODAL_PROVIDER_UNAVAILABLE",
                         f"Gemini request failed with HTTP {status}.",
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        http_status=status,
+                        failed_caption_ids=[str(interval_request.get("id") or "")],
+                    ) from exc
+                if status == 429:
+                    if transient_attempt < self.max_transient_retries:
+                        transient_attempt += 1
+                        retry_count += 1
+                        time.sleep(_server_retry_delay_seconds(exc.response, transient_attempt))
+                        continue
+                    raise GeminiCaptionTranslationError(
+                        "GEMINI_MULTIMODAL_PROVIDER_UNAVAILABLE",
+                        "Gemini quota is temporarily unavailable across the configured key pool.",
+                        request_count=request_count,
+                        retry_count=retry_count,
+                        http_status=status,
+                        failed_caption_ids=[str(interval_request.get("id") or "")],
                     ) from exc
                 raise GeminiCaptionTranslationError(
                     "GEMINI_MULTIMODAL_HTTP_ERROR",
@@ -1275,6 +1384,9 @@ def _caption_request_body(
                 "chinese": item["source_text"],
                 "previous_chinese": item.get("previous_source_text") or "",
                 "next_chinese": item.get("next_source_text") or "",
+                **({"duration_ms": item.get("duration_ms")} if item.get("duration_ms") else {}),
+                **({"preferred_max_characters": item.get("preferred_max_characters")} if item.get("preferred_max_characters") else {}),
+                **({"hard_max_characters": item.get("hard_max_characters")} if item.get("hard_max_characters") else {}),
             }
             for item in captions
         ]
@@ -1293,8 +1405,13 @@ def _caption_request_body(
                 "role": "system",
                 "content": (
                     "Translate each Chinese dialogue caption into concise, natural en-US subtitle text. "
+                    "When duration_ms/preferred_max_characters/hard_max_characters are present, write for the actual screen-time budget. "
+                    "Aim for the preferred budget. Treat hard_max_characters as a hard ceiling whenever any faithful idiomatic English "
+                    "paraphrase can fit; do not preserve Chinese word order or literal filler at the expense of readability. "
+                    "Use concise subtitle phrasing and contractions while preserving names, numbers, negation, modality, choices, "
+                    "causal meaning and all other material facts; never invent or delete material meaning just to fit. "
                     "Preserve meaning and one-to-one IDs. Previous and next captions are context only. "
-                    "Do not summarize, explain, add facts, merge captions, or return markdown. "
+                    "Do not summarize across captions, explain, add facts, merge captions, or return markdown. "
                     "Return exactly one JSON object with a translations array; each item must contain only id and english."
                 ),
             },
@@ -1368,11 +1485,19 @@ def _validate_caption_response(payload: dict[str, Any], batch: list[dict[str, st
             )
         outputs.append(english.casefold())
         validated.append({"id": item["id"], "english": english})
-    if len(outputs) >= 4 and Counter(outputs).most_common(1)[0][1] > max(2, len(outputs) // 3):
-        raise GeminiCaptionTranslationError(
-            "GEMINI_CAPTION_REPEATED_GENERIC_OUTPUT",
-            "Gemini repeated the same translation across unrelated captions.",
-        )
+    if len(outputs) >= 4:
+        repeated_output, repeated_count = Counter(outputs).most_common(1)[0]
+        repeated_source_keys = {
+            " ".join(str(source_item.get("source_text") or "").casefold().split())
+            for source_item, output in zip(batch, outputs)
+            if output == repeated_output
+        }
+        if repeated_count > max(2, len(outputs) // 3) and len(repeated_source_keys) >= 3:
+            raise GeminiCaptionTranslationError(
+                "GEMINI_CAPTION_REPEATED_GENERIC_OUTPUT",
+                "Gemini repeated the same translation across unrelated captions.",
+                retryable=True,
+            )
     return {"translations": validated}
 
 

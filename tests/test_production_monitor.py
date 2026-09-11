@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import pytest
+
+import app.services.simple_workflow as workflow
+
 
 def test_production_monitor_surface_and_truthful_evidence_contract():
     html = Path("app/static/simple/index.html").read_text(encoding="utf-8")
@@ -44,3 +48,97 @@ def test_monitor_does_not_fake_total_percentage():
     assert 'if (max > 0)' in js
     assert '"Chưa có counter định lượng"' in js
     assert 'Number.isFinite(renderPercent)' in js
+
+
+def test_render_progress_transient_windows_replace_lock_does_not_fail_render(tmp_path, monkeypatch):
+    real_replace = workflow.os.replace
+    calls = 0
+
+    def flaky_replace(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise PermissionError(5, "sharing violation")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(workflow.os, "replace", flaky_replace)
+    monkeypatch.setattr(workflow.time, "sleep", lambda _seconds: None)
+
+    assert workflow._write_render_progress(
+        tmp_path,
+        {"state": "rendering", "processed_seconds": 12.5, "duration_seconds": 20.0},
+    ) is True
+    assert calls == 3
+    assert workflow._load_render_progress(tmp_path)["processed_seconds"] == 12.5
+    assert not list((tmp_path / "diagnostics").glob("*.tmp"))
+
+
+def test_render_progress_persistent_windows_lock_is_best_effort(tmp_path, monkeypatch):
+    monkeypatch.setattr(workflow.os, "replace", lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError(5, "locked")))
+    monkeypatch.setattr(workflow.time, "sleep", lambda _seconds: None)
+
+    assert workflow._write_render_progress(tmp_path, {"state": "rendering"}) is False
+    assert not list((tmp_path / "diagnostics").glob("*.tmp"))
+
+
+def test_render_process_is_reaped_if_unexpected_monitor_exception_occurs(tmp_path, monkeypatch):
+    class FakePipe:
+        def __init__(self, lines=()):
+            self.lines = list(lines)
+            self.closed = False
+
+        def __iter__(self):
+            return iter(self.lines)
+
+        def read(self):
+            return ""
+
+        def close(self):
+            self.closed = True
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdout = FakePipe(["progress=continue\n"])
+            self.stderr = FakePipe()
+            self.return_code = None
+            self.terminated = False
+            self.killed = False
+
+        def poll(self):
+            return self.return_code
+
+        def terminate(self):
+            self.terminated = True
+            self.return_code = -15
+
+        def kill(self):
+            self.killed = True
+            self.return_code = -9
+
+        def wait(self, timeout=None):
+            return 0 if self.return_code is None else self.return_code
+
+    process = FakeProcess()
+    writes = 0
+
+    def write_progress(*_args, **_kwargs):
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            raise RuntimeError("unexpected monitor failure")
+        return True
+
+    monkeypatch.setattr(workflow.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(workflow, "_write_render_progress", write_progress)
+
+    with pytest.raises(RuntimeError, match="unexpected monitor failure"):
+        workflow._run_ffmpeg_with_progress(
+            ["ffmpeg", "output.mp4"],
+            run_dir=tmp_path,
+            duration_seconds=10.0,
+        )
+
+    assert process.terminated is True
+    assert process.killed is False
+    assert process.stdout.closed is True
+    assert process.stderr.closed is True

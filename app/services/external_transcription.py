@@ -71,10 +71,15 @@ def ensure_external_transcription_track(
     provider_metadata = getattr(provider, "last_metadata", {}) or {}
     detected_language = provider_metadata.get("language") or normalized_language or "unknown"
     metadata = {
-        "asr_provider": ASR_PROVIDER_NAME,
-        "asr_engine": "AutoSubs",
+        "asr_provider": str(provider_metadata.get("asr_provider") or ASR_PROVIDER_NAME),
+        "asr_engine": str(provider_metadata.get("asr_engine") or "AutoSubs"),
         "asr_engine_version": provider_metadata.get("engine_version"),
         "asr_model": provider_metadata.get("model", "small"),
+        "asr_model_revision": provider_metadata.get("model_revision"),
+        "compute_provider": provider_metadata.get("compute_provider"),
+        "compute_shard_id": provider_metadata.get("compute_shard_id"),
+        "compute_cache_hit": provider_metadata.get("cache_hit"),
+        "compute_runtime_fingerprint": provider_metadata.get("runtime_fingerprint"),
         "asr_task": "transcribe",
         "source_language": detected_language,
         "subtitle_language": detected_language,
@@ -85,7 +90,7 @@ def ensure_external_transcription_track(
         "audio_extraction_seconds": round(extraction_seconds, 3),
         "asr_processing_seconds": round(asr_seconds, 3),
         "segment_count": len(cues),
-        "fallback_attempts": 0,
+        "fallback_attempts": int(provider_metadata.get("fallback_attempts") or 0),
         "engine_translation": False,
         "forced_alignment": False,
     }

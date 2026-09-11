@@ -1,61 +1,135 @@
 # Goal
 
-Release the next stable AutoSub version from baseline `v1.9.0` / `ac271c1144ac1c0bd8e033e0cdf628f2f2bc49f8` with a truthful **Production Monitor** for long-running subtitle work.
+Deliver **AutoSub Localization V2** as a Windows-first, local-authoritative, one-click video-localization workflow that materially improves both **quality and throughput** over the current subtitle-only path.
 
-The product remains one-click automation: **Setup -> Production Monitor -> Result/QC**. AutoSub must not become a full subtitle editor. The monitor exists so the owner can answer, without opening raw logs: what is running now, whether it is making material progress, what subtitle artifacts have been found/generated, whether Gemini/cache/retries are involved, whether rendering is advancing, and whether final subtitle integrity checks passed.
+From one source video, the owner can choose target language and one of three product modes:
 
-# Critical User Journeys
+- **Subtitle Localization** — high-quality target subtitles;
+- **Full Visual Localization** — subtitles plus relevant source-language text anywhere in the visible frame replaced by target-language text;
+- **Full Localization + Voice** — Full Visual Localization plus target-language Kokoro narration using the run-level selected voice.
 
-## CUJ-A — OCR + Gemini monitored production
+Normal use remains: **configure -> Run once -> Production Monitor -> validated final video**. AutoSub is not becoming a full subtitle/video editor. Machine-detectable problems are repaired automatically within bounded policy; material unresolved quality problems fail/review truthfully instead of producing a false `COMPLETE`.
 
-1. Select an OCR + Gemini source and press Run once.
-2. Production Monitor stays visible for the whole run and shows the truthful current operation, elapsed time, mode/provider identity, worker heartbeat/activity and meaningful counters.
-3. During image analysis, the monitor exposes real sampled-frame / crop / OCR-batch progress when totals are known. It never invents a total percentage from unrelated stages.
-4. Once caption intervals exist, the monitor exposes a bounded live subtitle inspector with time range, source OCR text, translated text when available, OCR confidence and attention state. Raw provider payloads and secrets remain hidden.
-5. During Gemini resolution, the monitor surfaces bounded provider evidence: request/retry/cache counters and the selected model when known. Exact cached work is labelled as cache reuse rather than a new provider call.
-6. During rendering, the monitor shows real processed media time / source duration and speed when FFmpeg reports it.
-7. Result/QC shows integrity evidence such as detected/generated caption count, ASS Dialogue count, output validation and whether caption loss/overlap checks passed.
+Detailed invariants and thresholds are authoritative in `docs/LOCALIZATION_QUALITY_CONTRACT.md`. Provider/model research evidence is preserved in `docs/DRAFT_LOCALIZATION_V2_PROVIDER_QUALIFICATION.md`.
 
-## CUJ-B — Local audio monitored production
+# Critical User Journey
 
-1. Select local speech mode and press Run once.
-2. Production Monitor truthfully shows runtime readiness, recognition/subtitle creation/render stages, elapsed activity and subtitle artifacts as soon as the canonical track exists.
-3. Gemini-specific metrics remain absent or explicitly not applicable; the monitor never implies an external call for the local path.
-4. Render and final QC evidence use the same monitor/result language as OCR mode.
+1. Owner opens **Tạo Video**, selects a source video and target language.
+2. Owner selects Subtitle Localization, Full Visual Localization, or Full Localization + Voice.
+3. When voice is enabled, the same pre-Run screen exposes the real Kokoro voice, bounded speed configuration, and **Nghe thử** for the exact current voice/speed. Voice choice is not hidden only in Settings.
+4. Advanced compute policy defaults to a simple owner-facing choice such as Auto / Local only / Cloud allowed, no paid overage; provider details remain secondary diagnostics.
+5. Owner presses **Run** once.
+6. AutoSub preserves raw source evidence, aligns/fuses speech and visible-text evidence where available, translates/localizes semantic units, constructs subtitle/speech/visual replacement plans, routes qualified compute, renders and runs closed-loop QC.
+7. Production Monitor shows truthful current work, actual providers/models/fallbacks, progress/evidence and any bounded repair/escalation. It does not invent percentages or opaque quality scores.
+8. On the representative golden input, the normal path reaches a playable final video without a mandatory manual edit/review step and reports the applicable content/subtitle/audio/visual/render gates as PASS.
+9. After Run A completes, owner can immediately create Run B with different mode/voice/settings; Run B receives its own immutable snapshot while safe content-addressed cache reuse may persist. Run A history/artifacts remain bound to Run A.
 
 # Acceptance
 
-- **A1 — One-click preserved:** no mandatory review/edit step is inserted between Run and final output. The monitor is observational; technical logs remain advanced disclosure.
-- **A2 — Evidence-bearing status:** long-running processing visibly exposes current operation, elapsed duration, last material progress/heartbeat and stalled/abnormal warning when appropriate. A generic busy message alone is insufficient.
-- **A3 — Determinate only when truthful:** counters/percentages are shown only when numerator and denominator come from runtime evidence. Unknown total work remains stage/indeterminate rather than fake precision.
-- **A4 — OCR live metrics:** OCR mode surfaces real frame/crop/OCR-batch counts from `analysis_progress`, caption interval count, Gemini request/retry/cache evidence, and selected model when available.
-- **A5 — Live subtitle inspector:** the monitor displays a bounded, scrollable list of current caption artifacts with timing, source text, translated/resolved text when available, OCR confidence and warnings/attention state. The list is informational only and never exposes secrets or raw provider response bodies.
-- **A6 — Render progress:** FFmpeg render progress is persisted/read through the existing run directory and surfaced with processed media time, duration and speed. Render progress never regresses and reaches the source duration before successful completion within normal FFmpeg rounding tolerance.
-- **A7 — Result/QC evidence:** completion view states caption input/resolved/rendered counts, ASS Dialogue count, result validation and output eligibility. Caption-count mismatch or invalid render remains fail-closed.
-- **A8 — Stalled truth:** the UI can distinguish active heartbeat/material progress from an apparently stalled worker and does not report a failed/stalled process as healthy progress.
-- **A9 — Accessibility/responsive:** Production Monitor preserves WCAG-oriented focus visibility, keyboard access, semantic live status, reduced-motion behavior and usable desktop/small-width reflow. Desktop uses available horizontal space instead of a large empty single card.
-- **A10 — Regression:** focused monitor tests, existing OCR/audio tests, full `python -m pytest -q`, canonical-doc validation and storage preflight pass from the candidate Product HEAD.
-- **A11 — Real E2E:** one real OCR+Gemini fixture and one real local-audio fixture complete through the monitor with truthful evidence and validated MP4 outputs.
-- **A12 — Stable release:** accepted work is committed/pushed from one clean canonical `main`, versioned as the next feature release after 1.9.0, tagged, and accompanied by exact-tag source/checksum evidence. `v1.9.0` remains immutable historical baseline.
+- **A1 — Pre-Run product configuration:** target language, localization mode and all controls required to determine the run are visible/reachable before Run. Voice-enabled mode exposes real Kokoro voice + speed + preview in the main workflow.
+- **A2 — Evidence-preserving source model:** raw ASR/OCR observations are retained with provenance. Speech evidence and burned-in dialogue-caption evidence are not destructively collapsed when they disagree; disagreement is an escalation signal.
+- **A3 — ASR quality route:** qualified GPU Whisper large-v3-turbo is the fast quality candidate when available/beneficial; difficult/uncertain spans can escalate to large-v3 or corroborating evidence. Current local AutoSubs-small remains an offline/fallback path, not the sole V2 quality oracle.
+- **A4 — Subtitle quality:** final English dialogue subtitles satisfy the hard gates in `LOCALIZATION_QUALITY_CONTRACT.md`, including semantic segmentation, valid timing, maximum two lines, line/read-speed bounds, no dropped semantic units and no unresolved TTS/subtitle alignment failure when narration is enabled.
+- **A5 — Voice integrity:** changing voice/speed invalidates stale preview. Run snapshots provider/model/voice/speed. Final narration, when enabled, uses that snapshot and never truncates/overlaps speech to fake timing success.
+- **A6 — Whole-frame visual discovery:** Full Visual modes detect relevant source-language text across the frame, not only a fixed lower subtitle ROI. OCR observations provide geometry/confidence and are consolidated into temporal `TextTrack` identities before translation/replacement.
+- **A7 — Correct text scope:** localizable semantic source-language text (dialogue captions, UI labels, titles/captions, signs, chapter text, etc.) is localized. Existing target-language text, usernames/handles/IDs, non-semantic OCR noise, and protected logos/brand marks are preserved by policy unless explicitly classified otherwise. Mixed strings preserve identifiers/numbers while localizing semantic source-language portions as appropriate.
+- **A8 — Visual replacement quality:** Full Visual mode removes the source text for each accepted localizable TextTrack and renders target text in a spatially faithful, readable form. Easy regions use deterministic Tier A; natural backgrounds may use Tier B inpainting; difficult moving/occluded/decorative cases escalate rather than silently degrade.
+- **A9 — Closed-loop residual QC:** final Full Visual output is rescanned. Known material unprotected source-language residuals, target text clipping, unresolved replacement tracks or failed visual-integrity gates prevent false `COMPLETE` and link to the responsible track/time/region.
+- **A10 — Translation integrity:** extraction mode and translation provider are independent. Semantic translation is kept separate from display/narration condensation. No silent provider downgrade; final evidence identifies the provider/model/fallback path actually used.
+- **A11 — Qualified compute only:** cloud work runs only through a provider/model combination that passes applicable automation/commercial-use, privacy, license-chain, secret, integrity and recovery gates. Local state remains authoritative. Provider outage/quota exhaustion cannot corrupt accepted local work.
+- **A12 — Idempotent/resumable shards:** accepted cloud shards have immutable input identity, model/settings fingerprint and verified output hashes. Retry/preemption reuses accepted work and does not duplicate/corrupt it. Remote temporary artifacts have explicit cleanup state.
+- **A13 — Speed/economy truth:** Auto routing includes upload/startup/model-load/download overhead, not inference-only marketing numbers. A workload is routed to cloud by default only after representative evidence shows material E2E speed/capacity value; micro-workloads may stay local. Stable TextTracks are not repeatedly translated/replanned per frame.
+- **A14 — Truthful monitor/QC:** UI reports measurable facts (coverage, counts, timing/readability violations, provider/cache/retry state, unresolved tracks, residual language, TTS overflow/alignment, render validation). No fabricated single-number quality score.
+- **A15 — Golden E2E:** the full representative source completes through the real Simple UI in each enabled release mode being claimed, with validated MP4 and evidence-bound QC. Full Visual + Voice must prove the composed journey, not isolated OCR/TTS/model tests.
+- **A16 — Repeat-use isolation:** Run A -> COMPLETE -> new Run B proves no stale source/voice/track/job state becomes active in B. Immutable A artifacts/configuration remain bound to A; only explicitly reusable caches survive.
+- **A17 — Regression/release:** focused tests, relevant existing OCR/audio/monitor tests, full `python -m pytest -q`, docs/storage gates and real Product CUJ evidence pass from one canonical candidate HEAD before a stable V2 release claim. Owner real-use remains the final oracle for subjective visual/audio quality.
+
+# Acceptance Fixture / Golden Input
+
+Primary real fixture already present on the AutoSub machine:
+
+- source SHA-256: `b043a858225a24c6beaa915bdc0ccb82874cac0b6363b809227519276a26bd8e`
+- source size: 181,905,545 bytes
+- duration: ~458.3 s
+- resolution: 1920x1080
+- contains Chinese speech/dialogue captions plus whole-frame game/UI text suitable for ASR, subtitle, visual-text and localization testing.
+
+Research sub-fixtures derived from the same source are valid engineering evidence, including the 45 s audio sample, nine whole-frame OCR frames, the dense 4 s / 20-frame TextTrack sequence, and bounded real-region inpainting samples. Final Product Acceptance still requires the composed real-video journey, not only these sub-fixtures.
+
+# Non-goals
+
+- Full subtitle/video timeline editor or mandatory manual approval queue.
+- Cloud-hosted source of truth or cloud-only product operation.
+- Uploading/rendering the entire source video in cloud merely to consume free GPU when compact artifacts/local render suffice.
+- Hard dependency on one provider, free quota, GPU SKU or current provider pricing.
+- Translating every detected glyph, username, ID, existing target-language string, logo or brand mark blindly.
+- Running the heaviest OCR/segmentation/inpainting/generative model on every frame/track.
+- Mandatory shot-boundary CV subsystem in the first V2 release unless implementation evidence proves it necessary for acceptance.
+- Non-commercial-restricted model weights in the default monetized/commercial path.
+- Fake quality percentages or provider-success claims unsupported by artifact evidence.
 
 # Constraints
 
-- Windows-first, local single-user product.
-- No new observability subsystem, queue, editor timeline engine or Build OS lifecycle.
-- Reuse existing `analysis_progress`, subtitle track resolver, provider metadata, run validation and run-directory evidence files.
-- Add only the minimal persisted render/monitor evidence needed to make the current run observable.
-- Secrets never enter progress files, UI payloads, logs, Git or release archives.
-- Prefer `REUSE -> WIRE -> FIX -> ADD`; no speculative metrics or fake percentage.
-- CADS core remains unchanged unless the same failure class is independently observed in another project.
+- Windows-first, local single-user product; local run/artifact state is authoritative.
+- Preserve the accepted one-click normal journey and progressive disclosure. Exceptional quality failures may enter bounded repair/review, but the golden normal path must not require manual editing.
+- Run configuration becomes immutable at Start; terminal runs do not leak active state into the next run.
+- Secrets/tokens never enter Git, run artifacts, captured provider payloads or user-visible raw logs.
+- Provider terms and model/weight/dependency licenses are independent qualification gates; intended commercial/monetized use must be compatible.
+- `Cloud allowed, no paid overage` must fail closed if the provider-side budget/spend protection cannot be verified/configured; it must never silently authorize paid overage.
+- Cloud transfer minimizes data: audio/chunks, selected frames/crops/masks/manifests rather than full video when technically sufficient.
+- Use `REUSE -> WIRE -> FIX -> ADD`: generalize existing source-caption mask/render/residual-QC capabilities before building parallel replacements.
+- Pre-existing dirty Production Monitor/translation-quality changes in the working tree predate this V2 freeze. Do not overwrite/revert/fold them into V2 accidentally; reconcile them before the first V2 production-code change.
 
-# Baseline / Findings
+# Material Decisions
 
-- Baseline release: `v1.9.0`, commit `ac271c1144ac1c0bd8e033e0cdf628f2f2bc49f8`.
-- Current Simple UI processing view is a centered stage card with raw JSON hidden under details; it does not expose enough evidence for the owner to judge correctness/progress.
-- Existing backend already exposes `analysis_progress`, subtitle tracks, provider usage, timestamps and final validation. `resolved_cues` exposes timing/source/translation/OCR confidence once a track exists.
-- OCR analysis already persists frame/crop/OCR-batch heartbeat and stage history; these should be surfaced rather than duplicated.
-- FFmpeg render currently runs as one opaque `subprocess.run`; bounded render progress persistence is the main backend addition required.
+- Central domain becomes `LocalizationUnit` with `SpokenLocalizationUnit` and temporal `VisualTextUnit/TextTrack` projections; raw OCR frame detections and subtitle cues are evidence/presentation units, not the product domain.
+- Speech ASR and burned-in dialogue captions remain independent evidence channels. Align/fuse them semantically; do not arbitrarily choose one when they materially disagree.
+- Full Visual Localization is source-matched replacement by default: erase relevant source text and place target text at the corresponding visual role/location. Subtitle-only mode may use the standard readable lower-third presentation.
+- PP-OCRv6 small is the whole-frame fast pass; medium is escalation for uncertainty/disagreement/difficult text.
+- Whisper large-v3-turbo is the GPU fast-quality ASR candidate; large-v3 is escalation; AutoSubs-small stays local/offline fallback.
+- Kokoro remains local-first for preview and normal narration. Voice is run-level configuration on the pre-Run surface.
+- Visual cleanup uses tier routing: deterministic Tier A -> commercially compatible inpainting/temporal reconstruction Tier B -> difficult higher-tier/review. Heavy generative editing is not the baseline.
+- `TextTrack` dedupe/consensus is mandatory; repeated observations establish confidence but translation/style/replacement planning is performed once per accepted identity. Non-contiguous identical text may reuse translation memory without becoming the same geometry track.
+- Local control plane + qualified optional burst compute. Modal is currently the primary automated cloud candidate from live evidence; Kaggle standard consumer use is research/non-commercial only for this project; Colab Free is manual research only.
+- Cloud shard protocol is hash-bound, idempotent, resumable and explicitly cleaned after local verification.
 
-# Release Closure
+Durable rationale is recorded in `docs/DECISIONS/0008-localization-quality-v2.md` and `docs/DECISIONS/0009-qualified-burst-compute.md`.
 
-Do not open additional feature scope after the monitor acceptance criteria pass. Final closure is: focused acceptance -> real OCR/audio journeys -> full regression/docs/storage gates -> version/docs identity -> commit/push/tag -> exact-tag source bundle/checksum -> runtime smoke from tagged HEAD.
+# Progress
+
+- Provider/model qualification round completed sufficiently for architecture freeze.
+- Real Modal T4 CUDA, Whisper, PP-OCRv6 whole-frame OCR, LaMa text-removal, dense TextTrack dedupe and staged Volume integrity/idempotency/cleanup probes completed.
+- Frozen Goal/Acceptance, quality contract and ADRs are persisted in the repository; research drafts remain supporting evidence only.
+- V2 implementation has begun from foundations rather than UI-only controls: normalized run-level localization/compute/voice settings, deterministic immutable run snapshot identity, output-reuse compatibility, evidence-based English subtitle hard gates, a provider-agnostic hash-bound `ComputeShard` contract, and temporal `TextTrack` identity/consensus primitives are implemented with focused tests.
+- Local Kokoro runtime discovery is wired against the installed `kokoro 0.9.4` / `hexgrad/Kokoro-82M` snapshot. The catalog exposes the 28 official English voices with cached state. Real `bm_george` preview synthesis produced 24 kHz WAV + token timings; repeated preview hit the content-addressed cache in ~0.14 s. Explicit on-demand preparation of an uncached official voice (`bf_emma`) also passed.
+- Kokoro catalog/preview backend API is implemented, but the main pre-Run UI and final narration binding are not yet accepted; do not expose a mode as complete until composed processing exists.
+- Whole-frame OCR provider payloads now have a production-domain adapter that requires authoritative video timestamps, converts polygons into immutable observations, consolidates them into temporal TextTracks, and applies conservative source-script classification. Provider inference timing is never mistaken for media time.
+- English V2 subtitle quality evidence is now persisted per run and surfaced through run/monitor evidence. It remains intentionally non-enforcing until the bounded automatic repair path is wired, so stricter V2 rules cannot silently break the existing one-click workflow.
+- Public run creation now fails closed for Full Visual / Full Localization + Voice unless the explicit experimental gate is enabled; the product cannot claim an uncomposed mode and then silently emit subtitle-only output.
+- The TTS timeline schema was reconciled with `segment_text_spans`, enabling Kokoro token-time retiming while preserving existing timeline validation. Full repository `python -m pytest -q` passed after this reconciliation, and the public-mode guard focused suite also passed.
+- Pre-existing Production Monitor/translation-quality working-tree changes were preserved and their focused tests pass.
+- Real **12 s Full Visual composed mini E2E PASS** on the golden-derived fixture: 84 source TextTracks, 29 localizable, 29 translated, 29 replaced, and 0 final source-language residuals.
+- Real **12 s Full Localization + Voice composed mini E2E PASS** with `bm_george` at base speed `1.0`: Kokoro PCM fit PASS at bounded effective speed `1.036`, all 7 cues token-aligned, subtitle hard gates PASS after one bounded 62 ms display-boundary adjustment, 29/29 visual replacements PASS, 0 residual source tracks, and final output/evidence acceptance bindings match the immutable run snapshot.
+- Full repository `python -m pytest -q` plus `git diff --check` PASS after the composed mini fixes.
+- The main remaining engineering issue before public V2 exposure is throughput: the successful 12 s local Full Visual/Voice path takes minutes because whole-frame local PaddleOCR is CPU/micro-batch bound. Production routing must use qualified burst OCR and/or adaptive sampling/dedupe before running the full 458 s golden journey.
+- Throughput checkpoint: conservative visual-fingerprint reuse was implemented behind the existing 0.5 s authoritative sampling timeline and contract-tested, but a real 45 s golden-source probe selected all 90/90 frames (0% reuse). Dynamic game footage therefore proves whole-frame fingerprint dedupe is **not** the primary golden-path speed solution; it remains only a conservative optimization for sufficiently stable footage.
+- Cloud OCR is now bounded into independent 64-frame hash-bound shards before Modal execution. Large workloads therefore gain per-shard cache/retry/resume granularity instead of binding the entire full-length video OCR pass to one oversized shard; focused routing/provider tests pass.
+- Live local capability probe confirms Modal runtime is available, automated and commercially allowed, but `no_paid_overage_verified` is currently false. Auto routing therefore correctly remains local under the frozen fail-closed cost policy; no paid cloud run was initiated.
+- Public Simple UI was reconciled back to the accepted V1 one-click contract after regression caught premature V2 exposure. V2 mode/compute controls remain non-public while the backend experimental path and tests stay intact behind the explicit gate.
+- Current checkpoint verification on 2026-09-11: the four previously failing public-UI contract tests PASS, the focused Localization V2 suite PASSes 123/123, full repository `python -m pytest -q` PASSes, and `git diff --check` PASSes.
+- **No V2 stable release or Product Acceptance is claimed yet.** Mini composed evidence is sufficient to prove the architecture path, not the final full-length release CUJ.
+
+# Discoveries / Blockers
+
+- Cold cloud startup is material; useful batching/prebuilt images/model cache are required for speed.
+- PP-OCRv6 medium is not enough better on the current fixture to justify always-on use; use escalation.
+- Per-frame inpainting/removal success does not prove temporal visual quality. Human real-use remains required for flicker/background reconstruction on representative difficult tracks.
+- Provider-side no-paid-overage protection is an environment/owner enablement gate, not an unresolved product architecture question.
+
+# Next Safe Action
+
+1. Treat whole-frame fingerprint reuse as a secondary optimization only; the real 45 s golden probe showed 0% reuse on dynamic footage. Do not spend another iteration trying to make global-frame dedupe carry the throughput requirement.
+2. Keep the bounded 64-frame cloud-shard route as the primary production throughput path. Verify/configure the provider-side no-paid-overage safety gate before any paid-capable Modal run; until then Auto must remain local and truthful.
+3. Once that gate is verified, benchmark the bounded Modal OCR route on the 45 s real slice, compare full E2E wall time including transfer/startup/model-load/download, then re-run Full Visual + Voice on a longer real slice and finally the full 458 s golden source.
+4. Only after the longer/full throughput and quality gates pass should the public guard be removed and pre-Run mode/voice controls be exposed.
+5. Preserve the frozen documentation and V2 changes in clean Git checkpoints without reverting or accidentally folding unrelated pre-existing Production Monitor/translation work.

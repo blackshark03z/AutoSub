@@ -7,6 +7,7 @@ from app.core.hashing import sha256_file
 from app.core.config import get_settings
 from app.core.provider_cache import build_request_hash, read_cached_response, write_cached_response
 from app.providers.tts.base import TTSRequest, TTSResult
+from app.providers.tts.request import tts_request_payload
 
 
 class FakeTTSProvider:
@@ -75,24 +76,6 @@ class FakeTTSProvider:
             len(request.text),
         )
 
-
-def tts_request_payload(provider: str, request: TTSRequest) -> dict:
-    payload = {
-        "provider": provider,
-        "text": request.text,
-        "voice_id": request.voice_id,
-        "model": request.model,
-        "voice_settings": request.voice_settings,
-        "output_format": request.output_format,
-        "pronunciation_data": request.pronunciation_data,
-        "previous_request_ids": request.previous_request_ids[-3:],
-        "next_text": request.next_text,
-        "target_locale": request.target_locale,
-        "provider_request_version": request.provider_request_version,
-    }
-    if request.previous_text is not None:
-        payload["previous_text"] = request.previous_text
-    return payload
 
 
 def _write_tone(path: Path, duration_seconds: float) -> None:

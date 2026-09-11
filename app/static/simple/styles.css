@@ -459,6 +459,43 @@ textarea {
   font-weight: 750;
 }
 
+.voice-config-card {
+  margin-top: 16px;
+  border: 1px solid #d9dce1;
+  border-radius: 12px;
+  padding: 16px;
+  background: #fbfcfe;
+}
+
+.voice-config-heading,
+.voice-preview-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.voice-config-heading h3 {
+  margin: 2px 0 4px;
+}
+
+.voice-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.voice-preview-row {
+  justify-content: flex-start;
+  margin-top: 14px;
+}
+
+.voice-preview-audio {
+  width: 100%;
+  margin-top: 10px;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));

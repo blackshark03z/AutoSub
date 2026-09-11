@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import wave
 from pathlib import Path
@@ -97,7 +98,7 @@ def ensure_product_runtime_ready(product_root: Path, *, progress: ProgressCallba
 
     if before["autosubs_small_model"]["state"] != "ready":
         _progress(progress, "preparing_autosubs_model", "Preparing AutoSubs small model")
-    _probe_autosubs_small(binary)
+    _validate_autosubs_small(binary)
     _write_json(_autosubs_probe_record(root), {"binary_sha256": _sha256_file(binary), "model": AUTOSUBS_MODEL})
 
     translation_before = before["argos_runtime"]["state"] == "ready" and before["argos_zh_en_model"]["state"] == "ready"
@@ -106,7 +107,10 @@ def ensure_product_runtime_ready(product_root: Path, *, progress: ProgressCallba
         _prepare_translation(root)
     _validate_translation(root)
     _progress(progress, "runtime_ready", "Local runtime is ready")
-    return runtime_readiness(root, validate_cached=True)
+    # We have just completed real AutoSubs and Argos probes above. Re-running
+    # every expensive probe again while constructing the return payload can
+    # create a false negative under transient Windows memory/pagefile pressure.
+    return runtime_readiness(root, validate_cached=False)
 
 
 def _raise_controlled_test_failure() -> None:
@@ -143,7 +147,7 @@ def _autosubs_model_state(product_root: Path, binary: Path, *, validate_cached: 
         return _state("missing", "AutoSubs small model has not yet passed a real local probe")
     if validate_cached:
         try:
-            _probe_autosubs_small(binary)
+            _validate_autosubs_small(binary)
         except RuntimeReadinessError as exc:
             return _state("invalid", str(exc))
     return _state("ready", "AutoSubs small model passed real executable validation")
@@ -221,6 +225,21 @@ def _probe_autosubs_small(binary: Path) -> None:
         raise RuntimeReadinessError("AutoSubs small model probe returned invalid output.") from exc
     if not isinstance(payload, dict) or not isinstance(payload.get("segments"), list):
         raise RuntimeReadinessError("AutoSubs small model probe did not return a valid transcript payload.")
+
+
+def _validate_autosubs_small(binary: Path) -> None:
+    """Bound one retry around real AutoSubs inference for transient Windows pressure."""
+    last_error: RuntimeReadinessError | None = None
+    for attempt in range(2):
+        try:
+            _probe_autosubs_small(binary)
+            return
+        except RuntimeReadinessError as exc:
+            last_error = exc
+            if attempt == 0:
+                time.sleep(1.0)
+    if last_error is not None:
+        raise last_error
 
 
 def _translation_runtime_state(product_root: Path, *, validate_cached: bool) -> dict[str, dict[str, str]]:
@@ -311,7 +330,18 @@ def _validate_translation(product_root: Path) -> None:
     _run_argos_import_probe(python_path, packages)
     if not _valid_argos_model_metadata(packages / ARGOS_MODEL_ID):
         raise RuntimeReadinessError("Chinese to English translation model metadata validation failed.")
-    _run_translation_probe(python_path, packages)
+    last_error: RuntimeReadinessError | None = None
+    for attempt in range(2):
+        try:
+            _run_translation_probe(python_path, packages)
+            last_error = None
+            break
+        except RuntimeReadinessError as exc:
+            last_error = exc
+            if attempt == 0:
+                time.sleep(1.0)
+    if last_error is not None:
+        raise last_error
 
 
 def _run_argos_import_probe(python_path: Path, packages: Path) -> None:

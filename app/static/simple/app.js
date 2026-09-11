@@ -10,6 +10,9 @@ const state = {
   starting: false,
   startApiCalls: 0,
   readiness: null,
+  voices: null,
+  voicePreviewSignature: "",
+  voicePreviewLoading: false,
 };
 
 const FLOW_VIEWS = ["setup", "settings", "processing", "completed", "error"];
@@ -59,6 +62,24 @@ const TRACK_TYPE_LABELS = {
 };
 
 const $ = (id) => document.getElementById(id);
+
+const LOCALIZATION_MODE_LABELS = {
+  subtitle_localization: "Subtitle Localization",
+  full_visual_localization: "Full Visual Localization",
+  full_localization_voice: "Full Localization + Voice",
+};
+
+function localizationMode(run = null) {
+  return run?.settings?.localization_mode || $("localizationMode")?.value || "subtitle_localization";
+}
+
+function voiceEnabled(run = null) {
+  return localizationMode(run) === "full_localization_voice";
+}
+
+function visualLocalizationEnabled(run = null) {
+  return ["full_visual_localization", "full_localization_voice"].includes(localizationMode(run));
+}
 
 function captionMode(run = null) {
   return run?.settings?.caption_mode || $("cleanupMode")?.value || "external_audio_transcription";
@@ -232,16 +253,19 @@ function renderSource(source) {
 }
 
 function updateStartAction() {
-  const missingGemini = isOcrMode() && state.readiness && state.readiness?.gemini_runtime?.configured !== true;
-  const ready = Boolean(state.validatedSource && state.sourcePath && !state.starting && !missingGemini);
+  const missingGemini = (isOcrMode() || visualLocalizationEnabled()) && state.readiness && state.readiness?.gemini_runtime?.configured !== true;
+  const missingVoice = voiceEnabled() && (state.voices?.ready !== true || !$("voiceSelect")?.value);
+  const ready = Boolean(state.validatedSource && state.sourcePath && !state.starting && !missingGemini && !missingVoice);
   $("startBtn").disabled = !ready;
   $("startReason").textContent = state.starting
     ? "Đang bắt đầu lượt xử lý..."
     : missingGemini
       ? "Hãy lưu Gemini API key để dùng chế độ OCR + Gemini."
-      : ready
-        ? "Video đã sẵn sàng. Một lần bấm sẽ tạo phụ đề và xuất video."
-        : "Hãy chọn một video để tiếp tục.";
+      : missingVoice
+        ? "Kokoro chưa sẵn sàng hoặc chưa có giọng hợp lệ cho lượt chạy này."
+        : ready
+          ? "Sẵn sàng. Bấm Run một lần để tạo và kiểm tra video."
+          : "Hãy chọn một video để tiếp tục.";
 }
 
 function runtimeComponents(readiness) {
@@ -340,6 +364,9 @@ function renderMonitorEvidence(run) {
   const analysis = monitor.analysis || run?.analysis_progress || {};
   const provider = monitor.provider || {};
   const render = monitor.render_progress || {};
+  const v2 = monitor.v2 || {};
+  const visual = v2.visual || null;
+  const narration = v2.narration || null;
   const metrics = [
     progressMetric("Frame đã lấy", analysis.sampled_frames_completed, analysis.sampled_frames_total),
     progressMetric("Crop phụ đề", analysis.dense_crops_completed, analysis.dense_crops_total),
@@ -349,12 +376,26 @@ function renderMonitorEvidence(run) {
   if (isOcrMode(run)) {
     metrics.push(monitorMetric("Gemini", `${Number(provider.request_count || 0)} request`, `${Number(provider.cache_hits || 0)} cache hit · ${Number(provider.retry_count || 0)} retry`));
   }
+  if (visual) {
+    metrics.push(monitorMetric(
+      "Visual text",
+      `${Number(visual.planned_replacement_count || 0)}/${Number(visual.expected_localized_track_count || 0)} replacement`,
+      `${Number(visual.residual_source_track_count || 0)} residual · ${Number(visual.unresolved_replacement_count || 0)} unresolved`,
+    ));
+  }
+  if (narration) {
+    metrics.push(monitorMetric(
+      "Kokoro",
+      `${narration.voice_id || "voice"} · ${Number(narration.base_speed || 1).toFixed(2)}×`,
+      `${Number(narration.retimed_cue_count || 0)}/${Number(narration.expected_retimed_cue_count || 0)} cue aligned · ${Number(narration.overflow_count || 0)} overflow`,
+    ));
+  }
   if (render.duration_seconds > 0) {
     metrics.push(monitorMetric("Render", `${formatDuration(Number(render.processed_seconds || 0))}/${formatDuration(Number(render.duration_seconds))}`, render.speed || "Đang xuất"));
   }
   $("monitorMetrics").innerHTML = metrics.join("") || monitorMetric("Tiến trình", "Đang khởi tạo", "Chưa có counter định lượng");
 
-  const modeText = isOcrMode(run) ? "PaddleOCR → Gemini" : "AutoSubs → Argos";
+  const modeText = LOCALIZATION_MODE_LABELS[v2.mode || localizationMode(run)] || "AutoSub";
   $("monitorMode").textContent = modeText;
   $("monitorElapsed").textContent = `Đã chạy ${formatDuration(Number(monitor.elapsed_seconds || 0))}`;
   const age = Number(monitor.activity_age_seconds);
@@ -363,18 +404,29 @@ function renderMonitorEvidence(run) {
   $("monitorActivity").classList.toggle("warning", stalled);
   $("monitorActivity").classList.toggle("neutral", !stalled);
 
+  const asrRoute = v2.compute?.asr || {};
+  const visualRoute = v2.compute?.visual_ocr || {};
+  const computeParts = [];
+  if (asrRoute.route) computeParts.push(`ASR ${asrRoute.route}${asrRoute.provider ? `/${asrRoute.provider}` : ""}`);
+  if (visualRoute.route) computeParts.push(`OCR ${visualRoute.route}${visualRoute.provider ? `/${visualRoute.provider}` : ""}`);
   const evidence = [
     ["Worker", stalled ? "Cần kiểm tra" : (monitor.worker_state || "Đang chạy")],
-    ["Provider", provider.name || (isOcrMode(run) ? "Gemini" : "Chỉ chạy local")],
-    ["Model", provider.model || (isOcrMode(run) ? "Đang xác định" : "Không áp dụng")],
-    ["Interval", String(Number(analysis.caption_intervals_total || 0))],
+    ["Nguồn", provider.source_provider || (isOcrMode(run) ? "PaddleOCR" : "Đang xác định")],
+    ["Dịch", `${provider.name || "Đang xác định"}${provider.model ? ` · ${provider.model}` : ""}`],
+    ["Compute", computeParts.join(" · ") || "Local / chưa cần route"],
   ];
   $("monitorEvidenceGrid").innerHTML = evidence.map(([label, value]) => `<div><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`).join("");
   $("monitorWarning").textContent = stalled
     ? "Không có tiến triển vật chất gần đây. AutoSub sẽ không báo hoàn tất nếu worker đã dừng hoặc kết quả chưa hợp lệ."
-    : provider.prevalidated_evidence_reused
-      ? "Đang tái sử dụng kết quả Gemini đã được xác minh/cache; đây không phải request mới."
-      : "Các số liệu trên lấy từ evidence của run hiện tại; không dùng phần trăm tổng giả.";
+    : provider.translation_fallback
+      ? `Đã chuyển sang provider fallback: ${provider.translation_fallback_reason || "provider chính không sẵn sàng"}. Thay đổi này được ghi vào evidence của run.`
+      : visual && (Number(visual.residual_source_track_count || 0) > 0 || Number(visual.unresolved_replacement_count || 0) > 0)
+        ? "Visual QC vẫn còn residual/unresolved track; lượt chạy chưa được phép COMPLETE cho tới khi gate đạt."
+        : narration && Number(narration.overflow_count || 0) > 0
+          ? "Narration còn TTS overflow; AutoSub sẽ sửa trong giới hạn hoặc fail gate thay vì cắt/đè lời."
+          : provider.prevalidated_evidence_reused
+            ? "Đang tái sử dụng evidence Gemini đã được xác minh/cache; đây không phải request mới."
+            : "Các số liệu trên lấy từ evidence của run hiện tại; không dùng điểm chất lượng tổng hợp giả.";
 
   const renderBar = $("processingProgress");
   const renderPercent = Number(render.percentage);
@@ -394,15 +446,28 @@ function renderMonitorEvidence(run) {
 
 function renderResultQc(run) {
   const qc = run?.monitor?.qc || {};
+  const subtitle = qc.subtitle_quality || {};
+  const visual = qc.visual_quality || null;
+  const narration = qc.narration_quality || null;
   const values = [
     ["Đã phát hiện", qc.detected_caption_count || "—"],
     ["Đã giải quyết", qc.resolved_caption_count || "—"],
     ["ASS Dialogue", qc.rendered_dialogue_count ?? "—"],
     ["Mất câu", qc.caption_loss_detected ? "Có — bị chặn" : "Không phát hiện"],
-    ["Nội dung", qc.content_validation || run?.result_validation?.status || "—"],
-    ["Output", qc.output_eligible ? "Hợp lệ" : "Chưa hợp lệ"],
+    ["Subtitle gate", subtitle.status || qc.content_validation || "—"],
   ];
-  $("resultQcSummary").innerHTML = values.map(([label, value]) => `<div class="qc-card ${String(value).includes("bị chặn") ? "bad" : ""}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`).join("");
+  if (visual) {
+    values.push(["Visual gate", `${visual.status || "—"} · ${Number(visual.residual_source_track_count || 0)} residual · ${Number(visual.unresolved_replacement_count || 0)} unresolved`]);
+  }
+  if (narration) {
+    values.push(["Narration gate", `${narration.status || "—"} · ${Number(narration.retimed_cue_count || 0)}/${Number(narration.expected_retimed_cue_count || 0)} aligned · ${Number(narration.overflow_count || 0)} overflow`]);
+  }
+  values.push(["Output", qc.output_eligible ? "Hợp lệ" : "Chưa hợp lệ"]);
+  $("resultQcSummary").innerHTML = values.map(([label, value]) => {
+    const text = String(value);
+    const bad = text.includes("bị chặn") || text.startsWith("FAIL") || text.includes("Chưa hợp lệ") || /[1-9]\d* (residual|unresolved|overflow)/.test(text);
+    return `<div class="qc-card ${bad ? "bad" : ""}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`;
+  }).join("");
 }
 
 function renderProcessing(run) {
@@ -664,11 +729,22 @@ function schedulePathValidation() {
 }
 
 function collectSettings() {
-  return {
+  const mode = localizationMode();
+  const settings = {
     target_language: $("targetLanguage").value,
     copy_source_into_workspace: $("copySource").checked,
     caption_mode: $("cleanupMode").value,
+    localization_mode: mode,
+    translation_policy: "quality_auto",
+    subtitle_quality_profile: "english_v2",
+    compute_policy: $("computePolicy").value,
   };
+  if (mode === "full_localization_voice") {
+    settings.tts_provider = "kokoro_local";
+    settings.voice_id = $("voiceSelect").value || state.voices?.default_voice_id || "bm_george";
+    settings.voice_speed = Number($("voiceSpeed").value || 1);
+  }
+  return settings;
 }
 
 async function ensureRun() {
@@ -784,7 +860,15 @@ function preserveSelectionFromRun(run) {
   state.sourcePath = run.source.path || "";
   state.validatedSource = run.source;
   $("sourcePath").value = state.sourcePath;
+  const settings = run.settings || {};
+  if (settings.caption_mode && $("cleanupMode")) $("cleanupMode").value = settings.caption_mode;
+  if (settings.localization_mode && $("localizationMode")) $("localizationMode").value = settings.localization_mode;
+  if (settings.compute_policy && $("computePolicy")) $("computePolicy").value = settings.compute_policy;
+  if (settings.voice_speed != null && $("voiceSpeed")) $("voiceSpeed").value = String(settings.voice_speed);
+  if (settings.voice_id && $("voiceSelect")) $("voiceSelect").value = settings.voice_id;
   renderSource(run.source);
+  renderVoiceCatalog();
+  updateModeUi();
   $("validationPill").textContent = "Video hợp lệ";
   $("validationPill").classList.add("pass");
 }
@@ -1025,18 +1109,135 @@ function handleActionError(error) {
   setMessage(error.message || "Đã xảy ra lỗi.", true);
 }
 
+function voiceSignature() {
+  return `${$("voiceSelect")?.value || ""}:${Number($("voiceSpeed")?.value || 1).toFixed(3)}`;
+}
+
+function selectedVoiceRecord() {
+  const voiceId = $("voiceSelect")?.value || "";
+  return (state.voices?.voices || []).find((voice) => voice.voice_id === voiceId) || null;
+}
+
+function invalidateVoicePreview(message = "Bản nghe thử chưa khớp cấu hình hiện tại.") {
+  state.voicePreviewSignature = "";
+  const audio = $("voicePreviewAudio");
+  if (audio) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.hidden = true;
+    audio.load();
+  }
+  if ($("voicePreviewStatus")) $("voicePreviewStatus").textContent = message;
+}
+
+function renderVoiceCatalog() {
+  const select = $("voiceSelect");
+  const previewButton = $("previewVoiceBtn");
+  const status = state.voices || {};
+  const voices = Array.isArray(status.voices) ? status.voices : [];
+  const current = select?.value || status.default_voice_id || "bm_george";
+  if (select) {
+    select.innerHTML = voices.map((voice) => {
+      const accent = voice.accent === "British" ? "Anh" : voice.accent === "American" ? "Mỹ" : (voice.accent || "English");
+      const gender = voice.gender === "male" ? "Nam" : voice.gender === "female" ? "Nữ" : voice.gender || "";
+      const cached = voice.cached ? " · đã có trên máy" : "";
+      return `<option value="${escapeHtml(voice.voice_id)}">${escapeHtml(`${voice.name} — ${gender} · ${accent}${cached}`)}</option>`;
+    }).join("");
+    const ids = new Set(voices.map((voice) => voice.voice_id));
+    select.value = ids.has(current) ? current : (ids.has(status.default_voice_id) ? status.default_voice_id : (voices[0]?.voice_id || ""));
+    select.disabled = status.ready !== true || !voices.length;
+  }
+  const selected = selectedVoiceRecord();
+  if ($("voiceRuntimeStatus")) {
+    $("voiceRuntimeStatus").textContent = status.ready === true
+      ? `${status.model || "Kokoro 82M"} · runtime ${status.runtime_version || "ready"}${selected && !selected.cached ? " · giọng này sẽ được cache khi nghe thử/chạy" : ""}`
+      : (status.message || "Kokoro chưa sẵn sàng trên máy.");
+  }
+  if ($("voiceCachedPill")) {
+    $("voiceCachedPill").textContent = status.ready === true
+      ? `${Number(status.cached_voice_count || 0)}/${voices.length} giọng đã cache`
+      : "Chưa sẵn sàng";
+    $("voiceCachedPill").classList.toggle("pass", status.ready === true);
+    $("voiceCachedPill").classList.toggle("error", status.ready !== true);
+  }
+  if (previewButton) previewButton.disabled = status.ready !== true || !select?.value || state.voicePreviewLoading;
+  if ($("voiceSpeed") && status.speed) {
+    $("voiceSpeed").min = String(status.speed.min ?? 0.85);
+    $("voiceSpeed").max = String(status.speed.max ?? 1.20);
+  }
+  if ($("voiceSpeedValue")) $("voiceSpeedValue").textContent = `${Number($("voiceSpeed")?.value || 1).toFixed(2)}×`;
+}
+
+async function loadVoiceCatalog() {
+  try {
+    state.voices = await api("/api/simple/voices");
+  } catch (error) {
+    state.voices = { ready: false, voices: [], message: error.message || "Không thể đọc danh sách giọng Kokoro." };
+  }
+  renderVoiceCatalog();
+  updateStartAction();
+}
+
+async function previewSelectedVoice() {
+  if (state.voicePreviewLoading || state.voices?.ready !== true || !$("voiceSelect")?.value) return;
+  const signature = voiceSignature();
+  state.voicePreviewLoading = true;
+  renderVoiceCatalog();
+  $("voicePreviewStatus").textContent = "Đang tạo bản nghe thử đúng voice/speed hiện tại...";
+  try {
+    const result = await api("/api/simple/voices/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        voice_id: $("voiceSelect").value,
+        speed: Number($("voiceSpeed").value || 1),
+      }),
+    });
+    if (signature !== voiceSignature()) {
+      invalidateVoicePreview();
+      return;
+    }
+    const audio = $("voicePreviewAudio");
+    audio.src = result.audio_url;
+    audio.hidden = false;
+    audio.load();
+    state.voicePreviewSignature = signature;
+    const selected = selectedVoiceRecord();
+    if (selected && !selected.cached) {
+      selected.cached = true;
+      state.voices.cached_voice_count = Number(state.voices.cached_voice_count || 0) + 1;
+    }
+    $("voicePreviewStatus").textContent = "Bản nghe thử khớp voice/speed hiện tại.";
+    await audio.play().catch(() => {});
+  } catch (error) {
+    invalidateVoicePreview(error.message || "Không thể tạo bản nghe thử.");
+  } finally {
+    state.voicePreviewLoading = false;
+    renderVoiceCatalog();
+    updateStartAction();
+  }
+}
+
 function updateModeUi() {
   const ocr = isOcrMode();
-  $("geminiRequirement").hidden = !ocr;
+  const visual = visualLocalizationEnabled();
+  const voice = voiceEnabled();
+  $("geminiRequirement").hidden = !(ocr || visual);
+  $("voiceConfigCard").hidden = !voice;
   $("captionModeHelp").textContent = ocr
-    ? "PaddleOCR đọc phụ đề trên máy; Gemini sửa/giải nghĩa và dịch sang tiếng Anh qua Internet."
-    : "AutoSubs nhận dạng lời nói; Argos dịch Trung → Anh trên máy.";
-  if (ocr && state.readiness) {
+    ? "PaddleOCR đọc phụ đề có sẵn; Gemini sửa/giải nghĩa và dịch sang tiếng Anh."
+    : "Nhận dạng lời nói tạo source evidence; Quality Auto ưu tiên bản dịch chất lượng và ghi rõ provider/fallback đã dùng.";
+  $("localizationModeHelp").textContent = voice
+    ? "Bản địa hóa phụ đề + chữ trong khung hình, sau đó tạo narration Kokoro và căn lại phụ đề theo giọng thật."
+    : visual
+      ? "Bản địa hóa phụ đề và chữ nguồn có ý nghĩa trên toàn khung hình; logo/ID/noise được bảo vệ theo policy."
+      : "Tạo phụ đề đích chất lượng cao, giữ nguyên các phần hình ảnh khác.";
+  if ((ocr || visual) && state.readiness) {
     const keyCount = Number(state.readiness?.gemini_runtime?.count || 0);
     $("geminiRequirementText").textContent = keyCount > 0
-      ? `Đã có ${keyCount} key. Gemini sẽ được kiểm tra kết nối trước khi OCR bắt đầu.`
-      : "Chưa có key. Mở Cài đặt để thêm key trước khi chạy OCR + Gemini.";
+      ? `Đã có ${keyCount} key. Gemini sẽ được kiểm tra model/kết nối trước khi phần cần Gemini bắt đầu.`
+      : "Chưa có key. Full Visual và OCR + Gemini cần ít nhất một Gemini API key.";
   }
+  renderVoiceCatalog();
   updateStartAction();
 }
 
@@ -1131,6 +1332,33 @@ function wireEvents() {
     updateModeUi();
     renderReadiness().catch(handleActionError);
   });
+  $("localizationMode").addEventListener("change", () => {
+    if (state.run?.internal_state === "selected") state.run = null;
+    invalidateVoicePreview("Chế độ đã thay đổi; bản nghe thử cũ không còn được dùng.");
+    updateModeUi();
+    renderReadiness().catch(handleActionError);
+  });
+  $("computePolicy").addEventListener("change", () => {
+    if (state.run?.internal_state === "selected") state.run = null;
+    updateStartAction();
+  });
+  $("voiceSelect").addEventListener("change", () => {
+    if (state.run?.internal_state === "selected") state.run = null;
+    invalidateVoicePreview("Giọng đã thay đổi. Hãy nghe thử lại nếu muốn kiểm tra.");
+    renderVoiceCatalog();
+    updateStartAction();
+  });
+  $("voiceSpeed").addEventListener("input", () => {
+    $("voiceSpeedValue").textContent = `${Number($("voiceSpeed").value || 1).toFixed(2)}×`;
+    if (state.voicePreviewSignature && state.voicePreviewSignature !== voiceSignature()) {
+      invalidateVoicePreview("Tốc độ đã thay đổi. Hãy nghe thử lại nếu muốn kiểm tra.");
+    }
+  });
+  $("voiceSpeed").addEventListener("change", () => {
+    if (state.run?.internal_state === "selected") state.run = null;
+    updateStartAction();
+  });
+  $("previewVoiceBtn").addEventListener("click", () => previewSelectedVoice());
   $("sourcePath").addEventListener("input", schedulePathValidation);
   $("sourcePath").addEventListener("change", () => {
     clearTimeout(state.validationTimer);
@@ -1216,6 +1444,7 @@ function wireEvents() {
 
 wireEvents();
 updateModeUi();
+loadVoiceCatalog();
 renderReadiness();
 renderRun(null, { explicitNew: true });
 restoreInitialState().catch((error) => {

@@ -15,6 +15,7 @@ class TTSRequest:
     next_text: str | None = None
     target_locale: str = "en-US"
     output_format: str = "mp3_44100_128"
+    speed: float = 1.0
     voice_settings: dict[str, float] = field(
         default_factory=lambda: {"stability": 0.55, "similarity_boost": 0.75}
     )

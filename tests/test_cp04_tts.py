@@ -115,6 +115,7 @@ def test_cache_key_invalidates_only_material_tts_inputs():
     for changed in (
         replace(request, text="Changed narration."),
         replace(request, voice_id="voice-b"),
+        replace(request, speed=1.1),
         replace(request, model="model-b"),
         replace(request, output_format="pcm_44100"),
         replace(request, target_locale="en-GB"),

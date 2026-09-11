@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import gc
 import json
 import math
 import re
@@ -80,6 +81,9 @@ OCR_BATCH_SIZE = 16
 PROVIDER_BATCH_TIMEOUT_SECONDS = 180.0
 TRANSLATION_FUTURE_POLL_SECONDS = 5.0
 FFMPEG_EXTRACTION_TIMEOUT_SECONDS = 300.0
+FFMPEG_ANALYSIS_THREADS = 4
+FFMPEG_FILTER_THREADS = 2
+FFMPEG_RESOURCE_RETRY_DELAYS_SECONDS = (2.0, 5.0)
 
 
 class SourceCaptionUnavailableError(ValueError):
@@ -718,6 +722,59 @@ def _valid_source_bbox(value: Any, *, width: int, height: int) -> bool:
     return 0 <= left < right < width and 0 <= top < bottom < height
 
 
+def _normalized_process_return_code(value: int | None) -> int | None:
+    if value is None:
+        return None
+    code = int(value)
+    if code > 0x7FFFFFFF:
+        code -= 0x100000000
+    return code
+
+
+def _is_ffmpeg_resource_exhaustion(exc: BaseException, stderr: str = "") -> bool:
+    if isinstance(exc, OSError):
+        if getattr(exc, "winerror", None) == 1455 or getattr(exc, "errno", None) == 12:
+            return True
+    if isinstance(exc, subprocess.CalledProcessError):
+        if _normalized_process_return_code(exc.returncode) == -12:
+            return True
+        stderr = stderr or str(exc.stderr or "")
+    message = f"{exc} {stderr}".lower()
+    return any(
+        marker in message
+        for marker in (
+            "cannot allocate memory",
+            "not enough memory",
+            "paging file is too small",
+            "winerror 1455",
+        )
+    )
+
+
+def _cleanup_partial_frame_outputs(frame_dir: Path) -> None:
+    for existing in frame_dir.glob("frame_*.jpg"):
+        existing.unlink(missing_ok=True)
+
+
+def _resource_retry_wait(
+    delay_seconds: float,
+    *,
+    progress: CaptionAnalysisProgress | None,
+    retry_number: int,
+) -> None:
+    deadline = time.monotonic() + max(0.0, float(delay_seconds))
+    if progress is not None:
+        progress.update(
+            force=True,
+            current_item_id=f"ffmpeg_frame_extraction_memory_retry_{retry_number}",
+            retry_count=retry_number,
+        )
+    while time.monotonic() < deadline:
+        if progress is not None:
+            progress.heartbeat(f"ffmpeg_frame_extraction_memory_retry_{retry_number}", force=True)
+        time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
+
 def _sample_frames_with_ffmpeg(
     source_path: Path,
     frame_dir: Path,
@@ -731,8 +788,7 @@ def _sample_frames_with_ffmpeg(
     if not ffmpeg:
         raise SourceCaptionUnavailableError(SOURCE_CAPTION_BLOCK_MESSAGE)
     frame_dir.mkdir(parents=True, exist_ok=True)
-    for existing in frame_dir.glob("frame_*.jpg"):
-        existing.unlink(missing_ok=True)
+    _cleanup_partial_frame_outputs(frame_dir)
     filters = [f"fps={max(1.0, round(1.0 / max(step, 0.001), 6))}"]
     if crop is not None:
         left, top, right, bottom = crop
@@ -744,6 +800,10 @@ def _sample_frames_with_ffmpeg(
         "-hide_banner",
         "-loglevel",
         "error",
+        "-threads",
+        str(FFMPEG_ANALYSIS_THREADS),
+        "-filter_threads",
+        str(FFMPEG_FILTER_THREADS),
         "-i",
         str(source_path),
         "-vf",
@@ -752,22 +812,50 @@ def _sample_frames_with_ffmpeg(
         "2",
         str(output_pattern),
     ]
-    started = time.monotonic()
-    try:
-        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        while process.poll() is None:
-            if progress is not None:
-                progress.heartbeat("ffmpeg_frame_extraction", force=True)
-            if time.monotonic() - started > FFMPEG_EXTRACTION_TIMEOUT_SECONDS:
+    attempts = len(FFMPEG_RESOURCE_RETRY_DELAYS_SECONDS) + 1
+    for attempt_index in range(attempts):
+        started = time.monotonic()
+        process: subprocess.Popen[str] | None = None
+        stderr = ""
+        try:
+            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            while process.poll() is None:
+                if progress is not None:
+                    progress.heartbeat("ffmpeg_frame_extraction", force=True)
+                if time.monotonic() - started > FFMPEG_EXTRACTION_TIMEOUT_SECONDS:
+                    process.terminate()
+                    process.wait(timeout=10)
+                    raise CaptionAnalysisError("CAPTION_FRAME_EXTRACTION_TIMEOUT", "Frame extraction exceeded its bounded timeout")
+                time.sleep(2)
+            stderr = process.stderr.read() if process.stderr is not None else ""
+            if process.returncode != 0:
+                raise subprocess.CalledProcessError(process.returncode, command, stderr=stderr)
+            break
+        except CaptionAnalysisError:
+            raise
+        except (OSError, subprocess.CalledProcessError) as exc:
+            if process is not None and process.poll() is None:
                 process.terminate()
-                process.wait(timeout=10)
-                raise CaptionAnalysisError("CAPTION_FRAME_EXTRACTION_TIMEOUT", "Frame extraction exceeded its bounded timeout")
-            time.sleep(2)
-        stderr = process.stderr.read() if process.stderr is not None else ""
-        if process.returncode != 0:
-            raise subprocess.CalledProcessError(process.returncode, command, stderr=stderr)
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise SourceCaptionUnavailableError(SOURCE_CAPTION_BLOCK_MESSAGE) from exc
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=10)
+            resource_exhausted = _is_ffmpeg_resource_exhaustion(exc, stderr)
+            if not resource_exhausted:
+                raise SourceCaptionUnavailableError(SOURCE_CAPTION_BLOCK_MESSAGE) from exc
+            _cleanup_partial_frame_outputs(frame_dir)
+            if attempt_index >= len(FFMPEG_RESOURCE_RETRY_DELAYS_SECONDS):
+                raise CaptionAnalysisError(
+                    "SYSTEM_MEMORY_PRESSURE",
+                    "Windows did not have enough available memory for video frame extraction after bounded automatic retries.",
+                ) from exc
+            gc.collect()
+            _resource_retry_wait(
+                FFMPEG_RESOURCE_RETRY_DELAYS_SECONDS[attempt_index],
+                progress=progress,
+                retry_number=attempt_index + 1,
+            )
     output_files = sorted(frame_dir.glob("frame_*.jpg"))
     if not output_files:
         raise SourceCaptionUnavailableError(SOURCE_CAPTION_BLOCK_MESSAGE)
@@ -841,6 +929,20 @@ def _run_ocr_batches(
     }
 
 
+def _translation_material_signature(progress: CaptionAnalysisProgress) -> tuple[int, ...]:
+    snapshot = progress.snapshot()
+    return tuple(
+        int(snapshot.get(key) or 0)
+        for key in (
+            "translations_completed",
+            "gemini_requests",
+            "gemini_retries",
+            "gemini_cache_hits",
+            "gemini_cache_misses",
+        )
+    )
+
+
 def _await_translation_batch_with_heartbeat(
     future: Any,
     *,
@@ -850,12 +952,25 @@ def _await_translation_batch_with_heartbeat(
     poll_seconds: float = TRANSLATION_FUTURE_POLL_SECONDS,
     monotonic: Any = time.monotonic,
 ) -> Any:
-    deadline = monotonic() + timeout_seconds
+    """Wait for translation while timing out only an idle/stalled batch.
+
+    A text-only translation future can legitimately contain many bounded Gemini
+    requests.  The provider already applies a timeout to each HTTP request, so
+    an absolute deadline for the whole caption set incorrectly kills large
+    videos that are still making measurable progress.  Refresh the idle
+    deadline only when durable material counters change; heartbeat writes from
+    this waiter do not extend it.
+    """
+    last_material_signature = _translation_material_signature(progress)
+    idle_deadline = monotonic() + timeout_seconds
     while True:
-        remaining_seconds = deadline - monotonic()
+        remaining_seconds = idle_deadline - monotonic()
         if remaining_seconds <= 0:
-            future.cancel()
-            raise CaptionAnalysisError("CAPTION_TRANSLATION_BATCH_TIMEOUT", "Caption translation batch timed out")
+            try:
+                return future.result(timeout=0)
+            except FutureTimeoutError as exc:
+                future.cancel()
+                raise CaptionAnalysisError("CAPTION_TRANSLATION_BATCH_TIMEOUT", "Caption translation batch timed out") from exc
         try:
             return future.result(timeout=min(poll_seconds, remaining_seconds))
         except FutureTimeoutError as exc:
@@ -864,7 +979,12 @@ def _await_translation_batch_with_heartbeat(
                 analysis_stage="translation_resolution",
                 current_item_id=current_item_id,
             )
-            if monotonic() >= deadline:
+            now = monotonic()
+            material_signature = _translation_material_signature(progress)
+            if material_signature != last_material_signature:
+                last_material_signature = material_signature
+                idle_deadline = now + timeout_seconds
+            if now >= idle_deadline:
                 future.cancel()
                 raise CaptionAnalysisError("CAPTION_TRANSLATION_BATCH_TIMEOUT", "Caption translation batch timed out") from exc
 

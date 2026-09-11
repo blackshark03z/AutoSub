@@ -22,9 +22,14 @@ class FakeClock:
 class FakeProgress:
     def __init__(self) -> None:
         self.updates: list[dict[str, object]] = []
+        self.state: dict[str, object] = {}
 
     def update(self, **changes: object) -> None:
         self.updates.append(changes)
+        self.state.update(changes)
+
+    def snapshot(self) -> dict[str, object]:
+        return dict(self.state)
 
 
 class TimedFuture:
@@ -100,6 +105,37 @@ def test_translation_future_timeout_cancels_only_the_timed_out_future() -> None:
     assert future.cancel_calls == 1
     assert future.result_calls == 36
     assert len(progress.updates) == 36
+
+
+def test_translation_future_can_exceed_absolute_timeout_while_material_progress_continues() -> None:
+    clock = FakeClock()
+    progress = FakeProgress()
+    value = ({"OCR_0292": {"translated_text": "Done"}}, {"request_count": 30}, [])
+
+    class ProgressingFuture(TimedFuture):
+        def __init__(self) -> None:
+            super().__init__(clock, complete_at=240.0, result=value)
+            self.last_milestone = 0
+
+        def result(self, timeout: float) -> object:
+            self.result_calls += 1
+            self.clock.advance(timeout)
+            milestone = min(3, int(self.clock.now // 60))
+            if milestone > self.last_milestone:
+                self.last_milestone = milestone
+                progress.update(
+                    translations_completed=milestone * 90,
+                    gemini_requests=milestone * 10,
+                )
+            if self.clock.now >= self.complete_at:
+                return self.value
+            raise FutureTimeoutError()
+
+    future = ProgressingFuture()
+
+    assert _await(future, progress, clock) is value
+    assert future.cancel_calls == 0
+    assert clock.now == 240.0
 
 
 def test_translation_future_provider_exception_propagates_unchanged() -> None:

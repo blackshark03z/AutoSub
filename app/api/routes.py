@@ -22,6 +22,18 @@ from app.services.cp02_pipeline import run_cp02_vertical_slice
 from app.services.content_transform import transform_latest_timeline
 from app.services.ingest import import_local_source
 from app.services.ocr_runtime import get_ocr_runtime_status
+from app.services.kokoro_local import (
+    KokoroLocalError,
+    KOKORO_PREVIEW_TEXT,
+    kokoro_preview_audio_path,
+    kokoro_status,
+    synthesize_kokoro_preview,
+)
+from app.services.localization_run_config import (
+    DEFAULT_KOKORO_VOICE_ID,
+    MAX_KOKORO_SPEED,
+    MIN_KOKORO_SPEED,
+)
 from app.providers.asr.autosubs_provider import AUTOSUBS_MODEL, AUTOSUBS_VERSION
 from app.services.runtime_readiness import RuntimeReadinessError, ensure_product_runtime_ready, runtime_readiness
 from app.services.operator_ui import (
@@ -188,6 +200,11 @@ class SimpleRetryRequest(BaseModel):
     settings: dict | None = None
 
 
+class KokoroPreviewRequest(BaseModel):
+    voice_id: str = DEFAULT_KOKORO_VOICE_ID
+    speed: float = 1.0
+
+
 class SimpleSaveCopyRequest(BaseModel):
     destination_folder: str
 
@@ -257,6 +274,38 @@ def simple_capabilities() -> dict:
             "managed_preparation_enabled": True,
         },
     }
+
+
+@router.get("/simple/voices")
+def simple_voices() -> dict:
+    status = kokoro_status()
+    return {
+        **status,
+        "default_voice_id": DEFAULT_KOKORO_VOICE_ID,
+        "speed": {"min": MIN_KOKORO_SPEED, "max": MAX_KOKORO_SPEED, "default": 1.0},
+        "preview_text": KOKORO_PREVIEW_TEXT,
+    }
+
+
+@router.post("/simple/voices/preview")
+def simple_voice_preview(payload: KokoroPreviewRequest) -> dict:
+    try:
+        result = synthesize_kokoro_preview(payload.voice_id, payload.speed)
+    except KokoroLocalError as exc:
+        raise HTTPException(status_code=400, detail={"title": "Không thể nghe thử giọng", "message": str(exc), "code": exc.code}) from exc
+    return {
+        "preview": {key: value for key, value in result.items() if key != "audio_path" and key != "tokens"},
+        "audio_url": f"/api/simple/voices/previews/{result['identity_sha256']}.wav",
+    }
+
+
+@router.get("/simple/voices/previews/{identity}.wav")
+def simple_voice_preview_audio(identity: str) -> FileResponse:
+    try:
+        path = kokoro_preview_audio_path(identity)
+    except KokoroLocalError as exc:
+        raise HTTPException(status_code=404, detail={"title": "Không tìm thấy bản nghe thử", "message": str(exc)}) from exc
+    return FileResponse(path, media_type="audio/wav", filename=f"kokoro-preview-{identity[:12]}.wav")
 
 
 @router.get("/simple/gemini/credentials")

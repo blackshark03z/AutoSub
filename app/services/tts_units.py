@@ -53,6 +53,7 @@ def _make_unit(segments: list[dict], ordinal: int) -> dict:
     identity = hashlib.sha256("\n".join(segment_ids).encode("utf-8")).hexdigest()[:12]
     first = segments[0]
     last = segments[-1]
+    spoken_text, segment_text_spans = _join_spoken_with_spans(segments)
     return {
         "id": f"ttsu_{identity}",
         "ordinal": ordinal,
@@ -60,7 +61,8 @@ def _make_unit(segments: list[dict], ordinal: int) -> dict:
         "start_ms": first["start_ms"],
         "end_ms": last["end_ms"],
         "segment_ids": segment_ids,
-        "spoken_text": _join_spoken(segments),
+        "segment_text_spans": segment_text_spans,
+        "spoken_text": spoken_text,
         "speaker_id": first.get("speaker_id", "narrator"),
         "voice_profile_id": first.get("voice_profile_id"),
         "timing_policy": first.get("timing_policy", "fit_slot"),
@@ -69,7 +71,24 @@ def _make_unit(segments: list[dict], ordinal: int) -> dict:
 
 
 def _join_spoken(segments: list[dict]) -> str:
-    return " ".join(segment["spoken_text"].strip() for segment in segments if segment.get("spoken_text", "").strip())
+    return _join_spoken_with_spans(segments)[0]
+
+
+def _join_spoken_with_spans(segments: list[dict]) -> tuple[str, list[dict]]:
+    parts: list[str] = []
+    spans: list[dict] = []
+    cursor = 0
+    for segment in segments:
+        text = str(segment.get("spoken_text") or "").strip()
+        if not text:
+            continue
+        if parts:
+            cursor += 1
+        start = cursor
+        parts.append(text)
+        cursor += len(text)
+        spans.append({"segment_id": segment["id"], "source_start": start, "source_end": cursor})
+    return " ".join(parts), spans
 
 
 def _is_spoken(segment: dict) -> bool:

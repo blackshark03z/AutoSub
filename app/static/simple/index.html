@@ -27,7 +27,7 @@
         <header class="state-header">
           <p class="eyebrow">Tạo video</p>
           <h1 id="setupTitle" tabindex="-1">Tạo video có phụ đề</h1>
-          <p class="lead">Chọn video, chọn cách lấy phụ đề, rồi bấm tạo. AutoSub sẽ kiểm tra các thành phần cần thiết trước khi xử lý.</p>
+          <p class="lead">Chọn video, chọn cách lấy phụ đề, rồi bấm tạo.</p>
         </header>
 
         <section class="surface setup-surface" aria-labelledby="sourceTitle">
@@ -59,6 +59,16 @@
           </div>
 
           <div class="essential-settings">
+            <label class="field" for="localizationMode" hidden>
+              <span>Chế độ bản địa hóa</span>
+              <select id="localizationMode" aria-describedby="localizationModeHelp">
+                <option value="subtitle_localization" selected>Subtitle Localization</option>
+                <option value="full_visual_localization">Full Visual Localization</option>
+                <option value="full_localization_voice">Full Localization + Voice</option>
+              </select>
+              <small id="localizationModeHelp">Chỉ phụ đề, phụ đề + chữ trong khung hình, hoặc thêm giọng đọc Kokoro.</small>
+            </label>
+
             <label class="field" for="targetLanguage">
               <span>Ngôn ngữ phụ đề đầu ra</span>
               <select id="targetLanguage">
@@ -77,6 +87,34 @@
             </label>
           </div>
 
+          <section id="voiceConfigCard" class="voice-config-card" aria-labelledby="voiceConfigTitle" hidden>
+            <div class="voice-config-heading">
+              <div>
+                <p class="eyebrow">Giọng đọc</p>
+                <h3 id="voiceConfigTitle">Kokoro 82M</h3>
+                <p id="voiceRuntimeStatus" class="message no-margin">Đang kiểm tra giọng đọc trên máy.</p>
+              </div>
+              <span id="voiceCachedPill" class="pill">Đang kiểm tra</span>
+            </div>
+            <div class="voice-config-grid">
+              <label class="field" for="voiceSelect">
+                <span>Giọng</span>
+                <select id="voiceSelect"></select>
+                <small>Giọng chính thức của Kokoro. Voice chưa cache chỉ được tải khi bạn yêu cầu nghe thử hoặc chạy.</small>
+              </label>
+              <label class="field" for="voiceSpeed">
+                <span>Tốc độ <strong id="voiceSpeedValue">1.00×</strong></span>
+                <input id="voiceSpeed" type="range" min="0.85" max="1.20" step="0.01" value="1.00" />
+                <small>AutoSub chỉ điều chỉnh thêm trong giới hạn an toàn khi cần khớp thời lượng.</small>
+              </label>
+            </div>
+            <div class="voice-preview-row">
+              <button id="previewVoiceBtn" type="button">Nghe thử</button>
+              <span id="voicePreviewStatus" class="message no-margin">Bản nghe thử chưa được tạo.</span>
+            </div>
+            <audio id="voicePreviewAudio" class="voice-preview-audio" controls preload="none" hidden></audio>
+          </section>
+
           <div id="geminiRequirement" class="provider-callout" hidden>
             <div class="provider-callout-copy">
               <span class="provider-icon" aria-hidden="true">G</span>
@@ -91,6 +129,15 @@
           <details id="advancedOptions" class="advanced-disclosure">
             <summary>Tùy chọn nâng cao</summary>
             <div class="advanced-content">
+              <label class="field" for="computePolicy" hidden>
+                <span>Compute</span>
+                <select id="computePolicy">
+                  <option value="auto" selected>Auto</option>
+                  <option value="local_only">Chỉ dùng máy này</option>
+                  <option value="cloud_allowed_no_paid_overage">Cloud allowed — no paid overage</option>
+                </select>
+                <small>Auto chỉ dùng cloud khi provider/model đã được xác minh an toàn và có lợi E2E. Nếu không, AutoSub giữ local.</small>
+              </label>
               <label class="field path-field" for="sourcePath">
                 <span>Đường dẫn video trên máy</span>
                 <input id="sourcePath" type="text" placeholder="Ví dụ: D:\\Videos\\video.mp4" autocomplete="off" />
@@ -153,7 +200,7 @@
         </section>
 
         <section class="action-zone" aria-label="Bắt đầu xử lý">
-          <button id="startBtn" class="primary action-primary" type="button" disabled>Tạo video có phụ đề</button>
+          <button id="startBtn" class="primary action-primary" type="button" disabled>Run</button>
           <p id="startReason" class="action-reason">Hãy chọn một video để tiếp tục.</p>
           <button id="latestResultBtn" class="text-action" type="button" aria-label="Xem kết quả" hidden>Xem video gần nhất</button>
         </section>

@@ -12,6 +12,7 @@ import numpy as np
 from PIL import ImageFont
 
 from app.core.media import media_summary
+from app.services.ass_utils import ass_escape, format_ass_timestamp
 from app.services.cjk_cleanup import source_region_union
 
 
@@ -747,27 +748,6 @@ def normalize_render_cues(cues: list[dict[str, Any]], *, duration_seconds: float
         previous_start = start_ms
         previous_end = end_ms
     return normalized
-
-
-def ass_escape(text: str) -> str:
-    return (
-        text.replace("\\", "\\\\")
-        .replace("{", "\\{")
-        .replace("}", "\\}")
-        .replace("\r\n", "\n")
-        .replace("\r", "\n")
-        .replace("\n", r"\N")
-    )
-
-
-def format_ass_timestamp(milliseconds: int) -> str:
-    total_centiseconds = max(0, milliseconds) // 10
-    centiseconds = total_centiseconds % 100
-    total_seconds = total_centiseconds // 100
-    seconds = total_seconds % 60
-    minutes = (total_seconds // 60) % 60
-    hours = total_seconds // 3600
-    return f"{hours}:{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
 
 
 def _fps_value(avg_frame_rate: str | None) -> float:

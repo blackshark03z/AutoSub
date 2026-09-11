@@ -95,6 +95,38 @@ def test_cached_runtime_is_revalidated_without_downloading_or_preparing(monkeypa
     assert events == ["checking_runtime", "runtime_ready"]
 
 
+def test_autosubs_small_validation_retries_one_transient_probe_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(readiness.time, "sleep", lambda _seconds: None)
+    calls = 0
+
+    def flaky_probe(*_args):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise readiness.RuntimeReadinessError("transient AutoSubs probe failure")
+
+    monkeypatch.setattr(readiness, "_probe_autosubs_small", flaky_probe)
+    readiness._validate_autosubs_small(tmp_path / "autosubs.exe")
+    assert calls == 2
+
+
+def test_translation_validation_retries_one_transient_probe_failure(monkeypatch, tmp_path):
+    _install_fake_ready_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(readiness, "_run_argos_import_probe", lambda *_args: None)
+    monkeypatch.setattr(readiness.time, "sleep", lambda _seconds: None)
+    calls = 0
+
+    def flaky_probe(*_args):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise readiness.RuntimeReadinessError("transient translation probe failure")
+
+    monkeypatch.setattr(readiness, "_run_translation_probe", flaky_probe)
+    readiness._validate_translation(tmp_path)
+    assert calls == 2
+
+
 def test_invalid_executable_is_distinguished_from_missing(monkeypatch, tmp_path):
     monkeypatch.setenv("TOOL_AUTO_SUB_RUNTIME_ROOT", str(tmp_path / "machine-runtime"))
     binary = readiness.managed_autosubs_binary(tmp_path)
