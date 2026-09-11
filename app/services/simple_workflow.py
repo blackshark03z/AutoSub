@@ -45,6 +45,7 @@ from app.services.ocr_runtime import get_ocr_runtime_status
 from app.services.runtime_readiness import RuntimeReadinessError, ensure_product_runtime_ready
 from app.services.full_visual_pipeline import VisualLocalizationError, execute_full_visual_localization
 from app.services.narration_pipeline import NarrationFitError, generate_kokoro_narration
+from app.services.narration_repair import NarrationProjectionRepairError, repair_narration_spoken_projection
 from app.services.visual_ocr_runner import build_routed_whole_frame_ocr_runner, run_local_whole_frame_ocr
 from app.services.clean_subtitle_render import (
     build_source_replacement_filter,
@@ -505,16 +506,61 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
         narration_audio: Path | None = None
         if localization_mode == FULL_LOCALIZATION_VOICE:
             _set_processing_phase(run_id, "Generate narration")
+            narration_input = resolved
             try:
                 narration = generate_kokoro_narration(
                     project_id=row.project_id,
-                    resolved=resolved,
+                    resolved=narration_input,
                     source_duration_ms=source_duration_ms,
                     voice_id=str(requested.get("voice_id") or ""),
                     base_speed=float(requested.get("voice_speed") or 1.0),
                     run_directory=run_directory,
                 )
-            except (NarrationFitError, ValueError) as exc:
+            except NarrationFitError as initial_fit_error:
+                try:
+                    readiness = ensure_gemini_caption_ready()
+                    selected_model = str(readiness.get("selected_model") or "").strip()
+                    if not selected_model:
+                        raise NarrationProjectionRepairError(
+                            "narration_repair_provider_unavailable",
+                            "No compatible Gemini model is ready for bounded narration repair.",
+                        )
+                    repair_translator = GeminiCaptionTranslator(
+                        replace(load_gemini_translation_config(), model=selected_model)
+                    )
+                    repair = repair_narration_spoken_projection(
+                        narration_input,
+                        initial_fit_error.failures,
+                        source_duration_ms=source_duration_ms,
+                        translator=repair_translator,
+                    )
+                    audio_dir = run_directory / "audio"
+                    audio_dir.mkdir(parents=True, exist_ok=True)
+                    (audio_dir / "narration_repair_evidence.json").write_text(
+                        json.dumps(repair["evidence"], ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    narration_input = repair["resolved"]
+                    narration = generate_kokoro_narration(
+                        project_id=row.project_id,
+                        resolved=narration_input,
+                        source_duration_ms=source_duration_ms,
+                        voice_id=str(requested.get("voice_id") or ""),
+                        base_speed=float(requested.get("voice_speed") or 1.0),
+                        run_directory=run_directory,
+                    )
+                except (NarrationFitError, NarrationProjectionRepairError, GeminiCaptionTranslationError, ValueError) as exc:
+                    evidence = getattr(exc, "evidence", None)
+                    if isinstance(evidence, dict) and evidence:
+                        audio_dir = run_directory / "audio"
+                        audio_dir.mkdir(parents=True, exist_ok=True)
+                        (audio_dir / "narration_repair_evidence.json").write_text(
+                            json.dumps({"schema_version": 1, "status": "FAIL", **evidence}, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                    _persist_processing_failure(run_id, "narration_quality_failed", "Generate narration", exc)
+                    raise ValueError("Generated narration did not satisfy the run quality contract.") from exc
+            except ValueError as exc:
                 _persist_processing_failure(run_id, "narration_quality_failed", "Generate narration", exc)
                 raise ValueError("Generated narration did not satisfy the run quality contract.") from exc
             render_resolved = dict(narration["resolved"])
@@ -1802,6 +1848,13 @@ def _persist_processing_failure(run_id: str, category: str, phase: str, exc: Exc
                 "retry_count": int(exc.retry_count or 0),
             }
             failure["failed_item_ids"] = list(exc.failed_caption_ids[:20])
+        elif isinstance(exc, NarrationFitError):
+            failure["narration_fit_failures"] = list(exc.failures[:10])
+        elif isinstance(exc, NarrationProjectionRepairError):
+            failure["narration_repair"] = {
+                "code": exc.code,
+                "evidence": dict(exc.evidence),
+            }
         (logs_dir / "processing_failure.json").write_text(
             json.dumps(failure, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -2309,6 +2362,7 @@ def _monitor_summary(row: SimpleWorkflowRun, validation: dict[str, Any]) -> dict
     visual_ocr_route = _monitor_json(run_dir / "logs" / "visual_ocr_compute_route.json")
     visual_quality = _monitor_json(run_dir / "visual" / "visual_quality_evidence.json")
     narration = _monitor_json(run_dir / "audio" / "narration_manifest.json")
+    narration_repair = _monitor_json(run_dir / "audio" / "narration_repair_evidence.json")
     run_snapshot = _load_localization_run_snapshot(run_dir) or {}
     narration_fit = list(narration.get("fit") or []) if isinstance(narration, dict) else []
     narration_overflow_count = sum(1 for item in narration_fit if isinstance(item, dict) and float(item.get("overflow_ms") or 0) > 30.0)
@@ -2341,6 +2395,18 @@ def _monitor_summary(row: SimpleWorkflowRun, validation: dict[str, Any]) -> dict
             "retimed_cue_count": narration.get("retimed_cue_count"),
             "expected_retimed_cue_count": narration.get("expected_retimed_cue_count"),
             "overflow_count": narration_overflow_count,
+            "repair": ({
+                "status": narration_repair.get("status"),
+                "repair_kind": narration_repair.get("repair_kind"),
+                "repaired_unit_ids": narration_repair.get("repaired_unit_ids"),
+                "repaired_cue_count": narration_repair.get("repaired_cue_count"),
+                "provider": narration_repair.get("provider"),
+                "model": narration_repair.get("model"),
+                "request_count": narration_repair.get("request_count"),
+                "retry_count": narration_repair.get("retry_count"),
+                "cache_hits": narration_repair.get("cache_hits"),
+                "cache_misses": narration_repair.get("cache_misses"),
+            } if narration_repair else None),
         } if narration else None),
     }
     return {
@@ -2475,7 +2541,10 @@ def _provider_calls_for_run(run_id: str, run_directory: Path | str | None = None
         visual_usage = visual.get("provider_usage") if isinstance(visual.get("provider_usage"), dict) else {}
         if visual_usage:
             gemini_calls += int(visual_usage.get("request_count") or 0)
-        else:
+        narration_repair = _monitor_json(run_dir / "audio" / "narration_repair_evidence.json")
+        if narration_repair:
+            gemini_calls += int(narration_repair.get("request_count") or 0)
+        if not visual_usage:
             failure = _monitor_json(run_dir / "logs" / "processing_failure.json")
             failure_usage = failure.get("provider_usage") if isinstance(failure.get("provider_usage"), dict) else {}
             if str(failure.get("provider") or "") == "gemini":
