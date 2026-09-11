@@ -76,6 +76,13 @@ def classify_visual_track_text(text: str) -> dict[str, str]:
     value = str(text or "").strip()
     if not value:
         return {"action": "ignore", "reason": "empty"}
+    # PaddleOCR can map square UI/icon placeholders to the CJK glyph 口,
+    # including vertical runs such as 口口口口. Treat a token made only from
+    # that placeholder glyph as uncertain visual noise and preserve the source
+    # pixels rather than sending it to translation or later residual QC.
+    # Real words containing the same glyph (for example 入口) remain localizable.
+    if re.fullmatch(r"口+", value):
+        return {"action": "preserve", "reason": "ocr_box_placeholder_candidate"}
     if _CJK_RE.search(value):
         return {"action": "localize", "reason": "source_cjk_semantic_candidate"}
     if re.fullmatch(r"[\d\s.,:%+\-/()]+", value):

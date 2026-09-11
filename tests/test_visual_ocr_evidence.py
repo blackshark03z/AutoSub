@@ -89,6 +89,10 @@ def test_target_script_identifiers_and_numbers_are_preserved_by_default() -> Non
     assert classify_visual_track_text("2500")["action"] == "preserve"
     assert classify_visual_track_text("linlinqijieshuo")["action"] == "preserve"
     assert classify_visual_track_text("Stage 1/12 (8%)")["action"] == "preserve"
+    assert classify_visual_track_text("口")["action"] == "preserve"
+    assert classify_visual_track_text("口口口口口口")["action"] == "preserve"
+    assert classify_visual_track_text("入口")["action"] == "localize"
+    assert classify_visual_track_text("跳")["action"] == "localize"
     assert classify_visual_track_text("强化身体")["action"] == "localize"
 
 

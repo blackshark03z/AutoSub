@@ -707,20 +707,23 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                         run_directory=run_directory,
                         compute_policy=str(requested.get("compute_policy") or "auto"),
                     )
-                    execute_full_visual_localization(
-                        subtitle_stage,
-                        run_directory,
-                        run_directory / "output" / "final_video.mp4",
-                        ocr_runner=visual_ocr_runner,
-                        translator=visual_translator,
-                        font_path=get_settings().font_path,
-                        render_runner=lambda command, duration: _run_ffmpeg_with_progress(
-                            command,
-                            run_dir=run_directory,
-                            duration_seconds=duration,
-                        ),
-                        target_language=str(requested.get("target_language") or "English"),
-                    )
+                    try:
+                        execute_full_visual_localization(
+                            subtitle_stage,
+                            run_directory,
+                            run_directory / "output" / "final_video.mp4",
+                            ocr_runner=visual_ocr_runner,
+                            translator=visual_translator,
+                            font_path=get_settings().font_path,
+                            render_runner=lambda command, duration: _run_ffmpeg_with_progress(
+                                command,
+                                run_dir=run_directory,
+                                duration_seconds=duration,
+                            ),
+                            target_language=str(requested.get("target_language") or "English"),
+                        )
+                    finally:
+                        visual_ocr_runner.close()
                 failure_phase = "Verify result"
                 row.completed_at = datetime.now(timezone.utc)
                 row.updated_at = row.completed_at

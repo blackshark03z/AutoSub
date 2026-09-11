@@ -7,6 +7,7 @@ from typing import Any
 
 from app.core.hashing import sha256_file
 from app.providers.tts.kokoro_local import KokoroLocalTTSProvider
+from app.services.kokoro_local import KokoroPersistentWorkerSession
 from app.services.localization_run_config import MAX_KOKORO_SPEED
 from app.services.tts_generation import generate_tts_for_unit
 from app.services.tts_units import attach_tts_synthesis_units
@@ -314,7 +315,29 @@ def generate_kokoro_narration(
     base_speed: float,
     run_directory: Path,
 ) -> dict[str, Any]:
-    provider = KokoroLocalTTSProvider()
+    with KokoroPersistentWorkerSession() as session:
+        provider = KokoroLocalTTSProvider(session=session)
+        return _generate_kokoro_narration_with_provider(
+            project_id=project_id,
+            resolved=resolved,
+            source_duration_ms=source_duration_ms,
+            voice_id=voice_id,
+            base_speed=base_speed,
+            run_directory=run_directory,
+            provider=provider,
+        )
+
+
+def _generate_kokoro_narration_with_provider(
+    *,
+    project_id: str,
+    resolved: dict[str, Any],
+    source_duration_ms: int,
+    voice_id: str,
+    base_speed: float,
+    run_directory: Path,
+    provider: KokoroLocalTTSProvider,
+) -> dict[str, Any]:
     if not provider.validate_credentials():
         raise ValueError("Kokoro runtime is not ready")
     timeline = build_narration_timeline(resolved, source_duration_ms=source_duration_ms)

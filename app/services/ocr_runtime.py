@@ -129,6 +129,126 @@ def get_ocr_runtime_status(config_path: Path | None = None) -> dict[str, Any]:
     }
 
 
+
+class OCRPersistentWorkerSession:
+    """Bounded local PaddleOCR process reused across sequential OCR batches."""
+
+    def __init__(self) -> None:
+        self._temporary: tempfile.TemporaryDirectory[str] | None = None
+        self._process: subprocess.Popen[str] | None = None
+        self._log_handle = None
+        self._runtime_python: Path | None = None
+        self._runtime_root: Path | None = None
+        self._sequence = 0
+
+    def __enter__(self) -> "OCRPersistentWorkerSession":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def _ensure_started(self, config: OCRRuntimeConfig) -> None:
+        if self._process is not None and self._process.poll() is None:
+            if self._runtime_python == config.python_path and self._runtime_root == config.runtime_root:
+                return
+            self.close()
+        if self._temporary is None:
+            self._temporary = tempfile.TemporaryDirectory(prefix="autosub_ocr_session_")
+        worker = get_settings().root / "tools" / "ocr_persistent_worker.py"
+        if not worker.is_file():
+            raise OCRRuntimeError("Persistent OCR worker is missing")
+        session_root = Path(self._temporary.name)
+        self._log_handle = (session_root / "worker.log").open("w", encoding="utf-8", newline="\n")
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        self._process = subprocess.Popen(
+            [str(config.python_path), str(worker)],
+            cwd=str(config.runtime_root),
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=self._log_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+        )
+        self._runtime_python = config.python_path
+        self._runtime_root = config.runtime_root
+
+    def run(self, *, config: OCRRuntimeConfig, config_file: Path, manifest_path: Path) -> dict[str, Any]:
+        self._ensure_started(config)
+        process = self._process
+        if process is None or process.stdin is None or self._temporary is None:
+            raise OCRRuntimeError("Persistent OCR worker did not start")
+        self._sequence += 1
+        result_path = Path(self._temporary.name) / f"result_{self._sequence:04d}.json"
+        command = {
+            "config_path": str(config_file),
+            "manifest_path": str(manifest_path),
+            "result_path": str(result_path),
+        }
+        try:
+            process.stdin.write(json.dumps(command, ensure_ascii=False) + "\n")
+            process.stdin.flush()
+        except (BrokenPipeError, OSError) as exc:
+            raise OCRRuntimeError(self._failure_message("Persistent OCR worker stopped")) from exc
+        deadline = time.monotonic() + config.timeout_seconds
+        while time.monotonic() < deadline:
+            if result_path.is_file():
+                try:
+                    payload = json.loads(result_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise OCRRuntimeError("Persistent OCR worker returned malformed JSON") from exc
+                if not isinstance(payload, dict) or payload.get("ok") is False:
+                    raise OCRRuntimeError("Persistent OCR worker failed")
+                return payload
+            if process.poll() is not None:
+                raise OCRRuntimeError(self._failure_message("Persistent OCR worker exited unexpectedly"))
+            time.sleep(0.05)
+        raise OCRRuntimeError(self._failure_message("Persistent OCR worker timed out"))
+
+    def _failure_message(self, prefix: str) -> str:
+        if self._log_handle is not None:
+            try:
+                self._log_handle.flush()
+                tail = Path(self._log_handle.name).read_text(encoding="utf-8", errors="replace")[-500:].strip()
+                if tail:
+                    return f"{prefix}: {tail}"
+            except OSError:
+                pass
+        return prefix
+
+    def close(self) -> None:
+        process = self._process
+        if process is not None and process.poll() is None:
+            try:
+                if process.stdin is not None:
+                    process.stdin.write('{"command":"shutdown"}\n')
+                    process.stdin.flush()
+                process.wait(timeout=5)
+            except Exception:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except Exception:
+                    process.kill()
+        if process is not None and process.stdin is not None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+        if self._log_handle is not None:
+            try:
+                self._log_handle.close()
+            except OSError:
+                pass
+        self._process = None
+        self._log_handle = None
+        self._runtime_python = None
+        self._runtime_root = None
+        if self._temporary is not None:
+            self._temporary.cleanup()
+            self._temporary = None
+
 def run_ocr_on_image(image_path: Path, config_path: Path | None = None) -> dict[str, Any]:
     payload = run_ocr_on_images([image_path], config_path=config_path)
     frame = payload["frames"][0]
@@ -148,6 +268,7 @@ def run_ocr_on_images(
     *,
     manifest_path: Path | None = None,
     heartbeat_callback: Callable[[], None] | None = None,
+    session: OCRPersistentWorkerSession | None = None,
 ) -> dict[str, Any]:
     """Run one OCR worker for a frame sequence so model load is paid once."""
     config = load_ocr_runtime_config(config_path)
@@ -172,6 +293,18 @@ def run_ocr_on_images(
         json.dumps({"images": [str(image) for image in images]}, ensure_ascii=False),
         encoding="utf-8",
     )
+    if session is not None:
+        try:
+            payload = session.run(config=config, config_file=config_file, manifest_path=manifest)
+        finally:
+            if owned_manifest:
+                manifest.unlink(missing_ok=True)
+        if isinstance(payload, dict) and "frames" not in payload and isinstance(payload.get("items"), list):
+            payload["frames"] = [{"index": 0, "items": payload["items"]}]
+        if not isinstance(payload, dict) or not isinstance(payload.get("frames"), list):
+            raise OCRRuntimeError("OCR worker returned invalid payload")
+        return _redact_paths(payload)
+
     command = [
         str(config.python_path),
         str(worker),

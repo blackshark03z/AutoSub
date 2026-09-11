@@ -214,3 +214,61 @@ def test_routed_visual_ocr_keeps_micro_workload_local_even_when_cloud_is_safe(tm
     payload = routed(paths)
     assert payload["provider"] == "local_paddleocr"
     assert local_calls and modal.calls == []
+
+
+def test_default_routed_local_ocr_reuses_and_closes_persistent_session(tmp_path: Path, monkeypatch) -> None:
+    class FakeSession:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    session = FakeSession()
+    monkeypatch.setattr(runner, "OCRPersistentWorkerSession", lambda: session)
+    calls = []
+
+    def custom_runner(paths):
+        calls.append(list(paths))
+        return {
+            "provider": "local_paddleocr",
+            "runtime": "local",
+            "model_version": "2.10",
+            "frames": [{"name": Path(path).name, "texts": []} for path in paths],
+        }
+
+    routed = RoutedWholeFrameOCRRunner(
+        root=tmp_path,
+        run_directory=tmp_path / "run",
+        compute_policy="local_only",
+        modal_provider=_FakeModal(no_overage=False),
+        local_runner=custom_runner,
+    )
+    paths = _routing_frames(tmp_path, 2)
+    routed(paths)
+    assert calls
+    assert routed._persistent_local_session is None
+    routed.close()
+
+
+def test_routed_default_runner_owns_one_session_across_calls_and_closes_it(tmp_path: Path, monkeypatch) -> None:
+    class FakeSession:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    original_default = runner.run_local_whole_frame_ocr
+    fake_session = FakeSession()
+    monkeypatch.setattr(runner, "OCRPersistentWorkerSession", lambda: fake_session)
+    routed = RoutedWholeFrameOCRRunner(
+        root=tmp_path,
+        run_directory=tmp_path / "run",
+        compute_policy="local_only",
+        modal_provider=_FakeModal(no_overage=False),
+        local_runner=original_default,
+    )
+    assert routed._persistent_local_session is fake_session
+    routed.close()
+    assert fake_session.closed is True

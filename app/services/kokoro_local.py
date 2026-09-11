@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -234,11 +235,133 @@ def ensure_kokoro_voice_cached(voice_id: str) -> Path:
     return voice_path
 
 
+
+class KokoroPersistentWorkerSession:
+    """Bounded per-narration Kokoro worker that keeps model/voice state warm."""
+
+    def __init__(self, *, timeout_seconds: float = 180.0) -> None:
+        self.timeout_seconds = max(5.0, float(timeout_seconds))
+        self._temporary: tempfile.TemporaryDirectory[str] | None = None
+        self._process: subprocess.Popen[str] | None = None
+        self._log_handle = None
+        self._sequence = 0
+
+    def __enter__(self) -> "KokoroPersistentWorkerSession":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def _ensure_started(self) -> None:
+        if self._process is not None and self._process.poll() is None:
+            return
+        runtime = discover_kokoro_runtime()
+        worker = get_settings().root / "tools" / "kokoro_persistent_worker.py"
+        if not worker.is_file():
+            raise KokoroLocalError("KOKORO_SYNTHESIS_FAILED", "Persistent Kokoro worker is missing")
+        if self._temporary is None:
+            self._temporary = tempfile.TemporaryDirectory(prefix="autosub_kokoro_session_")
+        session_root = Path(self._temporary.name)
+        log_path = session_root / "worker.log"
+        self._log_handle = log_path.open("w", encoding="utf-8", newline="\n")
+        env = dict(os.environ)
+        env.update({
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+            "HF_HUB_CACHE": str(runtime.model_cache.parent),
+            "PYTHONIOENCODING": "utf-8",
+        })
+        self._process = subprocess.Popen(
+            [str(runtime.python), str(worker)],
+            cwd=runtime.root,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=self._log_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+        )
+
+    def synthesize(self, request: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_started()
+        process = self._process
+        if process is None or process.stdin is None:
+            raise KokoroLocalError("KOKORO_SYNTHESIS_FAILED", "Persistent Kokoro worker did not start")
+        if self._temporary is None:
+            raise KokoroLocalError("KOKORO_SYNTHESIS_FAILED", "Persistent Kokoro session storage is unavailable")
+        self._sequence += 1
+        session_root = Path(self._temporary.name)
+        request_path = session_root / f"request_{self._sequence:04d}.json"
+        result_path = session_root / f"result_{self._sequence:04d}.json"
+        request_path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
+        command = {"request_path": str(request_path), "result_path": str(result_path)}
+        try:
+            process.stdin.write(json.dumps(command, ensure_ascii=False) + "\n")
+            process.stdin.flush()
+        except (BrokenPipeError, OSError) as exc:
+            raise KokoroLocalError("KOKORO_SYNTHESIS_FAILED", self._failure_message("Persistent Kokoro worker stopped")) from exc
+        deadline = time.monotonic() + self.timeout_seconds
+        while time.monotonic() < deadline:
+            if result_path.is_file():
+                try:
+                    return json.loads(result_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise KokoroLocalError("KOKORO_SYNTHESIS_FAILED", "Persistent Kokoro worker returned invalid result metadata") from exc
+            if process.poll() is not None:
+                raise KokoroLocalError("KOKORO_SYNTHESIS_FAILED", self._failure_message("Persistent Kokoro worker exited unexpectedly"))
+            time.sleep(0.05)
+        raise KokoroLocalError("KOKORO_SYNTHESIS_FAILED", self._failure_message("Persistent Kokoro worker timed out"))
+
+    def _failure_message(self, prefix: str) -> str:
+        if self._log_handle is not None:
+            try:
+                self._log_handle.flush()
+                log_path = Path(self._log_handle.name)
+                tail = log_path.read_text(encoding="utf-8", errors="replace")[-500:].strip()
+                if tail:
+                    return f"{prefix}: {tail}"
+            except OSError:
+                pass
+        return prefix
+
+    def close(self) -> None:
+        process = self._process
+        if process is not None and process.poll() is None:
+            try:
+                if process.stdin is not None:
+                    process.stdin.write('{"command":"shutdown"}\n')
+                    process.stdin.flush()
+                process.wait(timeout=5)
+            except Exception:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except Exception:
+                    process.kill()
+        if process is not None and process.stdin is not None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+        if self._log_handle is not None:
+            try:
+                self._log_handle.close()
+            except OSError:
+                pass
+        self._process = None
+        self._log_handle = None
+        if self._temporary is not None:
+            self._temporary.cleanup()
+            self._temporary = None
+
 def synthesize_kokoro_to_file(
     voice_id: str,
     speed: float,
     text: str,
     output_path: Path,
+    *,
+    session: KokoroPersistentWorkerSession | None = None,
 ) -> dict[str, Any]:
     runtime = discover_kokoro_runtime()
     if voice_id not in VOICE_INDEX:
@@ -272,34 +395,39 @@ def synthesize_kokoro_to_file(
         "output_path": str(output_path),
         "identity_sha256": identity,
     }
-    with tempfile.TemporaryDirectory(prefix="autosub_kokoro_") as temporary:
-        request_path = Path(temporary) / "request.json"
-        result_path = Path(temporary) / "result.json"
-        request_path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
-        env = dict(os.environ)
-        env.update({
-            "HF_HUB_OFFLINE": "1",
-            "TRANSFORMERS_OFFLINE": "1",
-            "HF_HUB_CACHE": str(runtime.model_cache.parent),
-            "PYTHONIOENCODING": "utf-8",
-        })
-        worker = get_settings().root / "tools" / "kokoro_local_worker.py"
-        completed = subprocess.run(
-            [str(runtime.python), str(worker), "--request", str(request_path), "--result", str(result_path)],
-            cwd=runtime.root,
-            env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=180,
-            check=False,
-        )
-        try:
-            result = json.loads(result_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise KokoroLocalError("KOKORO_SYNTHESIS_FAILED", completed.stderr[-500:] or "Kokoro synthesis failed") from exc
-        if completed.returncode != 0 or result.get("status") != "SUCCESS":
+    if session is not None:
+        result = session.synthesize(request)
+        if result.get("status") != "SUCCESS":
             raise KokoroLocalError(str(result.get("failure_class") or "KOKORO_SYNTHESIS_FAILED"), "Kokoro synthesis failed")
+    else:
+        with tempfile.TemporaryDirectory(prefix="autosub_kokoro_") as temporary:
+            request_path = Path(temporary) / "request.json"
+            result_path = Path(temporary) / "result.json"
+            request_path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
+            env = dict(os.environ)
+            env.update({
+                "HF_HUB_OFFLINE": "1",
+                "TRANSFORMERS_OFFLINE": "1",
+                "HF_HUB_CACHE": str(runtime.model_cache.parent),
+                "PYTHONIOENCODING": "utf-8",
+            })
+            worker = get_settings().root / "tools" / "kokoro_local_worker.py"
+            completed = subprocess.run(
+                [str(runtime.python), str(worker), "--request", str(request_path), "--result", str(result_path)],
+                cwd=runtime.root,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=180,
+                check=False,
+            )
+            try:
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise KokoroLocalError("KOKORO_SYNTHESIS_FAILED", completed.stderr[-500:] or "Kokoro synthesis failed") from exc
+            if completed.returncode != 0 or result.get("status") != "SUCCESS":
+                raise KokoroLocalError(str(result.get("failure_class") or "KOKORO_SYNTHESIS_FAILED"), "Kokoro synthesis failed")
     if not output_path.is_file() or output_path.stat().st_size <= 44:
         raise KokoroLocalError("KOKORO_AUDIO_INVALID", "Kokoro did not produce valid audio")
     alignment = {

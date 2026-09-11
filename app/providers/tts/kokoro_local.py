@@ -8,6 +8,7 @@ from app.providers.tts.request import tts_request_payload
 from app.services.kokoro_local import (
     KOKORO_MODEL_REPO,
     KokoroLocalError,
+    KokoroPersistentWorkerSession,
     kokoro_status,
     list_kokoro_voices,
     synthesize_kokoro_to_file,
@@ -19,6 +20,9 @@ class KokoroLocalTTSProvider:
     model = KOKORO_MODEL_REPO
     output_format = "wav_24000_mono_s16"
     provider_request_version = "kokoro-local-v1"
+
+    def __init__(self, *, session: KokoroPersistentWorkerSession | None = None) -> None:
+        self._session = session
 
     def validate_credentials(self) -> bool:
         return bool(kokoro_status().get("ready"))
@@ -43,12 +47,21 @@ class KokoroLocalTTSProvider:
             raise ValueError("Kokoro request model identity does not match provider model")
         request_hash = build_request_hash(tts_request_payload(self.provider_name, request))
         try:
-            result = synthesize_kokoro_to_file(
-                request.voice_id,
-                request.speed,
-                request.text,
-                output_path,
-            )
+            if self._session is None:
+                result = synthesize_kokoro_to_file(
+                    request.voice_id,
+                    request.speed,
+                    request.text,
+                    output_path,
+                )
+            else:
+                result = synthesize_kokoro_to_file(
+                    request.voice_id,
+                    request.speed,
+                    request.text,
+                    output_path,
+                    session=self._session,
+                )
         except KokoroLocalError:
             raise
         return TTSResult(

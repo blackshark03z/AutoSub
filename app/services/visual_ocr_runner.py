@@ -11,7 +11,7 @@ from app.providers.ocr.compute_ppocrv6_provider import (
     ComputePPocrV6UnavailableError,
 )
 from app.services.compute_router import choose_compute_route
-from app.services.ocr_runtime import OCRRuntimeError, run_ocr_on_images
+from app.services.ocr_runtime import OCRPersistentWorkerSession, OCRRuntimeError, run_ocr_on_images
 
 
 def _polygon_from_box(value: Any) -> list[list[float]] | None:
@@ -83,10 +83,14 @@ def _run_local_ocr_batch_with_fallback(
     paths: list[Path],
     *,
     config_path: Path | None,
+    session: OCRPersistentWorkerSession | None = None,
 ) -> tuple[list[dict[str, Any]], list[str], list[str], list[int], int]:
     """Keep one Paddle model load for large batches, then bisect only on runtime failure."""
     try:
-        payload = run_ocr_on_images(paths, config_path=config_path)
+        if session is None:
+            payload = run_ocr_on_images(paths, config_path=config_path)
+        else:
+            payload = run_ocr_on_images(paths, config_path=config_path, session=session)
         normalized = normalize_local_whole_frame_ocr_payload(paths, payload)
         return (
             list(normalized.get("frames") or []),
@@ -99,8 +103,8 @@ def _run_local_ocr_batch_with_fallback(
         if len(paths) <= LOCAL_WHOLE_FRAME_OCR_STABLE_FLOOR:
             raise
         midpoint = len(paths) // 2
-        left = _run_local_ocr_batch_with_fallback(paths[:midpoint], config_path=config_path)
-        right = _run_local_ocr_batch_with_fallback(paths[midpoint:], config_path=config_path)
+        left = _run_local_ocr_batch_with_fallback(paths[:midpoint], config_path=config_path, session=session)
+        right = _run_local_ocr_batch_with_fallback(paths[midpoint:], config_path=config_path, session=session)
         return (
             left[0] + right[0],
             left[1] + right[1],
@@ -114,6 +118,7 @@ def run_local_whole_frame_ocr(
     image_paths: list[Path],
     *,
     config_path: Path | None = None,
+    session: OCRPersistentWorkerSession | None = None,
 ) -> dict[str, Any]:
     paths = [Path(path).resolve() for path in image_paths]
     if not paths:
@@ -142,6 +147,7 @@ def run_local_whole_frame_ocr(
         chunk_frames, chunk_runtimes, chunk_models, chunk_sizes, chunk_splits = _run_local_ocr_batch_with_fallback(
             chunk,
             config_path=config_path,
+            session=session,
         )
         frames.extend(chunk_frames)
         runtimes.extend(chunk_runtimes)
@@ -177,6 +183,7 @@ class RoutedWholeFrameOCRRunner:
         self.compute_policy = str(compute_policy or "auto")
         self.modal_provider = modal_provider or ModalComputeProvider(discover_modal_compute_config(self.root))
         self.local_runner = local_runner
+        self._persistent_local_session = OCRPersistentWorkerSession() if local_runner is run_local_whole_frame_ocr else None
         self.call_count = 0
 
     def __call__(self, image_paths: list[Path]) -> dict[str, Any]:
@@ -266,10 +273,17 @@ class RoutedWholeFrameOCRRunner:
                     fallback=True,
                     fallback_reason=type(exc).__name__,
                 )
-        payload = self.local_runner(paths)
+        if self._persistent_local_session is not None:
+            payload = run_local_whole_frame_ocr(paths, session=self._persistent_local_session)
+        else:
+            payload = self.local_runner(paths)
         entry.setdefault("actual_provider", "local_paddleocr")
         self._write_route_entry(entry)
         return payload
+
+    def close(self) -> None:
+        if self._persistent_local_session is not None:
+            self._persistent_local_session.close()
 
     def _write_route_entry(self, entry: dict[str, Any]) -> None:
         path = self.run_directory / "logs" / "visual_ocr_compute_route.json"

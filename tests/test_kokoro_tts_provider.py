@@ -63,3 +63,33 @@ def test_alignment_sidecar_is_accepted_only_when_bound_to_audio_hash(tmp_path) -
 
     sidecar.write_text(json.dumps({"audio_sha256": "b" * 64, "tokens": []}), encoding="utf-8")
     assert _alignment_metadata_for_audio(audio, digest) is None
+
+
+def test_kokoro_provider_routes_synthesis_through_configured_persistent_session(monkeypatch, tmp_path) -> None:
+    captured = {}
+    session = object()
+
+    def fake_synthesize(voice_id, speed, text, output_path, *, session=None):
+        captured.update(voice_id=voice_id, speed=speed, text=text, output_path=output_path, session=session)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"RIFF-kokoro-session")
+        return {"audio_path": str(output_path)}
+
+    monkeypatch.setattr("app.providers.tts.kokoro_local.synthesize_kokoro_to_file", fake_synthesize)
+    provider = KokoroLocalTTSProvider(session=session)
+    request = TTSRequest(
+        project_id="project",
+        segment_id="unit",
+        text="Keep the same model warm across narration units.",
+        voice_id="bm_george",
+        model=provider.model,
+        previous_request_ids=[],
+        output_format=provider.output_format,
+        speed=1.0,
+        provider_request_version=provider.provider_request_version,
+    )
+    output = tmp_path / "narration.wav"
+    provider.synthesize(request, output)
+    assert captured["session"] is session
+    assert captured["voice_id"] == "bm_george"
+    assert captured["text"] == request.text
