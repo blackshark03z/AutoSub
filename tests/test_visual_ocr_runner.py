@@ -86,6 +86,38 @@ def test_local_whole_frame_ocr_bisects_failed_large_batch_to_stable_floor(tmp_pa
     assert result["fallback_split_count"] == 2
 
 
+def test_dead_persistent_ocr_session_falls_back_to_cold_recursive_recovery(tmp_path: Path, monkeypatch) -> None:
+    paths = [tmp_path / f"frame_{index:05d}.jpg" for index in range(7)]
+    calls: list[tuple[str, int]] = []
+
+    class DeadSession:
+        def __init__(self) -> None:
+            self.close_count = 0
+
+        def close(self) -> None:
+            self.close_count += 1
+
+    session = DeadSession()
+
+    def fake_batch(chunk, config_path=None, session=None):
+        assert config_path is None
+        mode = "warm" if session is not None else "cold"
+        calls.append((mode, len(chunk)))
+        if session is not None:
+            raise OCRRuntimeError("persistent worker poisoned")
+        if len(chunk) > 3:
+            raise OCRRuntimeError("simulated primitive pressure")
+        return _fake_local_ocr_payload(chunk)
+
+    monkeypatch.setattr(runner, "run_ocr_on_images", fake_batch)
+    result = runner.run_local_whole_frame_ocr(paths, session=session)
+    assert calls == [("warm", 7), ("cold", 7), ("cold", 3), ("cold", 4), ("cold", 2), ("cold", 2)]
+    assert session.close_count == 1
+    assert [frame["name"] for frame in result["frames"]] == [path.name for path in paths]
+    assert result["batch_sizes"] == [3, 2, 2]
+    assert result["fallback_split_count"] == 2
+
+
 class _FakeModal:
     def __init__(self, *, no_overage: bool):
         self.no_overage = no_overage

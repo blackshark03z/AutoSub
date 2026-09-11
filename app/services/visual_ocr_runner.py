@@ -90,7 +90,14 @@ def _run_local_ocr_batch_with_fallback(
         if session is None:
             payload = run_ocr_on_images(paths, config_path=config_path)
         else:
-            payload = run_ocr_on_images(paths, config_path=config_path, session=session)
+            try:
+                payload = run_ocr_on_images(paths, config_path=config_path, session=session)
+            except OCRRuntimeError:
+                # A persistent worker failure may poison that process/model state.
+                # Close it immediately and prove the same batch once through the
+                # established cold-worker path before considering recursive split.
+                session.close()
+                payload = run_ocr_on_images(paths, config_path=config_path)
         normalized = normalize_local_whole_frame_ocr_payload(paths, payload)
         return (
             list(normalized.get("frames") or []),
@@ -103,8 +110,10 @@ def _run_local_ocr_batch_with_fallback(
         if len(paths) <= LOCAL_WHOLE_FRAME_OCR_STABLE_FLOOR:
             raise
         midpoint = len(paths) // 2
-        left = _run_local_ocr_batch_with_fallback(paths[:midpoint], config_path=config_path, session=session)
-        right = _run_local_ocr_batch_with_fallback(paths[midpoint:], config_path=config_path, session=session)
+        # Recursive recovery deliberately uses the known-stable cold path. A
+        # dead persistent session must not poison every descendant split.
+        left = _run_local_ocr_batch_with_fallback(paths[:midpoint], config_path=config_path, session=None)
+        right = _run_local_ocr_batch_with_fallback(paths[midpoint:], config_path=config_path, session=None)
         return (
             left[0] + right[0],
             left[1] + right[1],
