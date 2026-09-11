@@ -67,6 +67,36 @@ def _bounded_observation_envelope(
     )
 
 
+def _frame_bounded_mask(
+    left: int,
+    top: int,
+    right: int,
+    bottom: int,
+    *,
+    pad_x: int,
+    pad_y: int,
+    output_width: int,
+    output_height: int,
+) -> dict[str, int] | None:
+    """Return a padded mask bounded to the visible source frame.
+
+    Masks are allowed to touch the frame edge. ``build_tier_a_filter`` adds a
+    one-pixel smeared guard border before FFmpeg ``delogo`` and crops it away
+    afterwards, so edge text can be removed without shrinking the source mask.
+    """
+    if output_width <= 0 or output_height <= 0:
+        return None
+    x = max(0, int(left) - max(0, int(pad_x)))
+    y = max(0, int(top) - max(0, int(pad_y)))
+    x_far = min(output_width - 1, int(right) + max(0, int(pad_x)))
+    y_far = min(output_height - 1, int(bottom) + max(0, int(pad_y)))
+    width = x_far - x + 1
+    height = y_far - y + 1
+    if width <= 0 or height <= 0:
+        return None
+    return {"x": x, "y": y, "width": width, "height": height}
+
+
 def _fit_text(text: str, box_width: int, box_height: int, font_path: Path) -> tuple[int, str, bool]:
     max_width = max(24, int(box_width * 1.5))
     max_height = max(18, int(box_height * 1.7))
@@ -150,10 +180,16 @@ def build_tier_a_replacement_plan(
         envelope_height = max(1, envelope_bottom - envelope_top)
         pad_x = max(3, round(envelope_width * 0.08))
         pad_y = max(2, round(envelope_height * 0.12))
-        x = max(0, envelope_left - pad_x)
-        y = max(0, envelope_top - pad_y)
-        x2 = min(output_width - 1, envelope_right + pad_x)
-        y2 = min(output_height - 1, envelope_bottom + pad_y)
+        stable_mask = _frame_bounded_mask(
+            envelope_left,
+            envelope_top,
+            envelope_right,
+            envelope_bottom,
+            pad_x=pad_x,
+            pad_y=pad_y,
+            output_width=output_width,
+            output_height=output_height,
+        )
         start_ms = max(0, int(track.get("start_ms") or 0) - half_sample_ms)
         end_ms = max(start_ms + 1, int(track.get("end_ms") or 0) + half_sample_ms)
         base_item = {
@@ -164,6 +200,9 @@ def build_tier_a_replacement_plan(
             "geometry_stability": round(stability, 6),
             "tier": "A",
         }
+        if stable_mask is None and not moving_track:
+            escalations.append({"track_id": track_id, "reason": "invalid_mask_geometry"})
+            continue
         if moving_track:
             observations = [item for item in list(track.get("observations") or []) if isinstance(item.get("bbox"), list) and len(item.get("bbox")) == 4]
             if len(observations) < 2:
@@ -179,12 +218,26 @@ def build_tier_a_replacement_plan(
                     break
                 pad_x = max(3, round(ow * 0.08))
                 pad_y = max(2, round(oh * 0.12))
+                observation_mask = _frame_bounded_mask(
+                    ol,
+                    ot,
+                    oright,
+                    obottom,
+                    pad_x=pad_x,
+                    pad_y=pad_y,
+                    output_width=output_width,
+                    output_height=output_height,
+                )
+                if observation_mask is None:
+                    escalations.append({"track_id": track_id, "reason": "invalid_mask_geometry", "observation": ordinal})
+                    break
                 timestamp = int(observation.get("time_ms") or track.get("start_ms") or 0)
-                replacements.append({**base_item, "track_id": f"{track_id}__{ordinal:03d}", "parent_track_id": track_id, "start_ms": max(0, timestamp - half_sample_ms), "end_ms": timestamp + half_sample_ms, "source_bbox": box, "mask": {"x": max(0, ol-pad_x), "y": max(0, ot-pad_y), "width": min(output_width-1, oright+pad_x)-max(0, ol-pad_x)+1, "height": min(output_height-1, obottom+pad_y)-max(0, ot-pad_y)+1}, "center_x": round((ol+oright)/2), "center_y": round((ot+obottom)/2), "font_size": ofont, "render_text": otext, "motion_segment": True})
+                replacements.append({**base_item, "track_id": f"{track_id}__{ordinal:03d}", "parent_track_id": track_id, "start_ms": max(0, timestamp - half_sample_ms), "end_ms": timestamp + half_sample_ms, "source_bbox": box, "mask": observation_mask, "center_x": round((ol+oright)/2), "center_y": round((ot+obottom)/2), "font_size": ofont, "render_text": otext, "motion_segment": True})
             if escalations and escalations[-1].get("track_id") == track_id:
                 replacements[:] = [item for item in replacements if item.get("parent_track_id") != track_id]
             continue
-        replacements.append({**base_item, "start_ms": start_ms, "end_ms": end_ms, "source_bbox": [left, top, right, bottom], "mask": {"x": x, "y": y, "width": x2 - x + 1, "height": y2 - y + 1}, "center_x": round((left + right) / 2), "center_y": round((top + bottom) / 2), "font_size": font_size, "render_text": render_text})
+        assert stable_mask is not None
+        replacements.append({**base_item, "start_ms": start_ms, "end_ms": end_ms, "source_bbox": [left, top, right, bottom], "mask": stable_mask, "center_x": round((left + right) / 2), "center_y": round((top + bottom) / 2), "font_size": font_size, "render_text": render_text})
     return {
         "schema_version": 1,
         "replacement_count": len(replacements),
@@ -219,7 +272,15 @@ def write_tier_a_ass(
 
 
 def build_tier_a_filter(plan: dict[str, Any], ass_path: Path) -> str:
-    filters: list[str] = []
+    # FFmpeg delogo rejects rectangles that touch any input boundary. Add a
+    # one-pixel guard frame, smear the nearest real pixels into that guard, run
+    # every mask shifted by +1, then crop back to the exact original geometry.
+    # This preserves full edge-touching source masks instead of silently leaving
+    # a one-pixel residual strip or escalating otherwise deterministic Tier A.
+    filters: list[str] = [
+        "pad=iw+2:ih+2:1:1:color=black",
+        "fillborders=left=1:right=1:top=1:bottom=1:mode=smear",
+    ]
     for item in plan.get("replacements", []):
         mask = item["mask"]
         start = int(item["start_ms"]) / 1000.0
@@ -227,9 +288,10 @@ def build_tier_a_filter(plan: dict[str, Any], ass_path: Path) -> str:
         enable = f"between(t\\,{start:.3f}\\,{end:.3f})"
         filters.append(
             "delogo="
-            f"x={mask['x']}:y={mask['y']}:w={mask['width']}:h={mask['height']}:"
+            f"x={int(mask['x']) + 1}:y={int(mask['y']) + 1}:w={mask['width']}:h={mask['height']}:"
             f"show=0:enable='{enable}'"
         )
+    filters.append("crop=iw-2:ih-2:1:1")
     escaped = ass_path.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
     filters.append(f"subtitles='{escaped}'")
     return ",".join(filters)
