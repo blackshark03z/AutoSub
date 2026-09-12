@@ -65,6 +65,27 @@ def test_local_whole_frame_ocr_keeps_model_alive_for_bounded_large_batch(tmp_pat
     assert result["fallback_split_count"] == 0
 
 
+def test_local_whole_frame_ocr_reports_truthful_top_level_batch_progress(tmp_path: Path, monkeypatch) -> None:
+    paths = [tmp_path / f"frame_{index:05d}.jpg" for index in range(95)]
+    events: list[dict] = []
+
+    def fake_batch(chunk, config_path=None):
+        assert config_path is None
+        return _fake_local_ocr_payload(chunk)
+
+    monkeypatch.setattr(runner, "run_ocr_on_images", fake_batch)
+    result = runner.run_local_whole_frame_ocr(paths, progress_callback=lambda event: events.append(dict(event)))
+
+    assert result["batch_sizes"] == [90, 5]
+    assert [(event["completed_frames"], event["batch_index"], event["batch_count"]) for event in events] == [
+        (0, 1, 2),
+        (90, 1, 2),
+        (90, 2, 2),
+        (95, 2, 2),
+    ]
+    assert events[-1]["frame_count"] == 95
+
+
 def test_local_whole_frame_ocr_bisects_failed_large_batch_to_stable_floor(tmp_path: Path, monkeypatch) -> None:
     paths = [tmp_path / f"frame_{index:05d}.jpg" for index in range(7)]
     calls: list[int] = []
@@ -213,6 +234,11 @@ def test_routed_visual_ocr_splits_large_cloud_workload_into_bounded_resumable_sh
     assert latest["cloud_batch_size"] == 64
     assert latest["compute_shard_count"] == 3
     assert len(latest["compute_shard_ids"]) == 3
+    progress = json.loads((tmp_path / "run" / "logs" / "visual_ocr_progress.json").read_text(encoding="utf-8"))
+    assert progress["state"] == "completed"
+    assert progress["route"] == "cloud"
+    assert progress["completed_frames"] == progress["frame_count"] == 130
+    assert progress["batch_count"] == 3
 
 
 def test_routed_visual_ocr_stays_local_when_paid_overage_not_verified(tmp_path: Path) -> None:
@@ -230,6 +256,28 @@ def test_routed_visual_ocr_stays_local_when_paid_overage_not_verified(tmp_path: 
     assert modal.calls == []
     route = json.loads((tmp_path / "run" / "logs" / "visual_ocr_compute_route.json").read_text(encoding="utf-8"))
     assert route["calls"][-1]["reason"] == "no_qualified_cloud_provider"
+
+
+def test_routed_visual_ocr_persists_completed_progress_for_local_run(tmp_path: Path) -> None:
+    modal = _FakeModal(no_overage=False)
+    paths = _routing_frames(tmp_path, 12)
+    routed = RoutedWholeFrameOCRRunner(
+        root=tmp_path,
+        run_directory=tmp_path / "run",
+        compute_policy="local_only",
+        modal_provider=modal,
+        local_runner=lambda values: {"provider": "local_paddleocr", "runtime": "local", "model_version": "2.10", "frames": [{"name": p.name, "texts": []} for p in values]},
+    )
+
+    routed(paths)
+
+    progress = json.loads((tmp_path / "run" / "logs" / "visual_ocr_progress.json").read_text(encoding="utf-8"))
+    assert progress["state"] == "completed"
+    assert progress["route"] == "local"
+    assert progress["provider"] == "local_paddleocr"
+    assert progress["completed_frames"] == progress["frame_count"] == 12
+    assert progress["percentage"] == 100.0
+    assert progress["updated_at"]
 
 
 def test_routed_visual_ocr_keeps_micro_workload_local_even_when_cloud_is_safe(tmp_path: Path) -> None:

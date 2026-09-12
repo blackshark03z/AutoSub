@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -128,6 +130,7 @@ def run_local_whole_frame_ocr(
     *,
     config_path: Path | None = None,
     session: OCRPersistentWorkerSession | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     paths = [Path(path).resolve() for path in image_paths]
     if not paths:
@@ -151,8 +154,20 @@ def run_local_whole_frame_ocr(
     models: list[str] = []
     batch_sizes: list[int] = []
     fallback_split_count = 0
+    top_level_batch_count = math.ceil(len(paths) / LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE)
     for offset in range(0, len(paths), LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE):
         chunk = paths[offset : offset + LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE]
+        batch_index = offset // LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE + 1
+        if progress_callback is not None:
+            progress_callback({
+                "state": "running",
+                "completed_frames": offset,
+                "frame_count": len(paths),
+                "batch_index": batch_index,
+                "batch_count": top_level_batch_count,
+                "current_batch_size": len(chunk),
+                "fallback_split_count": fallback_split_count,
+            })
         chunk_frames, chunk_runtimes, chunk_models, chunk_sizes, chunk_splits = _run_local_ocr_batch_with_fallback(
             chunk,
             config_path=config_path,
@@ -163,6 +178,16 @@ def run_local_whole_frame_ocr(
         models.extend(chunk_models)
         batch_sizes.extend(chunk_sizes)
         fallback_split_count += chunk_splits
+        if progress_callback is not None:
+            progress_callback({
+                "state": "running",
+                "completed_frames": min(len(paths), offset + len(chunk)),
+                "frame_count": len(paths),
+                "batch_index": batch_index,
+                "batch_count": top_level_batch_count,
+                "current_batch_size": len(chunk),
+                "fallback_split_count": fallback_split_count,
+            })
     return {
         "frames": frames,
         "provider": "local_paddleocr",
@@ -228,6 +253,21 @@ class RoutedWholeFrameOCRRunner:
             "no_paid_overage_verified": bool(capabilities.no_paid_overage_verified),
             "fallback": False,
         }
+        selected_batch_size = CLOUD_WHOLE_FRAME_OCR_BATCH_SIZE if decision.route == "cloud" else LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE
+        self._write_progress({
+            "state": "running",
+            "call_index": self.call_count,
+            "frame_count": frame_count,
+            "completed_frames": 0,
+            "percentage": 0.0,
+            "batch_index": 1 if frame_count else 0,
+            "batch_count": math.ceil(frame_count / selected_batch_size) if frame_count else 0,
+            "current_batch_size": min(frame_count, selected_batch_size),
+            "route": decision.route,
+            "provider": decision.provider or ("local_paddleocr" if decision.route == "local" else None),
+            "policy": self.compute_policy,
+            "fallback": False,
+        })
         if decision.route == "cloud":
             try:
                 merged_frames: list[dict[str, Any]] = []
@@ -236,6 +276,7 @@ class RoutedWholeFrameOCRRunner:
                 timing_totals: dict[str, float] = {}
                 runtime = "modal_ppocrv6"
                 model_version = "PP-OCRv6_small"
+                cloud_batch_count = math.ceil(len(paths) / CLOUD_WHOLE_FRAME_OCR_BATCH_SIZE) if paths else 0
                 for offset in range(0, len(paths), CLOUD_WHOLE_FRAME_OCR_BATCH_SIZE):
                     chunk = paths[offset : offset + CLOUD_WHOLE_FRAME_OCR_BATCH_SIZE]
                     cloud = ComputePPocrV6Runner(
@@ -258,6 +299,21 @@ class RoutedWholeFrameOCRRunner:
                             continue
                     runtime = str(chunk_payload.get("runtime") or runtime)
                     model_version = str(chunk_payload.get("model_version") or model_version)
+                    completed_frames = min(len(paths), offset + len(chunk))
+                    self._write_progress({
+                        "state": "running",
+                        "call_index": self.call_count,
+                        "frame_count": frame_count,
+                        "completed_frames": completed_frames,
+                        "percentage": round((completed_frames / frame_count) * 100.0, 1) if frame_count else 100.0,
+                        "batch_index": offset // CLOUD_WHOLE_FRAME_OCR_BATCH_SIZE + 1,
+                        "batch_count": cloud_batch_count,
+                        "current_batch_size": len(chunk),
+                        "route": "cloud",
+                        "provider": "modal",
+                        "policy": self.compute_policy,
+                        "fallback": False,
+                    })
                 payload = {
                     "frames": merged_frames,
                     "provider": "modal",
@@ -273,6 +329,20 @@ class RoutedWholeFrameOCRRunner:
                     timings={key: round(value, 6) for key, value in timing_totals.items()},
                     cloud_batch_size=CLOUD_WHOLE_FRAME_OCR_BATCH_SIZE,
                 )
+                self._write_progress({
+                    "state": "completed",
+                    "call_index": self.call_count,
+                    "frame_count": frame_count,
+                    "completed_frames": frame_count,
+                    "percentage": 100.0,
+                    "batch_index": cloud_batch_count,
+                    "batch_count": cloud_batch_count,
+                    "current_batch_size": 0,
+                    "route": "cloud",
+                    "provider": "modal",
+                    "policy": self.compute_policy,
+                    "fallback": False,
+                })
                 self._write_route_entry(entry)
                 return payload
             except (ComputePPocrV6UnavailableError, ComputePPocrV6ContractError, OSError, ValueError) as exc:
@@ -282,11 +352,62 @@ class RoutedWholeFrameOCRRunner:
                     fallback=True,
                     fallback_reason=type(exc).__name__,
                 )
-        if self._persistent_local_session is not None:
-            payload = run_local_whole_frame_ocr(paths, session=self._persistent_local_session)
-        else:
-            payload = self.local_runner(paths)
         entry.setdefault("actual_provider", "local_paddleocr")
+        local_batch_count = math.ceil(frame_count / LOCAL_WHOLE_FRAME_OCR_BATCH_SIZE) if frame_count else 0
+        def local_progress(detail: dict[str, Any]) -> None:
+            completed_frames = int(detail.get("completed_frames") or 0)
+            self._write_progress({
+                **detail,
+                "call_index": self.call_count,
+                "frame_count": frame_count,
+                "completed_frames": completed_frames,
+                "percentage": round((completed_frames / frame_count) * 100.0, 1) if frame_count else 100.0,
+                "route": "local",
+                "provider": "local_paddleocr",
+                "policy": self.compute_policy,
+                "fallback": bool(entry.get("fallback")),
+            })
+        try:
+            if self._persistent_local_session is not None:
+                payload = run_local_whole_frame_ocr(
+                    paths,
+                    session=self._persistent_local_session,
+                    progress_callback=local_progress,
+                )
+            else:
+                payload = self.local_runner(paths)
+        except Exception as exc:
+            self._write_progress({
+                "state": "failed",
+                "call_index": self.call_count,
+                "frame_count": frame_count,
+                "completed_frames": 0,
+                "percentage": 0.0,
+                "batch_index": 0,
+                "batch_count": local_batch_count,
+                "current_batch_size": 0,
+                "route": "local",
+                "provider": "local_paddleocr",
+                "policy": self.compute_policy,
+                "fallback": bool(entry.get("fallback")),
+                "error_type": type(exc).__name__,
+            })
+            raise
+        self._write_progress({
+            "state": "completed",
+            "call_index": self.call_count,
+            "frame_count": frame_count,
+            "completed_frames": frame_count,
+            "percentage": 100.0,
+            "batch_index": local_batch_count,
+            "batch_count": local_batch_count,
+            "current_batch_size": 0,
+            "route": "local",
+            "provider": "local_paddleocr",
+            "policy": self.compute_policy,
+            "fallback": bool(entry.get("fallback")),
+            "fallback_split_count": int(payload.get("fallback_split_count") or 0) if isinstance(payload, dict) else 0,
+        })
         self._write_route_entry(entry)
         return payload
 
@@ -303,6 +424,19 @@ class RoutedWholeFrameOCRRunner:
 
     def close(self) -> None:
         self.release_local_session()
+
+    def _write_progress(self, payload: dict[str, Any]) -> None:
+        path = self.run_directory / "logs" / "visual_ocr_progress.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        envelope = {
+            "schema_version": 1,
+            "workload": "ocr",
+            **payload,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(envelope, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(path)
 
     def _write_route_entry(self, entry: dict[str, Any]) -> None:
         path = self.run_directory / "logs" / "visual_ocr_compute_route.json"

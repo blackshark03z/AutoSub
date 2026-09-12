@@ -367,6 +367,7 @@ function renderMonitorEvidence(run) {
   const v2 = monitor.v2 || {};
   const visual = v2.visual || null;
   const narration = v2.narration || null;
+  const visualOcrProgress = v2.compute?.visual_ocr_progress || null;
   const metrics = [
     progressMetric("Frame đã lấy", analysis.sampled_frames_completed, analysis.sampled_frames_total),
     progressMetric("Crop phụ đề", analysis.dense_crops_completed, analysis.dense_crops_total),
@@ -375,6 +376,18 @@ function renderMonitorEvidence(run) {
   ].filter(Boolean);
   if (isOcrMode(run)) {
     metrics.push(monitorMetric("Gemini", `${Number(provider.request_count || 0)} request`, `${Number(provider.cache_hits || 0)} cache hit · ${Number(provider.retry_count || 0)} retry`));
+  }
+  if (visualOcrProgress && Number(visualOcrProgress.frame_count || 0) > 0) {
+    const done = Number(visualOcrProgress.completed_frames || 0);
+    const total = Number(visualOcrProgress.frame_count || 0);
+    const batchIndex = Number(visualOcrProgress.batch_index || 0);
+    const batchCount = Number(visualOcrProgress.batch_count || 0);
+    const route = visualOcrProgress.route || "local";
+    metrics.push(monitorMetric(
+      "Visual OCR",
+      `${done}/${total} frame`,
+      `${Number(visualOcrProgress.percentage || 0).toFixed(1)}% · batch ${batchIndex}/${batchCount} · ${route}`,
+    ));
   }
   if (visual) {
     metrics.push(monitorMetric(
@@ -400,7 +413,14 @@ function renderMonitorEvidence(run) {
   $("monitorElapsed").textContent = `Đã chạy ${formatDuration(Number(monitor.elapsed_seconds || 0))}`;
   const age = Number(monitor.activity_age_seconds);
   const stalled = Boolean(monitor.stalled);
-  $("monitorActivity").textContent = stalled ? "Có dấu hiệu đứng" : Number.isFinite(age) ? `Hoạt động ${Math.round(age)}s trước` : "Đang hoạt động";
+  const ocrRunning = visualOcrProgress?.state === "running" && Number(visualOcrProgress.frame_count || 0) > 0;
+  $("monitorActivity").textContent = stalled
+    ? "Có dấu hiệu đứng"
+    : ocrRunning
+      ? `Đang OCR ${Number(visualOcrProgress.completed_frames || 0)}/${Number(visualOcrProgress.frame_count || 0)} frame`
+      : Number.isFinite(age)
+        ? `Hoạt động ${Math.round(age)}s trước`
+        : "Đang hoạt động";
   $("monitorActivity").classList.toggle("warning", stalled);
   $("monitorActivity").classList.toggle("neutral", !stalled);
 
@@ -408,7 +428,8 @@ function renderMonitorEvidence(run) {
   const visualRoute = v2.compute?.visual_ocr || {};
   const computeParts = [];
   if (asrRoute.route) computeParts.push(`ASR ${asrRoute.route}${asrRoute.provider ? `/${asrRoute.provider}` : ""}`);
-  if (visualRoute.route) computeParts.push(`OCR ${visualRoute.route}${visualRoute.provider ? `/${visualRoute.provider}` : ""}`);
+  const activeVisualRoute = visualOcrProgress?.state === "running" ? visualOcrProgress : visualRoute;
+  if (activeVisualRoute.route) computeParts.push(`OCR ${activeVisualRoute.route}${activeVisualRoute.provider ? `/${activeVisualRoute.provider}` : ""}`);
   const evidence = [
     ["Worker", stalled ? "Cần kiểm tra" : (monitor.worker_state || "Đang chạy")],
     ["Nguồn", provider.source_provider || (isOcrMode(run) ? "PaddleOCR" : "Đang xác định")],

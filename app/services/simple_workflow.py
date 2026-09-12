@@ -2668,6 +2668,7 @@ def _monitor_summary(row: SimpleWorkflowRun, validation: dict[str, Any]) -> dict
     analysis = load_caption_analysis_progress(run_dir) or {}
     render = _load_render_progress(run_dir)
     resolved = _monitor_json(run_dir / "subtitles" / "resolved_active_track.json")
+    visual_ocr_progress = _monitor_json(run_dir / "logs" / "visual_ocr_progress.json")
     active_track = resolved.get("active_track") if isinstance(resolved.get("active_track"), dict) else {}
     metadata = active_track.get("metadata") if isinstance(active_track.get("metadata"), dict) else {}
     usage = metadata.get("provider_usage") if isinstance(metadata.get("provider_usage"), dict) else {}
@@ -2692,18 +2693,25 @@ def _monitor_summary(row: SimpleWorkflowRun, validation: dict[str, Any]) -> dict
     candidates = [
         _parse_monitor_datetime(analysis.get("last_progress_at")),
         _parse_monitor_datetime(analysis.get("last_heartbeat_at")),
+        _parse_monitor_datetime(visual_ocr_progress.get("updated_at")),
         _parse_monitor_datetime(row.updated_at),
     ]
     latest_activity = max((item for item in candidates if item is not None), default=None)
     activity_age = max(0.0, (now - latest_activity).total_seconds()) if latest_activity else None
     worker_state = str(analysis.get("worker_state") or "")
+    ocr_running = str(visual_ocr_progress.get("state") or "") == "running"
+    try:
+        current_ocr_batch_size = max(0, int(visual_ocr_progress.get("current_batch_size") or 0))
+    except (TypeError, ValueError):
+        current_ocr_batch_size = 0
+    ocr_stall_grace = min(240.0, max(45.0, 30.0 + current_ocr_batch_size * 1.8)) if ocr_running else 45.0
     stalled = bool(
         row.internal_state == "processing"
         and row.current_phase != "Render video"
         and (
             worker_state == "failed"
             or analysis.get("error_code") == "EMBEDDED_CAPTION_ANALYSIS_STALLED"
-            or (activity_age is not None and activity_age >= 45)
+            or (activity_age is not None and activity_age >= ocr_stall_grace)
         )
     )
     translation_provider = str(metadata.get("translation_provider") or "").strip()
@@ -2738,6 +2746,7 @@ def _monitor_summary(row: SimpleWorkflowRun, validation: dict[str, Any]) -> dict
         "compute": {
             "asr": asr_route or None,
             "visual_ocr": visual_ocr_route or None,
+            "visual_ocr_progress": visual_ocr_progress or None,
         },
         "subtitle": quality_evidence or None,
         "subtitle_projection_repair": ({
@@ -2789,6 +2798,7 @@ def _monitor_summary(row: SimpleWorkflowRun, validation: dict[str, Any]) -> dict
         "last_progress_at": analysis.get("last_progress_at"),
         "last_heartbeat_at": analysis.get("last_heartbeat_at"),
         "activity_age_seconds": round(activity_age, 1) if activity_age is not None else None,
+        "activity_stall_after_seconds": round(ocr_stall_grace, 1),
         "worker_state": worker_state or ("active" if row.internal_state == "processing" else row.internal_state),
         "stalled": stalled,
         "analysis": analysis,

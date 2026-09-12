@@ -1,4 +1,7 @@
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -30,6 +33,9 @@ def test_production_monitor_surface_and_truthful_evidence_contract():
         "analysis.ocr_batches_completed",
         "analysis.translations_completed",
         "render.processed_seconds",
+        "visual_ocr_progress",
+        '"Visual OCR"',
+        "Đang OCR ${Number(visualOcrProgress.completed_frames || 0)}/${Number(visualOcrProgress.frame_count || 0)} frame",
     ):
         assert required in js
 
@@ -48,6 +54,95 @@ def test_monitor_does_not_fake_total_percentage():
     assert 'if (max > 0)' in js
     assert '"Chưa có counter định lượng"' in js
     assert 'Number.isFinite(renderPercent)' in js
+
+
+def test_monitor_treats_recent_visual_ocr_batch_progress_as_live_activity(tmp_path, monkeypatch):
+    run_dir = tmp_path / "run"
+    (run_dir / "logs").mkdir(parents=True)
+    now = datetime.now(timezone.utc)
+    (run_dir / "logs" / "visual_ocr_progress.json").write_text(json.dumps({
+        "schema_version": 1,
+        "workload": "ocr",
+        "state": "running",
+        "frame_count": 914,
+        "completed_frames": 180,
+        "percentage": 19.7,
+        "batch_index": 3,
+        "batch_count": 11,
+        "current_batch_size": 90,
+        "route": "local",
+        "provider": "local_paddleocr",
+        "updated_at": now.isoformat(),
+    }), encoding="utf-8")
+    old = (now - timedelta(minutes=5)).isoformat()
+    monkeypatch.setattr(workflow, "load_caption_analysis_progress", lambda _path: {
+        "last_progress_at": old,
+        "last_heartbeat_at": old,
+        "worker_state": "active",
+    })
+    row = SimpleNamespace(
+        run_directory=str(run_dir),
+        requested_settings_json=json.dumps({
+            "localization_mode": "full_visual_localization",
+            "caption_mode": "external_audio_transcription",
+        }),
+        started_at=now - timedelta(minutes=10),
+        updated_at=now - timedelta(minutes=5),
+        internal_state="processing",
+        current_phase="Localize visual text",
+    )
+
+    monitor = workflow._monitor_summary(row, {"status": "PENDING", "eligible": False})
+
+    assert monitor["stalled"] is False
+    assert monitor["activity_age_seconds"] < 5
+    assert monitor["activity_stall_after_seconds"] == 192.0
+    progress = monitor["v2"]["compute"]["visual_ocr_progress"]
+    assert progress["completed_frames"] == 180
+    assert progress["frame_count"] == 914
+
+
+def test_monitor_marks_visual_ocr_stalled_after_batch_aware_grace(tmp_path, monkeypatch):
+    run_dir = tmp_path / "run"
+    (run_dir / "logs").mkdir(parents=True)
+    now = datetime.now(timezone.utc)
+    stale = now - timedelta(seconds=205)
+    (run_dir / "logs" / "visual_ocr_progress.json").write_text(json.dumps({
+        "schema_version": 1,
+        "workload": "ocr",
+        "state": "running",
+        "frame_count": 914,
+        "completed_frames": 180,
+        "percentage": 19.7,
+        "batch_index": 3,
+        "batch_count": 11,
+        "current_batch_size": 90,
+        "route": "local",
+        "provider": "local_paddleocr",
+        "updated_at": stale.isoformat(),
+    }), encoding="utf-8")
+    monkeypatch.setattr(workflow, "load_caption_analysis_progress", lambda _path: {
+        "last_progress_at": stale.isoformat(),
+        "last_heartbeat_at": stale.isoformat(),
+        "worker_state": "active",
+    })
+    row = SimpleNamespace(
+        run_directory=str(run_dir),
+        requested_settings_json=json.dumps({
+            "localization_mode": "full_visual_localization",
+            "caption_mode": "external_audio_transcription",
+        }),
+        started_at=now - timedelta(minutes=10),
+        updated_at=stale,
+        internal_state="processing",
+        current_phase="Localize visual text",
+    )
+
+    monitor = workflow._monitor_summary(row, {"status": "PENDING", "eligible": False})
+
+    assert monitor["activity_stall_after_seconds"] == 192.0
+    assert monitor["activity_age_seconds"] >= 200
+    assert monitor["stalled"] is True
 
 
 def test_render_progress_transient_windows_replace_lock_does_not_fail_render(tmp_path, monkeypatch):
