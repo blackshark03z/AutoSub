@@ -225,6 +225,231 @@ def _render_tier_a_candidate(
         raise VisualLocalizationError("VISUAL_RENDER_MISSING", "Full Visual candidate was not created")
 
 
+def _verify_and_publish_full_visual_candidate(
+    source: Path,
+    run_dir: Path,
+    final_output: Path,
+    *,
+    candidate: Path,
+    evidence: dict[str, Any],
+    localized: dict[str, Any],
+    plan: dict[str, Any],
+    ocr_runner: OCRRunner,
+    ass_path: Path | None,
+    width: int,
+    height: int,
+    duration: float,
+    render_runner: RenderRunner,
+    ocr_provider: str,
+    ocr_model: str,
+    sample_seconds: float,
+) -> dict[str, Any]:
+    if not candidate.is_file() or candidate.stat().st_size <= 0:
+        raise VisualLocalizationError("VISUAL_RENDER_MISSING", "Full Visual candidate was not created")
+
+    visual_dir = run_dir / "visual"
+    replacements = list(plan.get("replacements") or [])
+    final_evidence = analyze_whole_frame_visual_text(
+        candidate,
+        run_dir,
+        ocr_runner=ocr_runner,
+        provider=ocr_provider,
+        model=ocr_model,
+        sample_seconds=sample_seconds,
+        evidence_filename="visual_text_final.json",
+    )
+    quality = evaluate_visual_localization(localized, final_evidence, replacement_plan=plan)
+    repair_evidence: dict[str, Any] | None = None
+    repair_masks: list[dict[str, Any]] = []
+    residual_repair_performed = False
+    if quality.get("eligible") is not True:
+        _write_json(visual_dir / "visual_quality_first_pass.json", quality)
+        repair_masks = _build_residual_repair_masks(
+            quality,
+            final_evidence,
+            output_width=width,
+            output_height=height,
+            sample_seconds=sample_seconds,
+        )
+        if repair_masks and ass_path is not None:
+            residual_repair_performed = True
+            repair_plan = {
+                **plan,
+                "replacements": [*replacements, *repair_masks],
+            }
+            candidate.unlink(missing_ok=True)
+            _release_ocr_resources_before_render(ocr_runner)
+            _render_tier_a_candidate(
+                source,
+                candidate,
+                plan=repair_plan,
+                ass_path=ass_path,
+                duration_seconds=duration,
+                render_runner=render_runner,
+            )
+            verification_windows = _repair_verification_windows(
+                repair_masks,
+                sample_seconds=sample_seconds,
+            )
+            repaired_final_evidence = analyze_whole_frame_visual_text(
+                candidate,
+                run_dir,
+                ocr_runner=ocr_runner,
+                provider=ocr_provider,
+                model=ocr_model,
+                sample_seconds=sample_seconds,
+                evidence_filename="visual_text_final_repair.json",
+                time_windows_ms=verification_windows,
+            )
+            targeted_quality = evaluate_visual_localization(
+                _localized_failure_subset(localized, quality),
+                repaired_final_evidence,
+                replacement_plan=None,
+            )
+            repaired_quality = _merge_targeted_repair_quality(quality, targeted_quality)
+            repair_evidence = {
+                "schema_version": 1,
+                "status": "PASS" if repaired_quality.get("eligible") is True else "FAIL",
+                "repair_pass_count": 1,
+                "repair_mask_count": len(repair_masks),
+                "first_pass_residual_source_track_count": int(quality.get("residual_source_track_count") or 0),
+                "final_residual_source_track_count": int(repaired_quality.get("residual_source_track_count") or 0),
+                "verification_mode": "targeted_residual_windows",
+                "verification_windows_ms": [[start, end] for start, end in verification_windows],
+                "verification_sampled_frame_count": int(repaired_final_evidence.get("sampled_frame_count") or 0),
+                "verification_full_sampled_frame_count": int(repaired_final_evidence.get("full_sampled_frame_count") or 0),
+                "verified_source_track_count": len(list(_localized_failure_subset(localized, quality).get("tracks") or [])),
+                "repair_masks": repair_masks,
+            }
+            _write_json(visual_dir / "visual_residual_repair.json", repair_evidence)
+            final_evidence = repaired_final_evidence
+            quality = repaired_quality
+        _write_json(visual_dir / "visual_quality_evidence.json", quality)
+        if quality.get("eligible") is not True:
+            raise VisualLocalizationError(
+                "VISUAL_LOCALIZATION_QC_FAILED",
+                "Final Full Visual OCR still contains unresolved source-language text",
+                quality,
+            )
+    else:
+        _write_json(visual_dir / "visual_quality_evidence.json", quality)
+
+    final_output.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(candidate, final_output)
+    summary = {
+        "schema_version": 1,
+        "status": "PASS",
+        "source_track_count": int(evidence.get("track_count") or 0),
+        "localizable_track_count": int(evidence.get("localizable_track_count") or 0),
+        "translated_track_count": int(localized.get("translated_track_count") or 0),
+        "replacement_count": int(plan.get("replacement_count") or 0),
+        "residual_repair_performed": residual_repair_performed,
+        "residual_repair_mask_count": len(repair_masks) if residual_repair_performed else 0,
+        "final_residual_source_track_count": int(quality.get("residual_source_track_count") or 0),
+        "output_path": str(final_output),
+    }
+    _write_json(visual_dir / "localization_summary.json", summary)
+    return {
+        "source_evidence": evidence,
+        "localized": localized,
+        "replacement_plan": plan,
+        "final_evidence": final_evidence,
+        "quality": quality,
+        "residual_repair": repair_evidence,
+        "output_path": final_output,
+        "summary": summary,
+    }
+
+
+def _load_visual_checkpoint_json(path: Path, *, code: str) -> dict[str, Any]:
+    if not path.is_file():
+        raise VisualLocalizationError(code, f"Full Visual recovery checkpoint is missing: {path.name}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise VisualLocalizationError(code, f"Full Visual recovery checkpoint is invalid: {path.name}") from exc
+    if not isinstance(payload, dict):
+        raise VisualLocalizationError(code, f"Full Visual recovery checkpoint is invalid: {path.name}")
+    return payload
+
+
+def resume_full_visual_candidate_qc(
+    source_path: Path,
+    run_directory: Path,
+    output_path: Path,
+    *,
+    ocr_runner: OCRRunner,
+    render_runner: RenderRunner,
+    ocr_provider: str = "local_paddleocr",
+    ocr_model: str = "local_ch_det_rec",
+    sample_seconds: float = 0.5,
+) -> dict[str, Any]:
+    source = Path(source_path).resolve()
+    run_dir = Path(run_directory).resolve()
+    final_output = Path(output_path).resolve()
+    if not source.is_file():
+        raise VisualLocalizationError("VISUAL_QC_CHECKPOINT_SOURCE_MISSING", "Full Visual recovery source stage is missing")
+
+    media = media_summary(source)
+    width = int(media.get("video", {}).get("width") or 0)
+    height = int(media.get("video", {}).get("height") or 0)
+    duration = float(media.get("duration_seconds") or 0)
+    if width <= 0 or height <= 0 or duration <= 0:
+        raise VisualLocalizationError("VISUAL_QC_CHECKPOINT_SOURCE_INVALID", "Full Visual recovery source stage is invalid")
+
+    visual_dir = run_dir / "visual"
+    evidence = _load_visual_checkpoint_json(visual_dir / "visual_text_source.json", code="VISUAL_QC_CHECKPOINT_INCOMPLETE")
+    localized = _load_visual_checkpoint_json(visual_dir / "visual_text_localized.json", code="VISUAL_QC_CHECKPOINT_INCOMPLETE")
+    plan = _load_visual_checkpoint_json(visual_dir / "replacement_plan.json", code="VISUAL_QC_CHECKPOINT_INCOMPLETE")
+    if list(plan.get("escalations") or []):
+        raise VisualLocalizationError(
+            "VISUAL_QC_CHECKPOINT_INELIGIBLE",
+            "Full Visual recovery checkpoint still contains replacement escalations",
+        )
+
+    candidate = run_dir / "work" / "full_visual_candidate.mp4"
+    if not candidate.is_file() or candidate.stat().st_size <= 0:
+        raise VisualLocalizationError("VISUAL_QC_CHECKPOINT_CANDIDATE_MISSING", "Rendered Full Visual recovery candidate is missing")
+    candidate_media = media_summary(candidate)
+    candidate_width = int(candidate_media.get("video", {}).get("width") or 0)
+    candidate_height = int(candidate_media.get("video", {}).get("height") or 0)
+    candidate_duration = float(candidate_media.get("duration_seconds") or 0)
+    if (
+        candidate_width != width
+        or candidate_height != height
+        or candidate_duration <= 0
+        or abs(candidate_duration - duration) > max(1.0, float(sample_seconds) * 2.0)
+    ):
+        raise VisualLocalizationError(
+            "VISUAL_QC_CHECKPOINT_CANDIDATE_MISMATCH",
+            "Rendered Full Visual recovery candidate does not match the source stage",
+        )
+
+    replacements = list(plan.get("replacements") or [])
+    ass_path = visual_dir / "visual_localization.ass" if replacements else None
+    if ass_path is not None and not ass_path.is_file():
+        raise VisualLocalizationError("VISUAL_QC_CHECKPOINT_INCOMPLETE", "Full Visual recovery ASS checkpoint is missing")
+
+    return _verify_and_publish_full_visual_candidate(
+        source,
+        run_dir,
+        final_output,
+        candidate=candidate,
+        evidence=evidence,
+        localized=localized,
+        plan=plan,
+        ocr_runner=ocr_runner,
+        ass_path=ass_path,
+        width=width,
+        height=height,
+        duration=duration,
+        render_runner=render_runner,
+        ocr_provider=ocr_provider,
+        ocr_model=ocr_model,
+        sample_seconds=sample_seconds,
+    )
+
+
 def execute_full_visual_localization(
     source_path: Path,
     run_directory: Path,
@@ -368,113 +593,21 @@ def execute_full_visual_localization(
         candidate.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, candidate)
 
-    final_evidence = analyze_whole_frame_visual_text(
-        candidate,
+    return _verify_and_publish_full_visual_candidate(
+        source,
         run_dir,
+        final_output,
+        candidate=candidate,
+        evidence=evidence,
+        localized=localized,
+        plan=plan,
         ocr_runner=ocr_runner,
-        provider=ocr_provider,
-        model=ocr_model,
+        ass_path=ass_path,
+        width=width,
+        height=height,
+        duration=duration,
+        render_runner=render_runner,
+        ocr_provider=ocr_provider,
+        ocr_model=ocr_model,
         sample_seconds=sample_seconds,
-        evidence_filename="visual_text_final.json",
     )
-    quality = evaluate_visual_localization(localized, final_evidence, replacement_plan=plan)
-    repair_evidence: dict[str, Any] | None = None
-    repair_masks: list[dict[str, Any]] = []
-    residual_repair_performed = False
-    if quality.get("eligible") is not True:
-        _write_json(visual_dir / "visual_quality_first_pass.json", quality)
-        repair_masks = _build_residual_repair_masks(
-            quality,
-            final_evidence,
-            output_width=width,
-            output_height=height,
-            sample_seconds=sample_seconds,
-        )
-        if repair_masks and ass_path is not None:
-            residual_repair_performed = True
-            repair_plan = {
-                **plan,
-                "replacements": [*replacements, *repair_masks],
-            }
-            candidate.unlink(missing_ok=True)
-            _release_ocr_resources_before_render(ocr_runner)
-            _render_tier_a_candidate(
-                source,
-                candidate,
-                plan=repair_plan,
-                ass_path=ass_path,
-                duration_seconds=duration,
-                render_runner=render_runner,
-            )
-            verification_windows = _repair_verification_windows(
-                repair_masks,
-                sample_seconds=sample_seconds,
-            )
-            repaired_final_evidence = analyze_whole_frame_visual_text(
-                candidate,
-                run_dir,
-                ocr_runner=ocr_runner,
-                provider=ocr_provider,
-                model=ocr_model,
-                sample_seconds=sample_seconds,
-                evidence_filename="visual_text_final_repair.json",
-                time_windows_ms=verification_windows,
-            )
-            targeted_quality = evaluate_visual_localization(
-                _localized_failure_subset(localized, quality),
-                repaired_final_evidence,
-                replacement_plan=None,
-            )
-            repaired_quality = _merge_targeted_repair_quality(quality, targeted_quality)
-            repair_evidence = {
-                "schema_version": 1,
-                "status": "PASS" if repaired_quality.get("eligible") is True else "FAIL",
-                "repair_pass_count": 1,
-                "repair_mask_count": len(repair_masks),
-                "first_pass_residual_source_track_count": int(quality.get("residual_source_track_count") or 0),
-                "final_residual_source_track_count": int(repaired_quality.get("residual_source_track_count") or 0),
-                "verification_mode": "targeted_residual_windows",
-                "verification_windows_ms": [[start, end] for start, end in verification_windows],
-                "verification_sampled_frame_count": int(repaired_final_evidence.get("sampled_frame_count") or 0),
-                "verification_full_sampled_frame_count": int(repaired_final_evidence.get("full_sampled_frame_count") or 0),
-                "verified_source_track_count": len(list(_localized_failure_subset(localized, quality).get("tracks") or [])),
-                "repair_masks": repair_masks,
-            }
-            _write_json(visual_dir / "visual_residual_repair.json", repair_evidence)
-            final_evidence = repaired_final_evidence
-            quality = repaired_quality
-        _write_json(visual_dir / "visual_quality_evidence.json", quality)
-        if quality.get("eligible") is not True:
-            raise VisualLocalizationError(
-                "VISUAL_LOCALIZATION_QC_FAILED",
-                "Final Full Visual OCR still contains unresolved source-language text",
-                quality,
-            )
-    else:
-        _write_json(visual_dir / "visual_quality_evidence.json", quality)
-
-    final_output.parent.mkdir(parents=True, exist_ok=True)
-    os.replace(candidate, final_output)
-    summary = {
-        "schema_version": 1,
-        "status": "PASS",
-        "source_track_count": int(evidence.get("track_count") or 0),
-        "localizable_track_count": int(evidence.get("localizable_track_count") or 0),
-        "translated_track_count": int(localized.get("translated_track_count") or 0),
-        "replacement_count": int(plan.get("replacement_count") or 0),
-        "residual_repair_performed": residual_repair_performed,
-        "residual_repair_mask_count": len(repair_masks) if residual_repair_performed else 0,
-        "final_residual_source_track_count": int(quality.get("residual_source_track_count") or 0),
-        "output_path": str(final_output),
-    }
-    _write_json(visual_dir / "localization_summary.json", summary)
-    return {
-        "source_evidence": evidence,
-        "localized": localized,
-        "replacement_plan": plan,
-        "final_evidence": final_evidence,
-        "quality": quality,
-        "residual_repair": repair_evidence,
-        "output_path": final_output,
-        "summary": summary,
-    }

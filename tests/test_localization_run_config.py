@@ -3,7 +3,9 @@ from pathlib import Path
 
 import pytest
 
+from app.db.session import init_db
 from app.services import simple_workflow
+from tests.test_cp10b_simple_workflow import configure_test_root
 from app.services.localization_run_config import (
     COMPUTE_AUTO,
     COMPUTE_CLOUD_NO_OVERAGE,
@@ -93,7 +95,9 @@ def test_unknown_localization_mode_is_rejected() -> None:
         normalize_localization_v2_settings({"localization_mode": "magic_full_video"})
 
 
-def test_public_run_creation_fails_closed_for_uncomposed_full_modes(monkeypatch, tmp_path: Path) -> None:
+def test_public_run_creation_allows_stable_full_modes_without_experimental_guard(monkeypatch, tmp_path: Path) -> None:
+    configure_test_root(monkeypatch, tmp_path)
+    init_db()
     source = tmp_path / "source.mp4"
     source.write_bytes(b"not-a-real-video-but-hashable")
     monkeypatch.delenv("AUTOSUB_ENABLE_EXPERIMENTAL_LOCALIZATION_V2", raising=False)
@@ -107,5 +111,7 @@ def test_public_run_creation_fails_closed_for_uncomposed_full_modes(monkeypatch,
         "media": {},
     })
     for mode in (FULL_VISUAL_LOCALIZATION, FULL_LOCALIZATION_VOICE):
-        with pytest.raises(ValueError, match="not exposed yet"):
-            simple_workflow.create_or_reuse_run(str(source), settings={"localization_mode": mode})
+        created = simple_workflow.create_or_reuse_run(str(source), settings={"localization_mode": mode})
+        assert created["settings"]["localization_mode"] == mode
+        assert created["internal_state"] == "selected"
+        assert created["output"]["path"] is None

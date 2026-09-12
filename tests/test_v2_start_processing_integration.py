@@ -406,3 +406,96 @@ def test_full_voice_render_resume_reuses_parent_narration_without_regeneration(m
     assert child_resolved["resume_checkpoint"]["kind"] == "render_only"
     assert child_resolved["resume_checkpoint"]["parent_run_id"] == parent["run_id"]
     assert child_resolved["cues"][0]["timing_provenance"] == "kokoro_token_alignment"
+
+
+def test_completed_full_voice_then_new_full_visual_run_is_isolated(monkeypatch, tmp_path: Path) -> None:
+    configure_test_root(monkeypatch, tmp_path)
+    init_db()
+    monkeypatch.setenv("AUTOSUB_ENABLE_EXPERIMENTAL_LOCALIZATION_V2", "1")
+    source = tmp_path / "repeat-isolation-source.mp4"
+    _make_tiny_video(source)
+    _install_common_fakes(monkeypatch, source)
+    monkeypatch.setattr(workflow, "_prepare_full_visual_runtime", lambda *_args, **_kwargs: SimpleNamespace(provider_name="fake", model="fake"))
+    monkeypatch.setattr(workflow, "execute_full_visual_localization", _fake_visual_pipeline)
+
+    def fake_narration(*, run_directory, voice_id, base_speed, resolved, **_kwargs):
+        audio_dir = Path(run_directory) / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        mix = audio_dir / "narration_mix.wav"
+        mix.write_bytes(b"repeat-isolation-kokoro-mix")
+        manifest = {
+            "schema_version": 1,
+            "status": "PASS",
+            "provider": "kokoro_local",
+            "model": "hexgrad/Kokoro-82M",
+            "voice_id": voice_id,
+            "base_speed": base_speed,
+            "mix_path": str(mix.resolve()),
+            "mix_sha256": sha256_file(mix),
+            "expected_retimed_cue_count": 1,
+            "retimed_cue_count": 1,
+        }
+        (audio_dir / "narration_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        retimed = {
+            **resolved,
+            "cues": [{**resolved["cues"][0], "timing_provenance": "kokoro_token_alignment"}],
+        }
+        return {"resolved": retimed, "mix_path": mix, "manifest": manifest}
+
+    monkeypatch.setattr(workflow, "generate_kokoro_narration", fake_narration)
+    run_a = workflow.create_or_reuse_run(str(source), settings={
+        "localization_mode": "full_localization_voice",
+        "caption_mode": "external_audio_transcription",
+        "target_language": "English",
+        "compute_policy": "local_only",
+        "tts_provider": "kokoro_local",
+        "voice_id": "bm_george",
+        "voice_speed": 1.0,
+    })
+    completed_a = workflow.start_processing(run_a["run_id"])
+    assert completed_a["internal_state"] == "completed"
+    assert completed_a["result_eligible"] is True
+    run_a_dir = Path(completed_a["run_directory"])
+    immutable_a = {
+        "output": sha256_file(Path(completed_a["output"]["path"])),
+        "narration": sha256_file(run_a_dir / "audio" / "narration_manifest.json"),
+        "visual": sha256_file(run_a_dir / "visual" / "visual_quality_evidence.json"),
+        "snapshot": sha256_file(run_a_dir / "run_snapshot.json"),
+    }
+
+    run_b = workflow.create_or_reuse_run(str(source), settings={
+        "localization_mode": "full_visual_localization",
+        "caption_mode": "external_audio_transcription",
+        "target_language": "English",
+        "compute_policy": "local_only",
+    })
+    assert run_b["reused"] is False
+    assert run_b["run_id"] != run_a["run_id"]
+    assert run_b["run_directory"] != completed_a["run_directory"]
+    assert run_b["internal_state"] == "selected"
+    assert run_b["output"]["path"] is None
+    assert run_b["output"]["hash"] is None
+    assert run_b["retry_parent_run_id"] is None
+    assert run_b["settings"]["localization_mode"] == "full_visual_localization"
+    assert run_b["settings"]["tts_provider"] is None
+    assert run_b["settings"]["voice_id"] is None
+    assert run_b["settings"]["voice_speed"] is None
+    run_b_dir = Path(run_b["run_directory"])
+    assert not (run_b_dir / "audio" / "narration_manifest.json").exists()
+    assert not (run_b_dir / "subtitles" / "resolved_active_track.json").exists()
+
+    accepted_b = workflow.accept_processing(run_b["run_id"], idempotency_key="a16-repeat-isolation")
+    assert accepted_b["internal_state"] == "processing"
+    assert accepted_b["output"]["path"] is None
+    snapshot_b = accepted_b["run_snapshot"]
+    assert snapshot_b["run_id"] == run_b["run_id"]
+    assert snapshot_b["source_hash"] == run_b["source"]["sha256"]
+    assert snapshot_b["settings"]["localization_mode"] == "full_visual_localization"
+    assert snapshot_b["settings"]["tts_provider"] is None
+    assert snapshot_b["settings"]["voice_id"] is None
+    assert snapshot_b["settings"]["voice_speed"] is None
+
+    assert sha256_file(Path(completed_a["output"]["path"])) == immutable_a["output"]
+    assert sha256_file(run_a_dir / "audio" / "narration_manifest.json") == immutable_a["narration"]
+    assert sha256_file(run_a_dir / "visual" / "visual_quality_evidence.json") == immutable_a["visual"]
+    assert sha256_file(run_a_dir / "run_snapshot.json") == immutable_a["snapshot"]

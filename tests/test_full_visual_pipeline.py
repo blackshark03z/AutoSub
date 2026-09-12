@@ -181,6 +181,66 @@ def test_full_visual_composition_only_publishes_after_final_ocr_qc(tmp_path: Pat
     assert not (run_dir / "work" / "full_visual_candidate.mp4").exists()
 
 
+def test_resume_full_visual_candidate_qc_reuses_rendered_candidate(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "subtitle_stage.mp4"
+    source.write_bytes(b"source-stage")
+    run_dir = tmp_path / "run"
+    visual_dir = run_dir / "visual"
+    work_dir = run_dir / "work"
+    output = run_dir / "output" / "final_video.mp4"
+    visual_dir.mkdir(parents=True)
+    work_dir.mkdir(parents=True)
+    candidate = work_dir / "full_visual_candidate.mp4"
+    candidate.write_bytes(b"already-rendered-candidate")
+    evidence = _source_evidence()
+    localized = {
+        **evidence,
+        "translated_track_count": 1,
+        "tracks": [{**evidence["tracks"][0], "target_text": "Settings"}],
+    }
+    plan = {
+        "replacement_count": 1,
+        "escalation_count": 0,
+        "replacements": [{"track_id": "vtt_000001"}],
+        "escalations": [],
+    }
+    (visual_dir / "visual_text_source.json").write_text(__import__("json").dumps(evidence), encoding="utf-8")
+    (visual_dir / "visual_text_localized.json").write_text(__import__("json").dumps(localized), encoding="utf-8")
+    (visual_dir / "replacement_plan.json").write_text(__import__("json").dumps(plan), encoding="utf-8")
+    (visual_dir / "visual_localization.ass").write_text("[Events]\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        pipeline,
+        "media_summary",
+        lambda path: {"duration_seconds": 2.0, "video": {"width": 1280, "height": 720}},
+    )
+    analyzed = []
+
+    def analyze(path, *_args, **_kwargs):
+        analyzed.append(Path(path).name)
+        return {"track_count": 0, "localizable_track_count": 0, "tracks": []}
+
+    monkeypatch.setattr(pipeline, "analyze_whole_frame_visual_text", analyze)
+
+    def render(_command, _duration):
+        raise AssertionError("resume path must not rerender an already-complete candidate")
+
+    result = pipeline.resume_full_visual_candidate_qc(
+        source,
+        run_dir,
+        output,
+        ocr_runner=_ReleasableOCRRunner(),
+        render_runner=render,
+    )
+
+    assert analyzed == ["full_visual_candidate.mp4"]
+    assert result["quality"]["status"] == "PASS"
+    assert output.read_bytes() == b"already-rendered-candidate"
+    assert not candidate.exists()
+    assert (visual_dir / "visual_quality_evidence.json").exists()
+    assert (visual_dir / "localization_summary.json").exists()
+
+
 def test_full_visual_residual_qc_runs_one_bounded_repair_pass(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "subtitle_stage.mp4"
     source.write_bytes(b"source-stage")

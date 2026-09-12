@@ -14,6 +14,19 @@ def _sources() -> tuple[str, str, str]:
     )
 
 
+def test_stable_v2_modes_are_visible_in_primary_run_configuration():
+    html, js, _ = _sources()
+    setup = html.split('data-flow-view="setup"', 1)[1].split('data-flow-view="settings"', 1)[0]
+
+    assert '<label class="field" for="localizationMode">' in setup
+    assert '<label class="field" for="localizationMode" hidden>' not in setup
+    assert '<option value="subtitle_localization" selected>' in setup
+    assert '<option value="full_visual_localization">' in setup
+    assert '<option value="full_localization_voice">' in setup
+    assert 'id="voiceConfigCard"' in setup
+    assert '$("voiceConfigCard").hidden = !voice;' in js
+
+
 def test_settings_is_a_separate_product_view_and_credentials_are_not_in_primary_flow():
     html, js, _ = _sources()
     setup = html.split('data-flow-view="setup"', 1)[1].split('data-flow-view="settings"', 1)[0]

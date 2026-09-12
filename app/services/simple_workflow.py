@@ -43,7 +43,11 @@ from app.providers.translation.gemini import (
 )
 from app.services.ocr_runtime import get_ocr_runtime_status
 from app.services.runtime_readiness import RuntimeReadinessError, ensure_product_runtime_ready
-from app.services.full_visual_pipeline import VisualLocalizationError, execute_full_visual_localization
+from app.services.full_visual_pipeline import (
+    VisualLocalizationError,
+    execute_full_visual_localization,
+    resume_full_visual_candidate_qc,
+)
 from app.services.narration_pipeline import NarrationFitError, generate_kokoro_narration
 from app.services.narration_repair import NarrationProjectionRepairError, repair_narration_spoken_projection
 from app.services.subtitle_projection_repair import SubtitleProjectionRepairError, repair_subtitle_display_projection
@@ -183,15 +187,6 @@ def create_or_reuse_run(path_value: str, settings: dict[str, Any] | None = None,
     requested = normalize_localization_v2_settings(
         normalize_simple_ui_settings(DEFAULT_SETTINGS | (settings or {}))
     )
-    requested_localization_mode = str(requested.get("localization_mode") or SUBTITLE_LOCALIZATION)
-    if requested_localization_mode in {FULL_VISUAL_LOCALIZATION, FULL_LOCALIZATION_VOICE} and os.environ.get(
-        "AUTOSUB_ENABLE_EXPERIMENTAL_LOCALIZATION_V2", ""
-    ).strip() != "1":
-        raise ValueError(
-            "Full Visual/Voice localization is not exposed yet because the composed visual replacement and final QC path "
-            "is still being implemented. Subtitle Localization remains available."
-        )
-    
     # V1 PRE-CREATE GUARD: Reject unverified Gemini source-caption mode before run creation
     requested_mode = str(requested.get("caption_mode") or SOURCE_CAPTION_MODE)
     if requested_mode in {SOURCE_CAPTION_GEMINI_MODE, SOURCE_CAPTION_HUMAN_REVIEW_MODE}:
@@ -970,6 +965,90 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
     except (SubtitleContentUnavailableError, SourceCaptionUnavailableError) as exc:
         _persist_subtitle_source_block(run_id, exc)
         raise
+
+
+def resume_interrupted_full_visual_qc(run_id: str) -> dict[str, Any]:
+    """Resume only the final Full Visual OCR/QC stage from a completed render candidate.
+
+    This path is intentionally narrow. It never recreates source OCR, translation,
+    replacement planning, subtitle rendering, or narration. It is used when the
+    worker/runtime is interrupted after ``full_visual_candidate.mp4`` is complete.
+    """
+    with session_scope() as session:
+        row = _get_run(session, run_id)
+        requested = json.loads(row.requested_settings_json or "{}")
+        localization_mode = str(requested.get("localization_mode") or SUBTITLE_LOCALIZATION)
+        if row.internal_state != "processing":
+            return _serialize_run(row, recovery_skipped=True)
+        if localization_mode not in {FULL_VISUAL_LOCALIZATION, FULL_LOCALIZATION_VOICE}:
+            raise ValueError("Full Visual QC recovery is only valid for Full Visual/Voice runs.")
+        if str(row.current_phase or "") not in {"Localize visual text", "Verify result"}:
+            raise ValueError("Full Visual QC recovery is not valid for the current processing phase.")
+        run_directory = Path(row.run_directory).resolve()
+        subtitle_stage = run_directory / "work" / "subtitle_stage.mp4"
+        candidate = run_directory / "work" / "full_visual_candidate.mp4"
+        output = run_directory / "output" / "final_video.mp4"
+        compute_policy = str(requested.get("compute_policy") or "auto")
+
+    if not output.is_file():
+        if not candidate.is_file() or candidate.stat().st_size <= 0:
+            raise ValueError("Full Visual QC recovery candidate is unavailable.")
+        visual_ocr_runner = build_routed_whole_frame_ocr_runner(
+            root=get_settings().root,
+            run_directory=run_directory,
+            compute_policy=compute_policy,
+        )
+        try:
+            resume_full_visual_candidate_qc(
+                subtitle_stage,
+                run_directory,
+                output,
+                ocr_runner=visual_ocr_runner,
+                render_runner=lambda command, duration: _run_ffmpeg_with_progress(
+                    command,
+                    run_dir=run_directory,
+                    duration_seconds=duration,
+                ),
+            )
+        except VisualLocalizationError as exc:
+            _persist_processing_failure(run_id, str(exc.code or "visual_localization_failed"), "Localize visual text", exc)
+            raise
+        except Exception as exc:
+            _persist_processing_failure(run_id, "visual_qc_resume_failed", "Localize visual text", exc)
+            raise
+        finally:
+            visual_ocr_runner.close()
+
+    quality = _read_json_object(run_directory / "visual" / "visual_quality_evidence.json")
+    if not quality or quality.get("eligible") is not True or quality.get("status") != "PASS":
+        exc = VisualLocalizationError(
+            "VISUAL_QC_RECOVERY_EVIDENCE_MISSING",
+            "Recovered Full Visual output does not have PASS final OCR/QC evidence",
+            quality or {},
+        )
+        _persist_processing_failure(run_id, exc.code, "Verify result", exc)
+        raise exc
+
+    with session_scope() as session:
+        row = _get_run(session, run_id)
+        requested = json.loads(row.requested_settings_json or "{}")
+        if row.internal_state != "processing":
+            return _serialize_run(row, recovery_skipped=True)
+        if not output.is_file() or output.stat().st_size <= 0:
+            raise ValueError("Recovered Full Visual output is unavailable.")
+        row.completed_at = datetime.now(timezone.utc)
+        row.updated_at = row.completed_at
+        row.current_phase = "Preview"
+        row.internal_state = "completed"
+        row.output_path = str(output)
+        row.output_hash = sha256_file(output)
+        _bind_localization_v2_acceptance_evidence(row, requested)
+        validation = _completed_result_validation(row)
+        if not validation["eligible"]:
+            _invalidate_completed_result(row, validation)
+            raise InvalidCompletedResultError(validation["message"])
+        _write_manifest(run_directory, row, status="completed")
+        return _serialize_run(row, recovered_from_visual_qc_checkpoint=True)
 
 
 def _prepare_full_visual_runtime(
