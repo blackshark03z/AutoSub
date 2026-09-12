@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
@@ -200,7 +201,14 @@ def _render_tier_a_candidate(
         "copy",
         str(candidate_path),
     ]
-    render_runner(command, duration_seconds)
+    for attempt in range(2):
+        candidate_path.unlink(missing_ok=True)
+        try:
+            render_runner(command, duration_seconds)
+            break
+        except subprocess.CalledProcessError:
+            if attempt >= 1:
+                raise
     if not candidate_path.is_file() or candidate_path.stat().st_size <= 0:
         raise VisualLocalizationError("VISUAL_RENDER_MISSING", "Full Visual candidate was not created")
 

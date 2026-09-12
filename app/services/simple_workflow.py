@@ -261,7 +261,7 @@ def _load_render_resume_checkpoint(run_id: str, requested: dict[str, Any]) -> di
             return None
         if parent.project_id != row.project_id or parent.source_hash != row.source_hash:
             return None
-        if parent.failure_category not in {"render_failed", "runtime_interrupted", "BACKGROUND_WORKER_FAILED"}:
+        if parent.failure_category not in {"render_failed", "runtime_interrupted", "BACKGROUND_WORKER_FAILED", "visual_localization_failed"}:
             return None
         if not _settings_compatible_for_reuse(parent, requested):
             return None

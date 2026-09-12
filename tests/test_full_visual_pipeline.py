@@ -2,10 +2,66 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import subprocess
 
 import pytest
 
 import app.services.full_visual_pipeline as pipeline
+
+
+def test_tier_a_render_retries_one_transient_process_failure(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    candidate = tmp_path / "candidate.mp4"
+    ass_path = tmp_path / "visual.ass"
+    ass_path.write_text("[Events]\n", encoding="utf-8")
+    monkeypatch.setattr(pipeline, "build_tier_a_filter", lambda *_args, **_kwargs: "null")
+    calls: list[list[str]] = []
+
+    def render(command, _duration):
+        calls.append(list(command))
+        if len(calls) == 1:
+            raise subprocess.CalledProcessError(1, command)
+        Path(command[-1]).write_bytes(b"candidate")
+
+    pipeline._render_tier_a_candidate(
+        source,
+        candidate,
+        plan={"replacements": []},
+        ass_path=ass_path,
+        duration_seconds=2.0,
+        render_runner=render,
+    )
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+    assert candidate.read_bytes() == b"candidate"
+
+
+def test_tier_a_render_stops_after_one_retry(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    candidate = tmp_path / "candidate.mp4"
+    ass_path = tmp_path / "visual.ass"
+    ass_path.write_text("[Events]\n", encoding="utf-8")
+    monkeypatch.setattr(pipeline, "build_tier_a_filter", lambda *_args, **_kwargs: "null")
+    calls = 0
+
+    def render(command, _duration):
+        nonlocal calls
+        calls += 1
+        raise subprocess.CalledProcessError(1, command)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        pipeline._render_tier_a_candidate(
+            source,
+            candidate,
+            plan={"replacements": []},
+            ass_path=ass_path,
+            duration_seconds=2.0,
+            render_runner=render,
+        )
+    assert calls == 2
+    assert not candidate.exists()
 
 
 class _Translator:
