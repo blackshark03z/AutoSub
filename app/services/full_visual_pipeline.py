@@ -12,6 +12,10 @@ from app.services.visual_localization_analysis import analyze_whole_frame_visual
 from app.services.visual_quality import evaluate_visual_localization
 from app.services.visual_replacement import build_tier_a_filter, build_tier_a_replacement_plan, write_tier_a_ass
 from app.services.visual_text_localization import localize_visual_text_tracks
+from app.services.visual_display_projection import (
+    VisualDisplayProjectionRepairError,
+    repair_visual_display_projection,
+)
 
 
 OCRRunner = Callable[[list[Path]], dict[str, Any]]
@@ -295,8 +299,33 @@ def execute_full_visual_localization(
         font_path=font_path,
         sample_seconds=sample_seconds,
     )
-    _write_json(visual_dir / "replacement_plan.json", plan)
     escalations = list(plan.get("escalations") or [])
+    if escalations and all(str(item.get("reason") or "") == "target_text_does_not_fit" for item in escalations):
+        _write_json(visual_dir / "replacement_plan_before_display_projection.json", plan)
+        try:
+            projection = repair_visual_display_projection(localized, plan, translator=translator)
+        except VisualDisplayProjectionRepairError as exc:
+            evidence_payload = {
+                "schema_version": 1,
+                "status": "FAIL",
+                "code": exc.code,
+                "message": str(exc),
+                "evidence": exc.evidence,
+            }
+            _write_json(visual_dir / "visual_display_projection_repair_evidence.json", evidence_payload)
+            raise VisualLocalizationError(exc.code, str(exc), evidence_payload) from exc
+        localized = projection["localized"]
+        _write_json(visual_dir / "visual_display_projection_repair_evidence.json", projection["evidence"])
+        _write_json(visual_dir / "visual_text_localized.json", localized)
+        plan = build_tier_a_replacement_plan(
+            localized,
+            output_width=width,
+            output_height=height,
+            font_path=font_path,
+            sample_seconds=sample_seconds,
+        )
+        escalations = list(plan.get("escalations") or [])
+    _write_json(visual_dir / "replacement_plan.json", plan)
     if escalations:
         evidence_payload = {
             "status": "FAIL",
