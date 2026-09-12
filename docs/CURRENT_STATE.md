@@ -1,5 +1,15 @@
 # Current State
 
+## Current V2 release candidate
+
+AutoSub Localization V2 has reached **machine-verifiable Stable V2 engineering acceptance** on `main`, but it is not yet promoted over the currently published `1.10.0` release identity. Version/tag/package promotion is intentionally deferred until the owner completes the remaining subjective watch/listen pass.
+
+Canonical full-golden evidence is run `run_20260912101239568746_c5d9f22e` on the real 458.3 s / 1920x1080 source. The accepted final MP4 is H.264 + AAC, exactly 458.300000 s, 266,319,210 bytes, SHA-256 `e48d29a56e1f7a8ee74c54df535baaa51d1181a7a4828d5f81ad8342d50fbc79`. Subtitle validation PASSed all 291 dialogues; narration PASSed 25/25 Kokoro units; Full Visual acceptance is 1080 expected localized tracks / 1187 planned replacements / 0 unresolved replacements / 0 residual source tracks / 0 failures after the single bounded residual-repair pass.
+
+Repeat-use isolation A16 also PASSed with fresh Run B `run_20260912152319264327_e6f07428`: no stale voice/output/track/job state crossed from Run A and Run A artifacts remained byte-identical. Public Simple UI exposure for Subtitle Localization / Full Visual Localization / Full Localization + Voice is enabled; the live product smoke and partial-playback endpoint PASSed. Objective owner-UAT assist found no >=1.0 s freeze, no >=0.5 s black interval, no audio clipping, and no intermittent residual-repair mask-drop candidate.
+
+The only release-closing gate still open is the explicitly subjective owner watch/listen check for visual flicker/background reconstruction, readability, narration naturalness, and overall usability. Machine PASS labels do not replace that A17 judgment. Until that pass is complete, do not change the canonical released VERSION/tag/package identity and do not mutate the accepted golden artifacts.
+
 ## Canonical release
 
 - Name: `AutoSub 1.10.0 Stable`
