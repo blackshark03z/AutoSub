@@ -223,7 +223,8 @@ def test_task35_missing_model_is_blocked_before_provider_creation(monkeypatch, t
         )
 
 
-def test_task35_render_failure_marks_run_failed(monkeypatch, tmp_path):
+@pytest.mark.parametrize("resume_parent_category", ["render_failed", "runtime_interrupted", "BACKGROUND_WORKER_FAILED"])
+def test_task35_render_failure_marks_run_failed(monkeypatch, tmp_path, resume_parent_category):
     configure_test_root(monkeypatch, tmp_path)
     monkeypatch.delenv("TOOL_AUTO_SUB_ALLOW_TEST_SUBTITLE_FIXTURES", raising=False)
     model_path = tmp_path / "model"
@@ -258,8 +259,22 @@ def test_task35_render_failure_marks_run_failed(monkeypatch, tmp_path):
         assert failed["failure_category"] == "render_failed"
         assert failed["result_eligible"] is False
         assert failed["output"]["path"] is None
+        if resume_parent_category != "render_failed":
+            from app.services.simple_workflow import _persist_processing_failure
+            _persist_processing_failure(
+                failed["run_id"],
+                resume_parent_category,
+                "Render video",
+                RuntimeError("simulated external worker interruption"),
+            )
+            failed = (await client.get(f"/api/simple/runs/{created['run_id']}")).json()["run"]
+            assert failed["failure_category"] == resume_parent_category
         log_path = Path(failed["run_directory"]) / "logs" / "simple_workflow_error.log"
-        assert "RuntimeError: ffmpeg failed" in log_path.read_text(encoding="utf-8")
+        log_text = log_path.read_text(encoding="utf-8")
+        if resume_parent_category == "render_failed":
+            assert "RuntimeError: ffmpeg failed" in log_text
+        else:
+            assert "simulated external worker interruption" in log_text
 
         parent_resolved = json.loads(
             (Path(failed["run_directory"]) / "subtitles" / "resolved_active_track.json").read_text(encoding="utf-8")
