@@ -223,7 +223,7 @@ def test_task35_missing_model_is_blocked_before_provider_creation(monkeypatch, t
         )
 
 
-@pytest.mark.parametrize("resume_parent_category", ["render_failed", "runtime_interrupted", "BACKGROUND_WORKER_FAILED", "visual_localization_failed"])
+@pytest.mark.parametrize("resume_parent_category", ["render_failed", "runtime_interrupted", "BACKGROUND_WORKER_FAILED", "visual_localization_failed", "VISUAL_REPLACEMENT_ESCALATION_REQUIRED"])
 def test_task35_render_failure_marks_run_failed(monkeypatch, tmp_path, resume_parent_category):
     configure_test_root(monkeypatch, tmp_path)
     monkeypatch.delenv("TOOL_AUTO_SUB_ALLOW_TEST_SUBTITLE_FIXTURES", raising=False)
