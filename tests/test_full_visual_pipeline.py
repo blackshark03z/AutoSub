@@ -64,6 +64,39 @@ def test_tier_a_render_stops_after_one_retry(tmp_path: Path, monkeypatch) -> Non
     assert not candidate.exists()
 
 
+def test_tier_a_render_uses_filter_script_for_large_graph(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    candidate = tmp_path / "candidate.mp4"
+    ass_path = tmp_path / "visual.ass"
+    ass_path.write_text("[Events]\n", encoding="utf-8")
+    filter_value = ",".join(["null"] * 12000)
+    monkeypatch.setattr(pipeline, "build_tier_a_filter", lambda *_args, **_kwargs: filter_value)
+    calls: list[list[str]] = []
+
+    def render(command, _duration):
+        calls.append(list(command))
+        Path(command[-1]).write_bytes(b"candidate")
+
+    pipeline._render_tier_a_candidate(
+        source,
+        candidate,
+        plan={"replacements": []},
+        ass_path=ass_path,
+        duration_seconds=2.0,
+        render_runner=render,
+    )
+
+    assert len(calls) == 1
+    command = calls[0]
+    assert "-filter_script:v" in command
+    assert "-vf" not in command
+    script_path = Path(command[command.index("-filter_script:v") + 1])
+    assert script_path.read_text(encoding="utf-8") == filter_value
+    assert filter_value not in command
+    assert candidate.read_bytes() == b"candidate"
+
+
 class _ReleasableOCRRunner:
     def __init__(self) -> None:
         self.release_count = 0

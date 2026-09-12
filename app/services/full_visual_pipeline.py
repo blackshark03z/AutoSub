@@ -189,6 +189,8 @@ def _render_tier_a_candidate(
 ) -> None:
     filter_value = build_tier_a_filter(plan, ass_path)
     candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    filter_script_path = candidate_path.with_name(f"{candidate_path.stem}.filter.txt")
+    filter_script_path.write_text(filter_value, encoding="utf-8")
     command = [
         "ffmpeg",
         "-y",
@@ -197,8 +199,8 @@ def _render_tier_a_candidate(
         "error",
         "-i",
         str(source_path),
-        "-vf",
-        filter_value,
+        "-filter_script:v",
+        str(filter_script_path),
         "-c:v",
         "libx264",
         "-preset",
