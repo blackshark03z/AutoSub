@@ -290,9 +290,19 @@ class RoutedWholeFrameOCRRunner:
         self._write_route_entry(entry)
         return payload
 
-    def close(self) -> None:
+    def release_local_session(self) -> None:
+        """Release the persistent Paddle worker without disabling future OCR calls.
+
+        OCRPersistentWorkerSession.close() is restartable: the next OCR call lazily
+        creates a fresh worker. Full Visual uses this seam before memory-heavy
+        FFmpeg renders so Paddle does not remain resident while x264/filtergraph
+        allocation peaks.
+        """
         if self._persistent_local_session is not None:
             self._persistent_local_session.close()
+
+    def close(self) -> None:
+        self.release_local_session()
 
     def _write_route_entry(self, entry: dict[str, Any]) -> None:
         path = self.run_directory / "logs" / "visual_ocr_compute_route.json"

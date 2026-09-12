@@ -64,6 +64,17 @@ def test_tier_a_render_stops_after_one_retry(tmp_path: Path, monkeypatch) -> Non
     assert not candidate.exists()
 
 
+class _ReleasableOCRRunner:
+    def __init__(self) -> None:
+        self.release_count = 0
+
+    def __call__(self, _paths):
+        return {}
+
+    def release_local_session(self) -> None:
+        self.release_count += 1
+
+
 class _Translator:
     provider_name = "fake_translation"
     model = "fake-model"
@@ -119,16 +130,18 @@ def test_full_visual_composition_only_publishes_after_final_ocr_qc(tmp_path: Pat
         calls.append((command, duration))
         Path(command[-1]).write_bytes(b"localized-candidate")
 
+    ocr_runner = _ReleasableOCRRunner()
     result = pipeline.execute_full_visual_localization(
         source,
         run_dir,
         output,
-        ocr_runner=lambda _paths: {},
+        ocr_runner=ocr_runner,
         translator=_Translator(),
         font_path=Path(r"C:\Windows\Fonts\arial.ttf"),
         render_runner=render,
     )
     assert calls and calls[0][1] == 2.0
+    assert ocr_runner.release_count == 1
     assert result["quality"]["status"] == "PASS"
     assert result["summary"]["replacement_count"] == 1
     assert output.read_bytes() == b"localized-candidate"
@@ -174,16 +187,18 @@ def test_full_visual_residual_qc_runs_one_bounded_repair_pass(tmp_path: Path, mo
         renders.append(command)
         Path(command[-1]).write_bytes(f"candidate-{len(renders)}".encode())
 
+    ocr_runner = _ReleasableOCRRunner()
     result = pipeline.execute_full_visual_localization(
         source,
         run_dir,
         output,
-        ocr_runner=lambda _paths: {},
+        ocr_runner=ocr_runner,
         translator=_Translator(),
         font_path=Path(r"C:\\Windows\\Fonts\\arial.ttf"),
         render_runner=render,
     )
     assert len(renders) == 2
+    assert ocr_runner.release_count == 2
     assert candidate_reads == 2
     assert "time_windows_ms" not in candidate_kwargs[0]
     assert candidate_kwargs[1]["time_windows_ms"] == [(0, 1500)]

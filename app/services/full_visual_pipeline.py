@@ -30,6 +30,12 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _release_ocr_resources_before_render(ocr_runner: OCRRunner) -> None:
+    release = getattr(ocr_runner, "release_local_session", None)
+    if callable(release):
+        release()
+
+
 MAX_RESIDUAL_REPAIR_MASKS = 64
 
 
@@ -318,6 +324,7 @@ def execute_full_visual_localization(
             output_width=width,
             output_height=height,
         )
+        _release_ocr_resources_before_render(ocr_runner)
         _render_tier_a_candidate(
             source,
             candidate,
@@ -359,6 +366,7 @@ def execute_full_visual_localization(
                 "replacements": [*replacements, *repair_masks],
             }
             candidate.unlink(missing_ok=True)
+            _release_ocr_resources_before_render(ocr_runner)
             _render_tier_a_candidate(
                 source,
                 candidate,
