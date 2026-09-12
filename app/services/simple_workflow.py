@@ -245,11 +245,11 @@ def create_or_reuse_run(path_value: str, settings: dict[str, Any] | None = None,
 
 
 def _load_render_resume_checkpoint(run_id: str, requested: dict[str, Any]) -> dict[str, Any] | None:
-    """Reuse only a validated render checkpoint from a failed parent run.
+    """Reuse only a validated render-ready checkpoint from a failed parent run.
 
-    The failed parent remains immutable evidence. A retry child may skip expensive
-    OCR/translation only when source, settings, failure seam, and resolved subtitle
-    content all still match the original run.
+    The failed parent remains immutable evidence. A retry child may skip source
+    analysis, subtitle repair, and narration only when all render inputs were
+    already accepted and remain hash/settings compatible with the child.
     """
     with session_scope() as session:
         row = _get_run(session, run_id)
@@ -265,7 +265,9 @@ def _load_render_resume_checkpoint(run_id: str, requested: dict[str, Any]) -> di
             return None
         if not _settings_compatible_for_reuse(parent, requested):
             return None
-        parent_run_directory = Path(parent.run_directory)
+        child_project_id = str(row.project_id)
+        child_source_hash = str(row.source_hash)
+        parent_run_directory = Path(parent.run_directory).resolve()
         parent_metadata = json.loads(parent.source_metadata_json or "{}")
 
     checkpoint_path = parent_run_directory / "subtitles" / "resolved_active_track.json"
@@ -275,7 +277,8 @@ def _load_render_resume_checkpoint(run_id: str, requested: dict[str, Any]) -> di
         payload = json.loads(checkpoint_path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
-    if not isinstance(payload, dict) or not list(payload.get("cues") or []):
+    cues = list(payload.get("cues") or []) if isinstance(payload, dict) else []
+    if not isinstance(payload, dict) or not cues:
         return None
     duration_ms = max(int(float(parent_metadata.get("duration_seconds") or 0) * 1000), 1)
     validation = validate_resolved_subtitle_content(
@@ -285,14 +288,142 @@ def _load_render_resume_checkpoint(run_id: str, requested: dict[str, Any]) -> di
     )
     if validation.get("eligible") is not True:
         return None
-    resumed = dict(payload)
-    resumed["content_validation"] = validation
-    resumed["resume_checkpoint"] = {
+
+    localization_mode = str(requested.get("localization_mode") or SUBTITLE_LOCALIZATION)
+    resume_checkpoint: dict[str, Any] = {
         "kind": "render_only",
         "parent_run_id": parent_id,
-        "source_hash": row.source_hash,
+        "source_hash": child_source_hash,
     }
+    if localization_mode in {FULL_VISUAL_LOCALIZATION, FULL_LOCALIZATION_VOICE}:
+        quality_path = parent_run_directory / "subtitles" / "localization_quality_evidence.json"
+        quality = _read_json_object(quality_path)
+        if not quality or quality.get("status") != "PASS" or quality.get("eligible") is not True:
+            return None
+        if int(quality.get("cue_count") or 0) != len(cues):
+            return None
+        resume_checkpoint["subtitle_quality"] = {
+            "path": str(quality_path),
+            "status": "PASS",
+            "cue_count": len(cues),
+        }
+
+    if localization_mode == FULL_LOCALIZATION_VOICE:
+        manifest_path = parent_run_directory / "audio" / "narration_manifest.json"
+        narration = _read_json_object(manifest_path)
+        expected_mix = (parent_run_directory / "audio" / "narration_mix.wav").resolve()
+        if not narration or narration.get("status") != "PASS" or not expected_mix.is_file():
+            return None
+        try:
+            manifest_mix = Path(str(narration.get("mix_path") or "")).resolve()
+        except (OSError, RuntimeError):
+            return None
+        if manifest_mix != expected_mix:
+            return None
+        mix_sha256 = str(narration.get("mix_sha256") or "").lower()
+        if not mix_sha256 or mix_sha256 != sha256_file(expected_mix).lower():
+            return None
+        if str(narration.get("provider") or "") != "kokoro_local":
+            return None
+        if str(narration.get("voice_id") or "") != str(requested.get("voice_id") or ""):
+            return None
+        try:
+            speed_matches = abs(float(narration.get("base_speed")) - float(requested.get("voice_speed"))) <= 0.0005
+        except (TypeError, ValueError):
+            speed_matches = False
+        if not speed_matches:
+            return None
+        expected_cues = int(narration.get("expected_retimed_cue_count") or 0)
+        actual_cues = int(narration.get("retimed_cue_count") or 0)
+        if expected_cues != len(cues) or actual_cues != expected_cues:
+            return None
+        resume_checkpoint["narration"] = {
+            "manifest_path": str(manifest_path),
+            "mix_path": str(expected_mix),
+            "mix_sha256": mix_sha256,
+        }
+
+    resumed = dict(payload)
+    resumed["run_id"] = run_id
+    active_track = resumed.get("active_track")
+    if isinstance(active_track, dict):
+        rebound_track = dict(active_track)
+        rebound_track["run_id"] = run_id
+        rebound_track["project_id"] = child_project_id
+        resumed["active_track"] = rebound_track
+    resumed["content_validation"] = validation
+    resumed["resume_checkpoint"] = resume_checkpoint
     return resumed
+
+
+def _materialize_render_resume_narration(
+    run_directory: Path,
+    resolved: dict[str, Any],
+    requested: dict[str, Any],
+) -> Path:
+    checkpoint = dict(resolved.get("resume_checkpoint") or {})
+    narration_resume = dict(checkpoint.get("narration") or {})
+    if checkpoint.get("kind") != "render_only" or not narration_resume:
+        raise ValueError("Render resume narration checkpoint is missing.")
+    source_manifest_path = Path(str(narration_resume.get("manifest_path") or "")).resolve()
+    source_mix = Path(str(narration_resume.get("mix_path") or "")).resolve()
+    expected_hash = str(narration_resume.get("mix_sha256") or "").lower()
+    source_manifest = _read_json_object(source_manifest_path)
+    if not source_manifest or source_manifest.get("status") != "PASS" or not source_mix.is_file():
+        raise ValueError("Render resume narration artifact is unavailable.")
+    if not expected_hash or sha256_file(source_mix).lower() != expected_hash:
+        raise ValueError("Render resume narration hash changed after checkpoint validation.")
+    if str(source_manifest.get("voice_id") or "") != str(requested.get("voice_id") or ""):
+        raise ValueError("Render resume narration voice does not match the child run.")
+    try:
+        speed_matches = abs(float(source_manifest.get("base_speed")) - float(requested.get("voice_speed"))) <= 0.0005
+    except (TypeError, ValueError):
+        speed_matches = False
+    if not speed_matches:
+        raise ValueError("Render resume narration speed does not match the child run.")
+
+    audio_dir = Path(run_directory) / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    child_mix = audio_dir / "narration_mix.wav"
+    shutil.copy2(source_mix, child_mix)
+    child_hash = sha256_file(child_mix).lower()
+    if child_hash != expected_hash:
+        child_mix.unlink(missing_ok=True)
+        raise ValueError("Copied render resume narration failed hash verification.")
+    child_manifest = dict(source_manifest)
+    child_manifest.pop("acceptance_binding", None)
+    child_manifest["mix_path"] = str(child_mix.resolve())
+    child_manifest["mix_sha256"] = child_hash
+    child_manifest["resume_checkpoint"] = {
+        "kind": "parent_narration_artifact",
+        "parent_run_id": checkpoint.get("parent_run_id"),
+        "source_mix_sha256": expected_hash,
+    }
+    (audio_dir / "narration_manifest.json").write_text(
+        json.dumps(child_manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    repair_source = source_manifest_path.parent / "narration_repair_evidence.json"
+    if repair_source.is_file():
+        shutil.copy2(repair_source, audio_dir / "narration_repair_evidence.json")
+    logs_dir = Path(run_directory) / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    (logs_dir / "render_resume_evidence.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "PASS",
+                "kind": "render_only",
+                "parent_run_id": checkpoint.get("parent_run_id"),
+                "narration_reused": True,
+                "narration_mix_sha256": child_hash,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return child_mix
 
 
 def accept_processing(run_id: str, idempotency_key: str | None = None) -> dict[str, Any]:
@@ -480,6 +611,8 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                     raise SourceCaptionUnavailableError("Unsupported caption workflow mode")
             resolved = resolved_cues(run_id)
         localization_mode = str(requested.get("localization_mode") or SUBTITLE_LOCALIZATION)
+        resume_checkpoint = dict(resolved.get("resume_checkpoint") or {}) if isinstance(resolved, dict) else {}
+        render_resume = resume_checkpoint.get("kind") == "render_only"
         source_duration_ms = max(1, round(float(source_metadata.get("duration_seconds") or 0) * 1000))
         render_resolved = resolved
         quality_repair_actions: list[dict[str, Any]] = []
@@ -487,7 +620,7 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
         quality_enforced = _subtitle_quality_v2_enforced(requested)
         pre_repair = (
             _bounded_quality_repair(render_resolved, requested, source_duration_ms=source_duration_ms, allow_split=True)
-            if quality_enforced
+            if quality_enforced and not render_resume
             else None
         )
         if pre_repair is not None:
@@ -574,7 +707,9 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                     _persist_processing_failure(run_id, "subtitle_quality_failed", "Create subtitles", exc)
                     raise exc
         narration_audio: Path | None = None
-        if localization_mode == FULL_LOCALIZATION_VOICE:
+        if localization_mode == FULL_LOCALIZATION_VOICE and render_resume:
+            narration_audio = _materialize_render_resume_narration(run_directory, render_resolved, requested)
+        if localization_mode == FULL_LOCALIZATION_VOICE and not render_resume:
             _set_processing_phase(run_id, "Generate narration")
             narration_input = resolved
             try:

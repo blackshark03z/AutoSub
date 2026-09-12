@@ -193,3 +193,104 @@ def test_full_voice_start_processing_binds_kokoro_mix_and_visual_qc(monkeypatch,
     assert narration["acceptance_binding"]["run_id"] == created["run_id"]
     assert narration["acceptance_binding"]["output_sha256"] == sha256_file(Path(completed["output"]["path"]))
     assert narration["voice_id"] == "bm_george"
+
+
+def test_full_voice_render_resume_reuses_parent_narration_without_regeneration(monkeypatch, tmp_path: Path) -> None:
+    configure_test_root(monkeypatch, tmp_path)
+    init_db()
+    monkeypatch.setenv("AUTOSUB_ENABLE_EXPERIMENTAL_LOCALIZATION_V2", "1")
+    source = tmp_path / "voice-resume-source.mp4"
+    _make_tiny_video(source)
+    _install_common_fakes(monkeypatch, source)
+    monkeypatch.setattr(workflow, "_prepare_full_visual_runtime", lambda *_args, **_kwargs: SimpleNamespace(provider_name="fake", model="fake"))
+    monkeypatch.setattr(workflow, "execute_full_visual_localization", _fake_visual_pipeline)
+    narration_calls = []
+
+    def fake_parent_narration(*, run_directory, voice_id, base_speed, resolved, **_kwargs):
+        narration_calls.append("parent")
+        audio_dir = Path(run_directory) / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        mix = audio_dir / "narration_mix.wav"
+        mix.write_bytes(b"parent-kokoro-mix")
+        manifest = {
+            "schema_version": 1,
+            "status": "PASS",
+            "provider": "kokoro_local",
+            "model": "hexgrad/Kokoro-82M",
+            "voice_id": voice_id,
+            "base_speed": base_speed,
+            "mix_path": str(mix.resolve()),
+            "mix_sha256": sha256_file(mix),
+            "expected_retimed_cue_count": 1,
+            "retimed_cue_count": 1,
+            "generations": [],
+        }
+        (audio_dir / "narration_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        cue = {
+            **resolved["cues"][0],
+            "source_start_ms": resolved["cues"][0]["start_ms"],
+            "source_end_ms": resolved["cues"][0]["end_ms"],
+            "narration_token_start_ms": 80,
+            "narration_token_end_ms": 650,
+            "start_ms": 80,
+            "end_ms": 650,
+            "timing_provenance": "kokoro_token_alignment",
+        }
+        retimed = {**resolved, "cues": [cue], "narration_timing": {"aligned_cue_count": 1}}
+        return {"resolved": retimed, "mix_path": mix, "manifest": manifest}
+
+    monkeypatch.setattr(workflow, "generate_kokoro_narration", fake_parent_narration)
+    monkeypatch.setattr(
+        workflow,
+        "_bounded_subtitle_process",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("parent render interrupted")),
+    )
+    settings = {
+        "localization_mode": "full_localization_voice",
+        "caption_mode": "external_audio_transcription",
+        "target_language": "English",
+        "tts_provider": "kokoro_local",
+        "voice_id": "bm_george",
+        "voice_speed": 1.0,
+    }
+    parent = workflow.create_or_reuse_run(str(source), settings=settings)
+    with pytest.raises(ValueError):
+        workflow.start_processing(parent["run_id"])
+    failed_parent = workflow.get_run(parent["run_id"])
+    assert failed_parent["failure_category"] == "render_failed"
+    parent_dir = Path(failed_parent["run_directory"])
+    parent_manifest = json.loads((parent_dir / "audio" / "narration_manifest.json").read_text(encoding="utf-8"))
+    parent_mix_hash = parent_manifest["mix_sha256"]
+    assert narration_calls == ["parent"]
+
+    _install_common_fakes(monkeypatch, source)
+    monkeypatch.setattr(workflow, "_prepare_full_visual_runtime", lambda *_args, **_kwargs: SimpleNamespace(provider_name="fake", model="fake"))
+    monkeypatch.setattr(workflow, "execute_full_visual_localization", _fake_visual_pipeline)
+    monkeypatch.setattr(
+        workflow,
+        "generate_kokoro_narration",
+        lambda **_kwargs: pytest.fail("render-only Full Voice retry must reuse parent narration"),
+    )
+    child = workflow.create_or_reuse_run(
+        str(source),
+        settings=settings,
+        retry_parent_run_id=parent["run_id"],
+    )
+    completed = workflow.start_processing(child["run_id"])
+    assert completed["internal_state"] == "completed"
+    assert completed["result_eligible"] is True
+    child_dir = Path(completed["run_directory"])
+    child_manifest = json.loads((child_dir / "audio" / "narration_manifest.json").read_text(encoding="utf-8"))
+    assert child_manifest["mix_sha256"] == parent_mix_hash
+    assert Path(child_manifest["mix_path"]).resolve() == (child_dir / "audio" / "narration_mix.wav").resolve()
+    assert child_manifest["resume_checkpoint"] == {
+        "kind": "parent_narration_artifact",
+        "parent_run_id": parent["run_id"],
+        "source_mix_sha256": parent_mix_hash,
+    }
+    assert child_manifest["acceptance_binding"]["run_id"] == child["run_id"]
+    child_resolved = json.loads((child_dir / "subtitles" / "resolved_active_track.json").read_text(encoding="utf-8"))
+    assert child_resolved["run_id"] == child["run_id"]
+    assert child_resolved["resume_checkpoint"]["kind"] == "render_only"
+    assert child_resolved["resume_checkpoint"]["parent_run_id"] == parent["run_id"]
+    assert child_resolved["cues"][0]["timing_provenance"] == "kokoro_token_alignment"
