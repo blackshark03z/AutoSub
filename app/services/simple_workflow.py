@@ -790,17 +790,83 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                 render_resolved, repair_result = post_repair
                 quality_repair_actions.extend(list(repair_result.get("actions") or []))
                 if repair_result.get("eligible") is not True:
-                    _write_localization_quality_evidence(
-                        run_directory,
-                        render_resolved,
-                        requested,
-                        enforced=True,
-                        repair_actions=quality_repair_actions,
-                        evaluation_override=repair_result.get("evaluation"),
-                    )
-                    exc = ValueError("Narration-aligned subtitles remained outside the frozen V2 hard gates.")
-                    _persist_processing_failure(run_id, "subtitle_quality_failed", "Create subtitles", exc)
-                    raise exc
+                    projection_path = run_directory / "subtitles" / "post_narration_subtitle_projection_repair_evidence.json"
+                    projection_error: Exception | None = None
+                    try:
+                        if str(requested.get("translation_policy") or "quality_auto").strip().lower() != "quality_auto":
+                            raise SubtitleProjectionRepairError(
+                                "subtitle_projection_repair_policy_blocked",
+                                "Post-narration display condensation requires translation_policy=quality_auto.",
+                            )
+                        readiness = ensure_gemini_caption_ready()
+                        selected_model = str(readiness.get("selected_model") or "").strip()
+                        if not selected_model:
+                            raise SubtitleProjectionRepairError(
+                                "subtitle_projection_repair_provider_unavailable",
+                                "No compatible Gemini model is ready for post-narration subtitle display repair.",
+                            )
+                        projection_translator = GeminiCaptionTranslator(
+                            replace(load_gemini_translation_config(), model=selected_model)
+                        )
+                        projection = repair_subtitle_display_projection(
+                            render_resolved,
+                            dict(repair_result.get("evaluation") or {}),
+                            translator=projection_translator,
+                        )
+                        projection_evidence = {
+                            **projection["evidence"],
+                            "phase": "post_narration_alignment",
+                            "narration_audio_preserved": True,
+                            "spoken_text_preserved": True,
+                        }
+                        projection_path.parent.mkdir(parents=True, exist_ok=True)
+                        projection_path.write_text(
+                            json.dumps(projection_evidence, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                        render_resolved = projection["resolved"]
+                        projection_repair = _bounded_quality_repair(
+                            render_resolved,
+                            requested,
+                            source_duration_ms=source_duration_ms,
+                            allow_split=False,
+                        )
+                        if projection_repair is not None:
+                            render_resolved, repair_result = projection_repair
+                            quality_repair_actions.extend(list(repair_result.get("actions") or []))
+                    except (SubtitleProjectionRepairError, GeminiCaptionTranslationError, ValueError) as exc:
+                        projection_error = exc
+                        evidence = getattr(exc, "evidence", None)
+                        projection_path.parent.mkdir(parents=True, exist_ok=True)
+                        projection_path.write_text(
+                            json.dumps(
+                                {
+                                    "schema_version": 1,
+                                    "status": "FAIL",
+                                    "phase": "post_narration_alignment",
+                                    "code": getattr(exc, "code", type(exc).__name__),
+                                    "message": _safe_user_failure_message(exc),
+                                    "evidence": evidence if isinstance(evidence, dict) else {},
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+                    if repair_result.get("eligible") is not True:
+                        _write_localization_quality_evidence(
+                            run_directory,
+                            render_resolved,
+                            requested,
+                            enforced=True,
+                            repair_actions=quality_repair_actions,
+                            evaluation_override=repair_result.get("evaluation"),
+                        )
+                        exc = ValueError("Narration-aligned subtitles remained outside the frozen V2 hard gates.")
+                        if projection_error is not None:
+                            exc.__cause__ = projection_error
+                        _persist_processing_failure(run_id, "subtitle_quality_failed", "Create subtitles", exc)
+                        raise exc
 
         _set_processing_phase(run_id, "Create subtitles")
         (run_directory / "subtitles" / "resolved_active_track.json").write_text(

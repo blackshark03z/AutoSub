@@ -195,6 +195,118 @@ def test_full_voice_start_processing_binds_kokoro_mix_and_visual_qc(monkeypatch,
     assert narration["voice_id"] == "bm_george"
 
 
+def test_full_voice_repairs_display_projection_after_narration_alignment(monkeypatch, tmp_path: Path) -> None:
+    configure_test_root(monkeypatch, tmp_path)
+    init_db()
+    monkeypatch.setenv("AUTOSUB_ENABLE_EXPERIMENTAL_LOCALIZATION_V2", "1")
+    source = tmp_path / "voice-post-narration-projection.mp4"
+    _make_tiny_video(source)
+    _install_common_fakes(monkeypatch, source)
+    semantic = {
+        "subtitle_provenance": "user_import",
+        "cues": [{
+            "cue_id": "cue-1",
+            "start_ms": 50,
+            "end_ms": 950,
+            "source_text": "他们会见我",
+            "translation_text": "They will meet me.",
+            "resolved_text": "They will meet me.",
+            "subtitle_text": "They will meet me.",
+            "spoken_text": "They will meet me.",
+        }],
+    }
+    monkeypatch.setattr(workflow, "resolved_cues", lambda _run_id: semantic)
+    monkeypatch.setattr(workflow, "_prepare_full_visual_runtime", lambda *_args, **_kwargs: SimpleNamespace(provider_name="fake", model="fake"))
+    monkeypatch.setattr(workflow, "execute_full_visual_localization", _fake_visual_pipeline)
+
+    def fake_narration(*, run_directory, voice_id, base_speed, resolved, **_kwargs):
+        audio_dir = Path(run_directory) / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        mix = audio_dir / "narration_mix.wav"
+        mix.write_bytes(b"kokoro-post-narration")
+        manifest = {
+            "schema_version": 1,
+            "status": "PASS",
+            "provider": "kokoro_local",
+            "model": "hexgrad/Kokoro-82M",
+            "voice_id": voice_id,
+            "base_speed": base_speed,
+            "mix_path": str(mix.resolve()),
+            "mix_sha256": sha256_file(mix),
+            "expected_retimed_cue_count": 1,
+            "retimed_cue_count": 1,
+        }
+        (audio_dir / "narration_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        cue = {
+            **resolved["cues"][0],
+            "start_ms": 50,
+            "end_ms": 850,
+            "source_start_ms": 50,
+            "source_end_ms": 950,
+            "timing_provenance": "kokoro_token_alignment",
+        }
+        return {"resolved": {**resolved, "cues": [cue]}, "mix_path": mix, "manifest": manifest}
+
+    monkeypatch.setattr(workflow, "generate_kokoro_narration", fake_narration)
+    quality_calls = 0
+
+    def fake_bounded_quality(resolved, _requested, *, source_duration_ms, allow_split):
+        nonlocal quality_calls
+        quality_calls += 1
+        if quality_calls == 2:
+            evaluation = {
+                "status": "FAIL",
+                "eligible": False,
+                "violations": [{"cue_id": "cue-1", "code": "reading_speed", "value": 22.5, "limit": 20.0}],
+            }
+            return resolved, {"eligible": False, "actions": [], "evaluation": evaluation}
+        evaluation = {"status": "PASS", "eligible": True, "violations": []}
+        return resolved, {"eligible": True, "actions": [], "evaluation": evaluation}
+
+    monkeypatch.setattr(workflow, "_bounded_quality_repair", fake_bounded_quality)
+    monkeypatch.setattr(workflow, "ensure_gemini_caption_ready", lambda: {"selected_model": "fake-model"})
+
+    class FakeProjectionTranslator:
+        provider_name = "fake_projection"
+
+        def translate(self, requests):
+            return SimpleNamespace(
+                translations=[{"id": item["id"], "english": "They'll meet me."} for item in requests],
+                model="fake-model",
+                request_count=1,
+                retry_count=0,
+                cache_hits=0,
+                cache_misses=1,
+            )
+
+    monkeypatch.setattr(workflow, "GeminiCaptionTranslator", lambda _config: FakeProjectionTranslator())
+    created = workflow.create_or_reuse_run(str(source), settings={
+        "localization_mode": "full_localization_voice",
+        "caption_mode": "external_audio_transcription",
+        "target_language": "English",
+        "translation_policy": "quality_auto",
+        "subtitle_quality_profile": "english_v2",
+        "tts_provider": "kokoro_local",
+        "voice_id": "bm_george",
+        "voice_speed": 1.0,
+    })
+    completed = workflow.start_processing(created["run_id"])
+    assert completed["internal_state"] == "completed"
+    run_dir = Path(completed["run_directory"])
+    resolved = json.loads((run_dir / "subtitles" / "resolved_active_track.json").read_text(encoding="utf-8"))
+    cue = resolved["cues"][0]
+    assert cue["translation_text"] == "They will meet me."
+    assert cue["spoken_text"] == "They will meet me."
+    assert cue["subtitle_text"] == "They'll meet me."
+    assert cue["resolved_text"] == "They'll meet me."
+    evidence = json.loads((run_dir / "subtitles" / "post_narration_subtitle_projection_repair_evidence.json").read_text(encoding="utf-8"))
+    assert evidence["status"] == "PASS"
+    assert evidence["phase"] == "post_narration_alignment"
+    assert evidence["repaired_cue_count"] == 1
+    assert evidence["narration_audio_preserved"] is True
+    assert evidence["spoken_text_preserved"] is True
+
+
 def test_full_voice_render_resume_reuses_parent_narration_without_regeneration(monkeypatch, tmp_path: Path) -> None:
     configure_test_root(monkeypatch, tmp_path)
     init_db()
