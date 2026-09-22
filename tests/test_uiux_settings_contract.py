@@ -27,6 +27,20 @@ def test_stable_v2_modes_are_visible_in_primary_run_configuration():
     assert '$("voiceConfigCard").hidden = !voice;' in js
 
 
+def test_voice_preview_is_bound_to_current_voice_and_speed():
+    _, js, _ = _sources()
+
+    assert 'state.voicePreviewSignature = "";' in js
+    assert 'audio.removeAttribute("src");' in js
+    assert 'audio.hidden = true;' in js
+    assert 'if (signature !== voiceSignature()) {' in js
+    assert 'invalidateVoicePreview();\n      return;' in js
+    assert '$("voiceSelect").addEventListener("change", () => {' in js
+    assert 'invalidateVoicePreview("Giọng đã thay đổi. Hãy nghe thử lại nếu muốn kiểm tra.");' in js
+    assert '$("voiceSpeed").addEventListener("input", () => {' in js
+    assert 'state.voicePreviewSignature !== voiceSignature()' in js
+    assert 'invalidateVoicePreview("Tốc độ đã thay đổi. Hãy nghe thử lại nếu muốn kiểm tra.");' in js
+
 def test_settings_is_a_separate_product_view_and_credentials_are_not_in_primary_flow():
     html, js, _ = _sources()
     setup = html.split('data-flow-view="setup"', 1)[1].split('data-flow-view="settings"', 1)[0]
