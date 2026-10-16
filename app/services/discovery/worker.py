@@ -129,11 +129,33 @@ class DiscoveryWorker:
                 error_message="No discovery adapter can handle this source URL",
             )
 
+        SECURITY_FATAL_ERROR_CODES = {
+            "SECURE_TRANSPORT_UNAVAILABLE",
+            "SSRF_REJECTED",
+            "SSRF_MANIFEST_POISONING",
+            "OPERATOR_AUTHORIZATION_REQUIRED",
+            "UNSAFE_PROXY_REJECTED",
+            "PROXIES_DISABLED_FOR_UNTRUSTED",
+        }
+
         last_result: DiscoveryResult | None = None
         for i, adapter in enumerate(candidate_adapters):
             try:
                 result = adapter.probe(request)
-                # Successful or definitive states don't need fallback
+
+                # 1. Fail-closed: Never fall back after a security or transport hardening violation
+                if (
+                    result.error_code in SECURITY_FATAL_ERROR_CODES
+                    or (result.error_code and "SSRF" in result.error_code)
+                ):
+                    logger.warning(
+                        "Adapter %s encountered security fatal error %s. Aborting discovery immediately without fallback.",
+                        adapter.adapter_name,
+                        result.error_code,
+                    )
+                    return self._enforce_invariants(result, start_time)
+
+                # 2. Successful or definitive states don't need fallback
                 definitive_statuses = {
                     DiscoveryStatus.DISCOVERABLE.value,
                     DiscoveryStatus.DRM_SUSPECTED.value,
@@ -152,7 +174,12 @@ class DiscoveryWorker:
                 )
             except Exception as exc:
                 duration_ms = int((time.monotonic() - start_time) * 1000)
-                last_result = DiscoveryResult(
+                exc_name = type(exc).__name__
+                is_security_exc = "Ssrf" in exc_name or "SecureTransport" in exc_name or "Security" in exc_name
+                error_code = "SECURE_TRANSPORT_UNAVAILABLE" if "SecureTransport" in exc_name else (
+                    "SSRF_REJECTED" if "Ssrf" in exc_name else "ADAPTER_EXCEPTION"
+                )
+                sec_result = DiscoveryResult(
                     source_url_redacted=redacted_url,
                     platform=detected_platform,
                     status=DiscoveryStatus.PROBE_ERROR.value,
@@ -165,9 +192,18 @@ class DiscoveryWorker:
                     drm_status=DrmStatus.UNKNOWN.value,
                     probe_duration_ms=duration_ms,
                     download_tested=False,
-                    error_code="ADAPTER_EXCEPTION",
+                    error_code=error_code,
                     error_message=str(exc),
                 )
+                if is_security_exc:
+                    logger.warning(
+                        "Security exception raised by %s: %s (%s). Aborting immediately without fallback.",
+                        adapter.adapter_name,
+                        exc,
+                        error_code,
+                    )
+                    return self._enforce_invariants(sec_result, start_time)
+                last_result = sec_result
 
         if last_result is not None:
             return self._enforce_invariants(last_result, start_time)

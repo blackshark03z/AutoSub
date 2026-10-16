@@ -24,21 +24,48 @@ logger = logging.getLogger(__name__)
 class LuxDiscoveryAdapter:
     adapter_name = "lux"
 
+    def __init__(self, enabled: bool | None = None) -> None:
+        if enabled is not None:
+            self.enabled = enabled
+        else:
+            self.enabled = os.environ.get("AUTOSUB_ENABLE_UNHARDENED_LUX", "0") == "1"
+
     def is_available(self) -> bool:
+        # Lux is disabled by default because it is an unhardened external binary that executes
+        # HTTP requests without socket-level IP binding or redirect SSRF inspection.
+        if not self.enabled:
+            return False
         return shutil.which("lux") is not None
 
     def can_handle(self, url: str, platform: str | None = None) -> bool:
+        if not self.is_available():
+            return False
         domain = urllib.parse.urlsplit(url).netloc.lower()
         supported_domains = ["bilibili.com", "douyin.com", "youku.com", "iqiyi.com", "ixigua.com"]
         matches_domain = any(d in domain for d in supported_domains)
-        return self.is_available() and (matches_domain or platform in {"bilibili", "douyin", "youku", "iqiyi", "xigua"})
+        return matches_domain or platform in {"bilibili", "douyin", "youku", "iqiyi", "xigua"}
 
     def probe(self, request: DiscoveryRequest) -> DiscoveryResult:
         start_time = time.monotonic()
         redacted_url = redact_url(request.video_url)
         platform_name = request.platform or self._detect_platform(request.video_url)
 
-        if not self.is_available():
+        if not self.enabled:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            return DiscoveryResult(
+                source_url_redacted=redacted_url,
+                platform=platform_name,
+                status=DiscoveryStatus.UNSUPPORTED.value,
+                recommended_engine="lux",
+                title=None,
+                duration_seconds=None,
+                probe_duration_ms=duration_ms,
+                download_tested=False,
+                error_code="LUX_DISABLED_UNHARDENED",
+                error_message="Lux subprocess discovery is disabled by default due to unhardened network transport (lacks redirect SSRF enforcement). Set AUTOSUB_ENABLE_UNHARDENED_LUX=1 to override.",
+            )
+
+        if not shutil.which("lux"):
             duration_ms = int((time.monotonic() - start_time) * 1000)
             return DiscoveryResult(
                 source_url_redacted=redacted_url,

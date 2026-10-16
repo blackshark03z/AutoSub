@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 import urllib.parse
@@ -74,7 +75,15 @@ class YtDlpDiscoveryAdapter:
                 def __init__(self, *args, **kwargs):
                     super().__init__(*args, **kwargs)
                     # Audit configured proxies fail-closed
+                    # Public proxies can route into internal or cloud metadata networks.
+                    # Proxies are disabled for untrusted discovery unless explicitly authorized by operator.
                     if getattr(self, "proxies", None):
+                        allow_proxy = os.environ.get("AUTOSUB_ALLOW_DISCOVERY_PROXY", "0") == "1"
+                        if not allow_proxy:
+                            raise SsrfProtectionError(
+                                "Proxy disabled for untrusted discovery: external proxies can route to internal networks "
+                                "or cloud metadata. Direct safe connection is enforced."
+                            )
                         safe, reason = validate_proxies_dict(self.proxies)
                         if not safe:
                             raise SsrfProtectionError(f"Blocked unsafe yt-dlp proxy configuration: {reason}")
@@ -121,6 +130,8 @@ class YtDlpDiscoveryAdapter:
             "socket_timeout": max(float(request.timeout_seconds), 1.0),
             # Do NOT harvest browser cookies or load private credentials
             "ignoreerrors": False,
+            # Disable proxies for untrusted discovery: direct safe connection enforced
+            "proxy": "",
         }
 
         try:

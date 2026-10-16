@@ -708,10 +708,16 @@ def test_ytdlp_rejects_unsafe_proxy():
     from app.services.discovery.adapters.ytdlp import _get_safe_ydl_cls
 
     safe_ydl_cls = _get_safe_ydl_cls()
+    # 1. By default, untrusted discovery rejects any proxy
     with pytest.raises(SsrfProtectionError) as exc_info:
         safe_ydl_cls({"proxy": "http://127.0.0.1:8080"})
-    assert "Blocked unsafe yt-dlp proxy configuration" in str(exc_info.value)
-    assert "BLOCKED_IP_LITERAL" in str(exc_info.value)
+    assert "Proxy disabled for untrusted discovery" in str(exc_info.value)
+
+    # 2. When proxy is authorized via operator flag, loopback IP is still rejected fail-closed
+    with patch.dict("os.environ", {"AUTOSUB_ALLOW_DISCOVERY_PROXY": "1"}):
+        with pytest.raises(SsrfProtectionError) as exc_info:
+            safe_ydl_cls({"proxy": "http://127.0.0.1:8080"})
+        assert "BLOCKED_IP_LITERAL" in str(exc_info.value)
 
 
 def test_ssrf_rejects_ipv4_mapped_ipv6():
@@ -896,5 +902,92 @@ def test_manifest_adapter_dash_segment_url_ssrf_poisoning_rejected():
         result = adapter.probe(req)
         assert result.status == DiscoveryStatus.PROBE_ERROR.value
         assert result.error_code == "SSRF_MANIFEST_POISONING"
+
+
+def test_worker_no_downgrade_after_secure_transport_failure():
+    """Verify that when an adapter fails due to SECURE_TRANSPORT_UNAVAILABLE, the worker aborts immediately and never falls back."""
+    mock_adapter1 = MagicMock()
+    mock_adapter1.adapter_name = "yt-dlp"
+    mock_adapter1.can_handle.return_value = True
+    mock_adapter1.probe.return_value = DiscoveryResult(
+        source_url_redacted="https://example.com/video",
+        platform="generic",
+        status=DiscoveryStatus.PROBE_ERROR.value,
+        recommended_engine="yt-dlp",
+        title=None,
+        duration_seconds=None,
+        error_code="SECURE_TRANSPORT_UNAVAILABLE",
+        error_message="Secure transport unavailable",
+        download_tested=False,
+    )
+
+    mock_adapter2 = MagicMock()
+    mock_adapter2.adapter_name = "lux"
+    mock_adapter2.can_handle.return_value = True
+
+    worker = DiscoveryWorker(adapters=[mock_adapter1, mock_adapter2], enforce_dns_validation=False)
+    result = worker.probe_url("https://example.com/video", authorized_access_confirmed=True)
+
+    assert result.status == DiscoveryStatus.PROBE_ERROR.value
+    assert result.error_code == "SECURE_TRANSPORT_UNAVAILABLE"
+    mock_adapter1.probe.assert_called_once()
+    mock_adapter2.probe.assert_not_called()
+
+
+def test_worker_no_downgrade_after_ssrf_rejected():
+    """Verify that when an adapter returns SSRF_REJECTED, worker aborts immediately without trying other adapters."""
+    mock_adapter1 = MagicMock()
+    mock_adapter1.adapter_name = "manifest"
+    mock_adapter1.can_handle.return_value = True
+    mock_adapter1.probe.return_value = DiscoveryResult(
+        source_url_redacted="https://example.com/stream.m3u8",
+        platform="manifest_hls",
+        status=DiscoveryStatus.PROBE_ERROR.value,
+        recommended_engine="n_m3u8dl_re",
+        title=None,
+        duration_seconds=None,
+        error_code="SSRF_MANIFEST_POISONING",
+        error_message="Variant targets internal address",
+        download_tested=False,
+    )
+
+    mock_adapter2 = MagicMock()
+    mock_adapter2.adapter_name = "yt-dlp"
+    mock_adapter2.can_handle.return_value = True
+
+    worker = DiscoveryWorker(adapters=[mock_adapter1, mock_adapter2], enforce_dns_validation=False)
+    result = worker.probe_url("https://example.com/stream.m3u8", authorized_access_confirmed=True)
+
+    assert result.status == DiscoveryStatus.PROBE_ERROR.value
+    assert result.error_code == "SSRF_MANIFEST_POISONING"
+    mock_adapter1.probe.assert_called_once()
+    mock_adapter2.probe.assert_not_called()
+
+
+def test_lux_disabled_by_default():
+    """Verify that Lux is disabled by default due to unhardened subprocess network transport."""
+    from app.services.discovery.adapters.lux import LuxDiscoveryAdapter
+
+    lux = LuxDiscoveryAdapter()
+    assert not lux.enabled
+    assert not lux.is_available()
+    assert not lux.can_handle("https://www.bilibili.com/video/BV1test")
+
+    req = DiscoveryRequest(video_url="https://www.bilibili.com/video/BV1test", authorized_access_confirmed=True)
+    res = lux.probe(req)
+    assert res.status == DiscoveryStatus.UNSUPPORTED.value
+    assert res.error_code == "LUX_DISABLED_UNHARDENED"
+
+
+def test_ytdlp_proxy_disabled_by_default_even_with_public_proxy():
+    """Verify that proxies are disabled by default for untrusted URL discovery to prevent proxy pivoting into internal networks."""
+    from app.services.discovery.adapters.ytdlp import _get_safe_ydl_cls
+
+    safe_ydl_cls = _get_safe_ydl_cls()
+    with patch.dict("os.environ", {"AUTOSUB_ALLOW_DISCOVERY_PROXY": "0"}):
+        with pytest.raises(SsrfProtectionError) as exc_info:
+            safe_ydl_cls({"proxy": "http://198.51.100.1:8080"})
+        assert "Proxy disabled for untrusted discovery" in str(exc_info.value)
+
 
 

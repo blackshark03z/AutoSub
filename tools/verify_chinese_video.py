@@ -24,6 +24,21 @@ from pathlib import Path
 from typing import Any
 
 
+def parse_fps(fps_str: str | None) -> float | None:
+    """Parse FPS string from ffprobe (e.g. '25/1', '30000/1001', '29.97')."""
+    if not fps_str or not isinstance(fps_str, str):
+        return None
+    try:
+        if "/" in fps_str:
+            num, den = fps_str.split("/", 1)
+            f_num = float(num)
+            f_den = float(den)
+            return f_num / f_den if f_den != 0 else None
+        return float(fps_str)
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
 def verify_media_evidence(
     target_path: Path,
     mode: str = "full",
@@ -160,12 +175,20 @@ def verify_media_evidence(
     full_proc = subprocess.run(full_cmd, capture_output=True, text=True)
     elapsed = round(time.monotonic() - t0, 2)
 
+    # 1. FFmpeg return code MUST be 0
     if full_proc.returncode != 0:
         result["errors"].append(f"Full decode failed with exit code {full_proc.returncode}: {full_proc.stderr[-500:]}")
         result["verdict"] = "DECODE_FAILED"
+        result["decode_verification"]["full_test"] = {
+            "exit_code": full_proc.returncode,
+            "elapsed_seconds": elapsed,
+            "actual_frames_decoded": None,
+            "decoder_error_lines": ["FFmpeg process returned non-zero exit code"],
+            "verdict": "DECODE_FAILED",
+        }
         return result
 
-    # Extract actual decoded frames from FFmpeg stderr statistics
+    # 2. Extract actual decoded frames from FFmpeg stderr statistics
     frame_matches = re.findall(r"frame=\s*(\d+)", full_proc.stderr)
     actual_frames = int(frame_matches[-1]) if frame_matches else None
 
@@ -180,15 +203,37 @@ def verify_media_evidence(
         "elapsed_seconds": elapsed,
         "actual_frames_decoded": actual_frames,
         "decoder_error_lines": error_lines,
-        "verdict": "FULL_DECODE_PASS" if (not error_lines and actual_frames and actual_frames > 0) else "DECODE_WARNING",
+        "verdict": "DECODE_FAILED",
     }
 
-    if error_lines:
-        result["errors"].append(f"Decoder logged {len(error_lines)} errors during full playback")
+    # 3. Contract check: Must have decoded frame progress statistics (>0 frames)
+    if actual_frames is None or actual_frames <= 0:
+        result["errors"].append("Missing or zero decoded frames in FFmpeg decoder progress statistics; unable to verify decode completeness.")
         result["verdict"] = "DECODE_FAILED"
-    else:
-        result["verdict"] = "FULL_DECODE_VERIFIED"
+        return result
 
+    # 4. Contract check: Frame count requirement validation
+    fps = parse_fps(v_stream.get("r_frame_rate"))
+    if fps and fps > 0 and duration_sec > 0:
+        expected_frames = duration_sec * fps
+        min_required_frames = int(expected_frames * 0.90)  # Must achieve at least 90% of expected frames
+        if actual_frames < min_required_frames:
+            result["errors"].append(
+                f"Insufficient decoded frames: extracted {actual_frames} frames, but contract requires at least "
+                f"{min_required_frames} frames (~{int(expected_frames)} expected based on {duration_sec}s @ {round(fps, 2)} fps). Stream truncated."
+            )
+            result["verdict"] = "DECODE_FAILED"
+            return result
+
+    # 5. Contract check: No decoder errors logged
+    if error_lines:
+        result["errors"].append(f"Decoder logged {len(error_lines)} errors during full playback: {error_lines[:5]}")
+        result["verdict"] = "DECODE_FAILED"
+        return result
+
+    # All checks passed
+    result["decode_verification"]["full_test"]["verdict"] = "FULL_DECODE_PASS"
+    result["verdict"] = "FULL_DECODE_VERIFIED"
     return result
 
 
