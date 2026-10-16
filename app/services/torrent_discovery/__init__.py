@@ -21,12 +21,18 @@ from app.services.torrent_discovery.models import (
     DiscoveryMode,
     DiscoveryStatus,
     RecommendedEngine,
+    TorrentFormat,
     TorrentDiscoveryRequest,
     TorrentDiscoveryResult,
     TorrentFileItem,
     VideoCandidate,
 )
-from app.services.torrent_discovery.redaction import sanitize_tracker_url, sanitize_tracker_urls
+from app.services.torrent_discovery.redaction import (
+    sanitize_tracker_url,
+    sanitize_tracker_urls,
+    is_private_tracker_url,
+    sanitize_error_message,
+)
 from app.services.torrent_discovery.service import (
     TorrentDiscoveryService,
     default_torrent_discovery_service,
@@ -36,6 +42,9 @@ from app.services.torrent_discovery.ssrf import (
     resolve_and_validate_hostname,
     SSRFBlockedError,
     SafeRedirectHandler,
+    PinnedIPHTTPConnection,
+    PinnedIPHTTPSConnection,
+    create_safe_tracker_opener,
 )
 from app.services.torrent_discovery.torrent_parser import (
     parse_torrent_bytes,
@@ -53,6 +62,7 @@ __all__ = [
     "DiscoveryMode",
     "DiscoveryStatus",
     "RecommendedEngine",
+    "TorrentFormat",
     "parse_magnet_uri",
     "is_magnet_uri",
     "InvalidMagnetUriError",
@@ -69,8 +79,13 @@ __all__ = [
     "BencodeSizeError",
     "sanitize_tracker_url",
     "sanitize_tracker_urls",
+    "is_private_tracker_url",
+    "sanitize_error_message",
     "validate_tracker_url",
     "resolve_and_validate_hostname",
     "SSRFBlockedError",
     "SafeRedirectHandler",
+    "PinnedIPHTTPConnection",
+    "PinnedIPHTTPSConnection",
+    "create_safe_tracker_opener",
 ]

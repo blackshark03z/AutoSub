@@ -11,6 +11,7 @@ SENSITIVE_PARAM_NAMES = {
     "passkey",
     "pass_key",
     "auth",
+    "authkey",
     "auth_key",
     "token",
     "secret",
@@ -73,7 +74,7 @@ def sanitize_tracker_url(url: str) -> str:
                 sanitized_params.append((key, "[REDACTED]"))
             else:
                 sanitized_params.append((key, value))
-        query = urllib.parse.urlencode(sanitized_params)
+        query = urllib.parse.urlencode(sanitized_params, safe="[]")
 
     sanitized = urllib.parse.urlunsplit((parsed.scheme, netloc, path, query, parsed.fragment))
     return sanitized
@@ -89,3 +90,57 @@ def sanitize_tracker_urls(urls: List[str]) -> List[str]:
             seen.add(clean)
             sanitized_list.append(clean)
     return sanitized_list
+
+
+def is_private_tracker_url(url: str) -> bool:
+    """
+    Check if a tracker URL contains private user credentials, passkeys, or personal tokens.
+    """
+    if not url or not isinstance(url, str):
+        return False
+
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except Exception:
+        return False
+
+    # 1. Contains userinfo (username:password)
+    if "@" in parsed.netloc:
+        return True
+
+    # 2. Path contains private hex/base32 token
+    if PATH_TOKEN_PATTERN.search(parsed.path):
+        return True
+
+    # 3. Query contains passkey/auth parameters
+    if parsed.query:
+        query_params = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        for key, value in query_params:
+            if key.lower() in SENSITIVE_PARAM_NAMES:
+                return True
+            if len(value) >= 32 and re.match(r"^[a-fA-F0-9]{32,64}$", value):
+                return True
+
+    return False
+
+
+def sanitize_error_message(msg: str) -> str:
+    """
+    Scrub passkeys, tokens, and raw tracker URLs from exception/error messages.
+    """
+    if not msg:
+        return ""
+
+    # Replace URLs found in message with sanitized versions
+    url_pattern = re.compile(r"https?://[^\s\"'>]+")
+
+    def _replace_url(match):
+        return sanitize_tracker_url(match.group(0))
+
+    cleaned = url_pattern.sub(_replace_url, str(msg))
+
+    # Also scrub standalone passkey patterns if any leaked
+    for param in SENSITIVE_PARAM_NAMES:
+        cleaned = re.sub(rf"({param}=)[^&\s]+", r"\1[REDACTED]", cleaned, flags=re.IGNORECASE)
+
+    return cleaned

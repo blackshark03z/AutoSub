@@ -12,6 +12,9 @@ from typing import List, Optional
 from app.services.torrent_discovery.redaction import sanitize_tracker_urls
 
 
+from app.services.torrent_discovery.models import TorrentFormat
+
+
 class InvalidMagnetUriError(ValueError):
     """Raised when a magnet URI is malformed or lacks a valid BitTorrent topic."""
     pass
@@ -22,12 +25,14 @@ class ParsedMagnet:
     """Parsed representation of a BitTorrent Magnet URI."""
     raw_uri: str
     infohash: str  # Canonical primary infohash (v1 hex 40-char, or v2 hex 64-char)
+    torrent_format: str = TorrentFormat.UNKNOWN.value  # "v1" | "v2" | "hybrid"
     infohash_v1: Optional[str] = None  # 40-char lowercase hex
     infohash_v2: Optional[str] = None  # 64-char lowercase hex
     display_name: Optional[str] = None
-    trackers: List[str] = field(default_factory=list)
+    trackers: List[str] = field(default_factory=list)  # Redacted tracker URLs
     web_seeds: List[str] = field(default_factory=list)
     exact_length: Optional[int] = None
+    _raw_trackers: List[str] = field(default_factory=list, repr=False)  # In-memory operational only
 
     @property
     def has_v1(self) -> bool:
@@ -106,6 +111,13 @@ def parse_magnet_uri(uri: str) -> ParsedMagnet:
     if not infohash_v1 and not infohash_v2:
         raise InvalidMagnetUriError(f"No valid BitTorrent infohash found in xt parameters: {xt_values}")
 
+    if infohash_v1 and infohash_v2:
+        torrent_format = TorrentFormat.HYBRID.value
+    elif infohash_v2:
+        torrent_format = TorrentFormat.V2.value
+    else:
+        torrent_format = TorrentFormat.V1.value
+
     primary_infohash = infohash_v1 if infohash_v1 else infohash_v2
 
     # Display name (dn)
@@ -131,10 +143,12 @@ def parse_magnet_uri(uri: str) -> ParsedMagnet:
     return ParsedMagnet(
         raw_uri=uri,
         infohash=primary_infohash,
+        torrent_format=torrent_format,
         infohash_v1=infohash_v1,
         infohash_v2=infohash_v2,
         display_name=display_name,
         trackers=sanitized_trackers,
         web_seeds=web_seeds,
         exact_length=exact_length,
+        _raw_trackers=raw_trackers,
     )

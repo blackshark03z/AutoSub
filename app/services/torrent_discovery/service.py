@@ -54,6 +54,7 @@ class TorrentDiscoveryService:
         mode: Union[str, DiscoveryMode] = DiscoveryMode.OFFLINE,
         timeout: float = 10.0,
         probe_allowed: bool = False,
+        allow_private_tracker_probe: bool = False,
     ) -> TorrentDiscoveryResult:
         """Convenience method to discover a Magnet URI."""
         disc_mode = DiscoveryMode(mode) if isinstance(mode, str) else mode
@@ -62,6 +63,7 @@ class TorrentDiscoveryService:
             mode=disc_mode,
             timeout_seconds=timeout,
             probe_allowed=probe_allowed,
+            allow_private_tracker_probe=allow_private_tracker_probe,
         )
         return self.discover(req)
 

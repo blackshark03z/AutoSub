@@ -27,6 +27,7 @@ from app.services.torrent_discovery.models import (
     VideoCandidate,
     DiscoveryStatus,
     RecommendedEngine,
+    TorrentFormat,
 )
 from app.services.torrent_discovery.redaction import sanitize_tracker_urls
 
@@ -109,22 +110,50 @@ def parse_torrent_bytes(
     if not isinstance(info, dict) or raw_info is None:
         raise InvalidTorrentFileError("Missing or invalid 'info' dictionary in torrent file")
 
-    # 1. Infohash calculation
-    # Canonical BitTorrent v1 infohash = SHA1(bencoded info dict)
-    sha1_hasher = hashlib.sha1()
-    sha1_hasher.update(raw_info)
-    infohash_v1 = sha1_hasher.hexdigest().lower()
-
-    # Canonical BitTorrent v2 infohash = SHA256(bencoded info dict)
+    # 1. Infohash calculation & protocol identity
+    # Distinguish v1-only, v2-only, and hybrid per BEP 52.
+    has_v1_pieces = b"pieces" in info and isinstance(info[b"pieces"], (bytes, bytearray))
     meta_version = info.get(b"meta version", 1)
     has_v2_tree = b"file tree" in info
-    infohash_v2 = None
-    if meta_version == 2 or has_v2_tree:
+    is_v2 = (meta_version == 2) or has_v2_tree
+
+    infohash_v1: Optional[str] = None
+    infohash_v2: Optional[str] = None
+
+    if is_v2 and has_v1_pieces:
+        # Hybrid torrent: has valid v1 pieces and valid v2 file tree/meta version
+        torrent_format = TorrentFormat.HYBRID.value
+        sha1_hasher = hashlib.sha1()
+        sha1_hasher.update(raw_info)
+        infohash_v1 = sha1_hasher.hexdigest().lower()
+
         sha256_hasher = hashlib.sha256()
         sha256_hasher.update(raw_info)
         infohash_v2 = sha256_hasher.hexdigest().lower()
 
-    primary_infohash = infohash_v1 if infohash_v1 else (infohash_v2 or "")
+        primary_infohash = infohash_v1  # Canonical primary for backward compatibility
+    elif is_v2:
+        # v2-only torrent: NEVER invent or assign an invalid v1 SHA-1 infohash
+        torrent_format = TorrentFormat.V2.value
+        infohash_v1 = None
+
+        sha256_hasher = hashlib.sha256()
+        sha256_hasher.update(raw_info)
+        infohash_v2 = sha256_hasher.hexdigest().lower()
+
+        primary_infohash = infohash_v2
+    elif has_v1_pieces or b"files" in info or b"length" in info:
+        # v1-only torrent
+        torrent_format = TorrentFormat.V1.value
+        sha1_hasher = hashlib.sha1()
+        sha1_hasher.update(raw_info)
+        infohash_v1 = sha1_hasher.hexdigest().lower()
+        infohash_v2 = None
+
+        primary_infohash = infohash_v1
+    else:
+        torrent_format = TorrentFormat.UNKNOWN.value
+        primary_infohash = ""
 
     # 2. Torrent name
     raw_torrent_name = info.get(b"name.utf-8") or info.get(b"name")
@@ -217,6 +246,8 @@ def parse_torrent_bytes(
         piece_length=piece_length,
         num_pieces=num_pieces,
         trackers=sanitized_trackers,
+        torrent_format=torrent_format,
+        _raw_trackers=raw_trackers,
     )
 
     return result, file_items, video_candidates

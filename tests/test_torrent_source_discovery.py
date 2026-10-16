@@ -36,11 +36,19 @@ from app.services.torrent_discovery import (
     BencodeSizeError,
     sanitize_tracker_url,
     sanitize_tracker_urls,
+    sanitize_error_message,
+    is_private_tracker_url,
     validate_tracker_url,
     resolve_and_validate_hostname,
     SSRFBlockedError,
     SafeRedirectHandler,
+    PinnedIPHTTPConnection,
+    PinnedIPHTTPSConnection,
+    create_safe_tracker_opener,
+    TorrentFormat,
 )
+from app.services.torrent_discovery.probe import scrape_http_tracker
+from app.services.torrent_discovery.adapters.libtorrent_adapter import LibtorrentDiscoveryAdapter
 from app.services.torrent_discovery.episode_detector import (
     analyze_video_inventory,
     parse_episode_info,
@@ -420,8 +428,8 @@ class TestServiceAndSafetyInvariants:
         mock_opener.open.return_value = mock_resp
 
         # Patch both create_safe_tracker_opener and validate_tracker_url to allow simulated host
-        with patch("app.services.torrent_discovery.probe.create_safe_tracker_opener", return_value=mock_opener), \
-             patch("app.services.torrent_discovery.probe.validate_tracker_url"):
+        with patch("app.services.torrent_discovery.probe.create_safe_tracker_opener", return_value=(mock_opener, "93.184.216.34")), \
+             patch("app.services.torrent_discovery.probe.validate_tracker_url", return_value="93.184.216.34"):
             res = service.discover_magnet(
                 uri, mode=DiscoveryMode.NETWORK_PROBE, timeout=2.0, probe_allowed=True
             )
@@ -566,5 +574,374 @@ class TestTrackerSSRFDefense:
         """Legitimate public IP address passes SSRF validation."""
         # 93.184.216.34 is example.com public IP
         validate_tracker_url("http://93.184.216.34:6969/announce")
+
+
+# ============================================================================
+# 8. P0-01: Libtorrent Metadata-Only Safety Tests
+# ============================================================================
+
+class TestLibtorrentSafety:
+    """Verifies that libtorrent network mode is disabled by default, prevents media payload I/O, and enforces session cleanup."""
+
+    def test_libtorrent_network_mode_disabled_by_default(self):
+        """Adapter has network_probe_enabled=False by default and returns PROBE_NOT_ALLOWED without opening sessions."""
+        adapter = LibtorrentDiscoveryAdapter()
+        assert adapter.network_probe_enabled is False
+
+        uri = "magnet:?xt=urn:btih:da39a3ee5e6b4b0d3255bfef95601890afd80709&dn=Test"
+        req = TorrentDiscoveryRequest(
+            source=uri,
+            mode=DiscoveryMode.NETWORK_PROBE,
+            probe_allowed=True,
+            allow_libtorrent_network=False,
+        )
+
+        mock_lt = MagicMock()
+        mock_params = MagicMock()
+        mock_params.info_hash = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        mock_params.name = "Test"
+        mock_lt.parse_magnet_uri.return_value = mock_params
+
+        with patch("app.services.torrent_discovery.adapters.libtorrent_adapter.LIBTORRENT_AVAILABLE", True), \
+             patch("app.services.torrent_discovery.adapters.libtorrent_adapter.lt", mock_lt):
+            res = adapter.discover(req)
+            assert res.status == DiscoveryStatus.PROBE_NOT_ALLOWED.value
+            assert "disabled by default" in res.error_message
+            # Critical invariant: session.add_torrent was NEVER called
+            mock_lt.session.assert_not_called()
+
+    def test_libtorrent_adapter_no_arbitrary_listen_port(self):
+        """When network mode is enabled under explicit authorization, verify no arbitrary listen ports are opened."""
+        adapter = LibtorrentDiscoveryAdapter(network_probe_enabled=True)
+        uri = "magnet:?xt=urn:btih:da39a3ee5e6b4b0d3255bfef95601890afd80709&dn=Test"
+        req = TorrentDiscoveryRequest(
+            source=uri,
+            mode=DiscoveryMode.NETWORK_PROBE,
+            probe_allowed=True,
+            timeout_seconds=0.1,
+            allow_libtorrent_network=True,
+        )
+
+        mock_lt = MagicMock()
+        mock_params = MagicMock()
+        mock_params.flags = 0
+        mock_params.info_hash = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        mock_params.name = "Test"
+        mock_lt.parse_magnet_uri.return_value = mock_params
+
+        mock_session = MagicMock()
+        mock_handle = MagicMock()
+        mock_handle.has_metadata.return_value = False
+        mock_session.add_torrent.return_value = mock_handle
+        mock_lt.session.return_value = mock_session
+
+        with patch("app.services.torrent_discovery.adapters.libtorrent_adapter.LIBTORRENT_AVAILABLE", True), \
+             patch("app.services.torrent_discovery.adapters.libtorrent_adapter.lt", mock_lt):
+            res = adapter.discover(req)
+            assert res.status == DiscoveryStatus.METADATA_FETCH_FAILED.value
+            # Verify listen_on was NEVER called
+            mock_session.listen_on.assert_not_called()
+            # Verify session cleanup called remove_torrent
+            mock_session.remove_torrent.assert_called_once_with(mock_handle)
+
+    def test_libtorrent_session_cleanup_on_exception(self):
+        """Verifies session.remove_torrent is called in finally block even if an exception occurs during loop."""
+        adapter = LibtorrentDiscoveryAdapter(network_probe_enabled=True)
+        uri = "magnet:?xt=urn:btih:da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        req = TorrentDiscoveryRequest(
+            source=uri,
+            mode=DiscoveryMode.NETWORK_PROBE,
+            probe_allowed=True,
+            allow_libtorrent_network=True,
+        )
+
+        mock_lt = MagicMock()
+        mock_params = MagicMock()
+        mock_params.flags = 0
+        mock_params.info_hash = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        mock_params.name = "Test"
+        mock_lt.parse_magnet_uri.return_value = mock_params
+
+        mock_session = MagicMock()
+        mock_handle = MagicMock()
+        mock_handle.has_metadata.side_effect = RuntimeError("Fatal swarm glitch")
+        mock_session.add_torrent.return_value = mock_handle
+        mock_lt.session.return_value = mock_session
+
+        with patch("app.services.torrent_discovery.adapters.libtorrent_adapter.LIBTORRENT_AVAILABLE", True), \
+             patch("app.services.torrent_discovery.adapters.libtorrent_adapter.lt", mock_lt):
+            res = adapter.discover(req)
+            assert res.status == DiscoveryStatus.ERROR.value
+            mock_session.remove_torrent.assert_called_once_with(mock_handle)
+
+    def test_download_tested_is_operational_indicator_not_cryptographic_proof(self):
+        """Field download_tested=False is an operational indicator, not a cryptographic assertion of zero download."""
+        res = TorrentDiscoveryResult(
+            source_type="torrent",
+            status=DiscoveryStatus.METADATA_AVAILABLE.value,
+            infohash="da39a3ee5e6b4b0d3255bfef95601890afd80709",
+            download_tested=False,
+        )
+        assert res.download_tested is False
+        assert "download_tested" in res.to_dict()
+
+
+# ============================================================================
+# 9. P0-02: SSRF Hardening & DNS Rebinding Tests
+# ============================================================================
+
+class TestSSRFDnsRebindingAndAbnormalUrls:
+    """Verifies DNS rebinding TOCTOU defense, pinned-IP socket connection, and abnormal URL validation."""
+
+    def test_pinned_ip_http_connection_uses_pinned_ip(self):
+        """PinnedIPHTTPConnection must connect socket directly to pinned_ip, preventing DNS rebinding."""
+        conn = PinnedIPHTTPConnection(host="tracker.example.com", port=80, pinned_ip="93.184.216.34", timeout=5.0)
+        with patch("socket.create_connection") as mock_create_conn:
+            mock_sock = MagicMock()
+            mock_create_conn.return_value = mock_sock
+            conn.connect()
+            assert mock_create_conn.call_args[0][0] == ("93.184.216.34", 80)
+            assert mock_create_conn.call_args[0][1] == 5.0
+            assert conn.sock == mock_sock
+
+    def test_pinned_ip_https_connection_uses_pinned_ip_and_sni(self):
+        """PinnedIPHTTPSConnection must connect socket to pinned_ip and use original hostname for SNI/cert validation."""
+        mock_ssl_inst = MagicMock()
+        mock_wrapped_sock = MagicMock()
+        mock_ssl_inst.wrap_socket.return_value = mock_wrapped_sock
+
+        conn = PinnedIPHTTPSConnection(
+            host="tracker.example.com", port=443, pinned_ip="93.184.216.34", timeout=5.0, context=mock_ssl_inst
+        )
+        with patch("socket.create_connection") as mock_create_conn:
+            mock_sock = MagicMock()
+            mock_create_conn.return_value = mock_sock
+
+            conn.connect()
+            assert mock_create_conn.call_args[0][0] == ("93.184.216.34", 443)
+            assert mock_create_conn.call_args[0][1] == 5.0
+            mock_ssl_inst.wrap_socket.assert_called_once_with(mock_sock, server_hostname="tracker.example.com")
+            assert conn.sock == mock_wrapped_sock
+
+    @pytest.mark.parametrize(
+        "abnormal_url,expected_pattern",
+        [
+            ("http://2130706433/announce", "Decimal IP .*prohibited"),
+            ("http://0x7f000001/announce", "Hex IP .*prohibited"),
+            ("http://[::ffff:127.0.0.1]/announce", "Private RFC 1918/4193 address prohibited|Loopback address prohibited"),
+            ("http://[::ffff:169.254.169.254]/announce", "Prohibited cloud metadata IP"),
+            ("http://[2002:7f00:0001::]/announce", "Private RFC 1918/4193 address prohibited|Loopback address prohibited|6to4"),
+            ("http://admin:secret@tracker.example.com/announce", "Userinfo credentials embedded in tracker URL are prohibited"),
+        ],
+    )
+    def test_abnormal_urls_and_encodings_blocked(self, abnormal_url, expected_pattern):
+        """Abnormal IPv4 encodings, IPv4-mapped IPv6, 6to4, and embedded user credentials must be blocked."""
+        with pytest.raises(SSRFBlockedError, match=expected_pattern):
+            validate_tracker_url(abnormal_url)
+
+    def test_redirect_chain_limit_exceeded(self):
+        """Redirecting more than max_redirects hops must raise SSRFBlockedError."""
+        handler = SafeRedirectHandler(max_redirects=3)
+        req = MagicMock()
+        req.get_method.return_value = "GET"
+        req.full_url = "http://tracker1.example.com/announce"
+        headers = {}
+        with patch("app.services.torrent_discovery.ssrf.validate_tracker_url", return_value="93.184.216.34"):
+            # Hop 1, 2, 3 ok
+            handler.redirect_request(req, None, 302, "Found", headers, "http://tracker1.example.com/announce")
+            handler.redirect_request(req, None, 302, "Found", headers, "http://tracker2.example.com/announce")
+            handler.redirect_request(req, None, 302, "Found", headers, "http://tracker3.example.com/announce")
+            # Hop 4 exceeds limit
+            with pytest.raises(SSRFBlockedError, match="Too many redirects"):
+                handler.redirect_request(req, None, 302, "Found", headers, "http://tracker4.example.com/announce")
+
+    def test_redirect_updates_pinned_ip_map(self):
+        """Every redirect hop re-validates target and records its pinned IP for subsequent requests."""
+        pinned_map = {}
+        handler = SafeRedirectHandler(max_redirects=3, pinned_ip_map=pinned_map)
+        req = MagicMock()
+        req.get_method.return_value = "GET"
+        req.full_url = "http://tracker-target.example.com/announce"
+        headers = {}
+
+        with patch("app.services.torrent_discovery.ssrf.validate_tracker_url", return_value="93.184.216.34"):
+            handler.redirect_request(req, None, 302, "Found", headers, "http://tracker-target.example.com/announce")
+            assert pinned_map["tracker-target.example.com"] == "93.184.216.34"
+
+
+# ============================================================================
+# 10. P1-01: Private Tracker Credential Handling Tests
+# ============================================================================
+
+class TestPrivateTrackerCredentialPolicy:
+    """Verifies that private tracker passkeys are segregated in memory and never exposed in output/logs."""
+
+    def test_is_private_tracker_url_detection(self):
+        """Accurately detects passkeys/tokens across query parameters and URL path segments."""
+        assert is_private_tracker_url("https://tracker.example.com/announce?passkey=abcdef1234567890abcdef") is True
+        assert is_private_tracker_url("https://tracker.example.com/announce?authkey=abcdef1234567890") is True
+        assert is_private_tracker_url("https://tracker.example.com/announce?torrent_pass=abcdef1234567890") is True
+        assert is_private_tracker_url("https://tracker.example.com/announce?key=abcdef1234567890") is True
+        assert is_private_tracker_url("https://tracker.example.com:443/0123456789abcdef0123456789abcdef/announce") is True
+        # Public trackers do not trigger private detection
+        assert is_private_tracker_url("http://tracker.opentrackr.org:1337/announce") is False
+        assert is_private_tracker_url("udp://tracker.openbittorrent.com:6969/announce") is False
+
+    def test_private_tracker_probe_blocked_by_default(self):
+        """Scraping a private tracker URL is blocked by default to protect ratio and passkey."""
+        url = "https://tracker.example.com/announce?passkey=mysecretpasskey123"
+        seeders, prov, err = scrape_http_tracker(
+            url,
+            infohash_hex="da39a3ee5e6b4b0d3255bfef95601890afd80709",
+            allow_private_tracker_probe=False,
+        )
+        assert seeders is None
+        assert prov == "unverified"
+        assert "Private tracker probe is disabled by default" in (err or "")
+        # Critical: Passkey must NOT be exposed in the error message
+        assert "mysecretpasskey123" not in (err or "")
+
+    def test_raw_trackers_hidden_from_result_serialization(self):
+        """_raw_trackers is kept in memory (repr=False) and NEVER exposed in to_dict() or repr()."""
+        raw_url = "https://tracker.example.com/announce?passkey=secret12345"
+        sanitized_url = sanitize_tracker_url(raw_url)
+
+        res = TorrentDiscoveryResult(
+            source_type="torrent",
+            status=DiscoveryStatus.METADATA_AVAILABLE.value,
+            infohash="da39a3ee5e6b4b0d3255bfef95601890afd80709",
+            trackers=[sanitized_url],
+            _raw_trackers=[raw_url],
+        )
+
+        # In memory access
+        assert res._raw_trackers == [raw_url]
+        # Serialized output
+        serialized = res.to_dict()
+        assert "_raw_trackers" not in serialized
+        assert serialized["trackers"] == ["https://tracker.example.com/announce?passkey=[REDACTED]"]
+        assert "secret12345" not in repr(res)
+        assert "secret12345" not in str(res)
+
+    def test_sanitize_error_message_scrubs_passkeys(self):
+        """All error messages scrub passkeys from query params."""
+        raw_msg = "Failed connecting to https://tracker.org/announce?passkey=topsecretpassword123456&mode=scrape"
+        scrubbed = sanitize_error_message(raw_msg)
+        assert "topsecretpassword123456" not in scrubbed
+        assert "passkey=[REDACTED]" in scrubbed
+
+
+# ============================================================================
+# 11. P1-02: Torrent v1/v2 Identity Correctness Tests
+# ============================================================================
+
+class TestTorrentV1V2IdentityCorrectness:
+    """Verifies strict adherence to BitTorrent v1, v2-only, and hybrid identity protocols."""
+
+    def test_v1_only_torrent_identification(self):
+        """Standard v1 torrent with 'pieces' has 40-char infohash_v1 and infohash_v2 is None."""
+        v1_info = {b"name": b"v1_sample.mp4", b"piece length": 16384, b"pieces": b"A" * 20, b"length": 5000}
+        data = bencode({b"info": v1_info, b"announce": b"http://tracker.example.com/announce"})
+
+        res, files, videos = parse_torrent_bytes(data)
+        assert res.torrent_format == TorrentFormat.V1.value
+        assert res.infohash_v1 is not None
+        assert len(res.infohash_v1) == 40
+        assert res.infohash_v2 is None
+        assert res.infohash == res.infohash_v1
+
+    def test_v2_only_torrent_identification_no_fake_sha1(self):
+        """v2-only torrent (BEP 52) has 64-char infohash_v2; infohash_v1 is strictly None (no fake SHA-1)."""
+        v2_info = {
+            b"meta version": 2,
+            b"name": b"v2_sample.mp4",
+            b"piece length": 16384,
+            b"file tree": {
+                b"v2_sample.mp4": {
+                    b"": {b"length": 8000, b"pieces root": b"B" * 32}
+                }
+            },
+        }
+        data = bencode({b"info": v2_info, b"announce": b"http://tracker.example.com/announce"})
+
+        res, files, videos = parse_torrent_bytes(data)
+        assert res.torrent_format == TorrentFormat.V2.value
+        assert res.infohash_v2 is not None
+        assert len(res.infohash_v2) == 64
+        # P1-02 Core Requirement: v2-only torrent MUST NOT have an invented SHA-1 infohash_v1
+        assert res.infohash_v1 is None
+        assert res.infohash == res.infohash_v2
+
+    def test_hybrid_torrent_identification(self):
+        """Hybrid torrent contains both valid v1 pieces and v2 file tree; provides both infohashes."""
+        hybrid_info = {
+            b"meta version": 2,
+            b"name": b"hybrid_sample.mp4",
+            b"piece length": 16384,
+            b"pieces": b"C" * 20,
+            b"file tree": {
+                b"hybrid_sample.mp4": {
+                    b"": {b"length": 9000, b"pieces root": b"D" * 32}
+                }
+            },
+        }
+        data = bencode({b"info": hybrid_info, b"announce": b"http://tracker.example.com/announce"})
+
+        res, files, videos = parse_torrent_bytes(data)
+        assert res.torrent_format == TorrentFormat.HYBRID.value
+        assert res.infohash_v1 is not None
+        assert len(res.infohash_v1) == 40
+        assert res.infohash_v2 is not None
+        assert len(res.infohash_v2) == 64
+        assert res.infohash == res.infohash_v1
+
+    def test_magnet_v1_v2_hybrid_format_classification(self):
+        """Magnet URIs correctly identify v1, v2, or hybrid format based on exact xt urn types."""
+        v1_mag = "magnet:?xt=urn:btih:da39a3ee5e6b4b0d3255bfef95601890afd80709&dn=V1Only"
+        p_v1 = parse_magnet_uri(v1_mag)
+        assert p_v1.torrent_format == "v1"
+        assert p_v1.infohash_v1 == "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        assert p_v1.infohash_v2 is None
+
+        v2_mag = "magnet:?xt=urn:btmh:1220" + "00" * 32 + "&dn=V2Only"
+        p_v2 = parse_magnet_uri(v2_mag)
+        assert p_v2.torrent_format == "v2"
+        assert p_v2.infohash_v2 == "00" * 32
+        assert p_v2.infohash_v1 is None
+
+        hybrid_mag = f"magnet:?xt=urn:btih:da39a3ee5e6b4b0d3255bfef95601890afd80709&xt=urn:btmh:1220{'00' * 32}&dn=Hybrid"
+        p_hyb = parse_magnet_uri(hybrid_mag)
+        assert p_hyb.torrent_format == "hybrid"
+        assert p_hyb.infohash_v1 == "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        assert p_hyb.infohash_v2 == "00" * 32
+
+    def test_bep48_scrape_for_v2_torrent_does_not_use_fake_sha1(self):
+        """BEP 48 tracker scrape logic receives 32-byte hash (or truncated 20-byte), never a fake SHA-1."""
+        infohash_v2 = "11" * 32
+        raw_hash_v2 = bytes.fromhex(infohash_v2)
+
+        fake_scrape_response = bencode({
+            "files": {
+                raw_hash_v2: {"complete": 17, "incomplete": 2, "downloaded": 50}
+            }
+        })
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = fake_scrape_response
+        mock_resp.__enter__.return_value = mock_resp
+
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = mock_resp
+
+        with patch("app.services.torrent_discovery.probe.create_safe_tracker_opener", return_value=(mock_opener, "93.184.216.34")), \
+             patch("app.services.torrent_discovery.probe.validate_tracker_url", return_value="93.184.216.34"):
+            seeders, prov, err = scrape_http_tracker(
+                "http://tracker.example.com/announce",
+                infohash_hex=infohash_v2,
+            )
+            assert seeders == 17
+            assert prov == "live_tracker_scrape"
+            assert err is None
+
 
 

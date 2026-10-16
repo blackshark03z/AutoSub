@@ -80,6 +80,14 @@ class VideoCandidate:
         return data
 
 
+class TorrentFormat(str, Enum):
+    """BitTorrent identity specification format."""
+    V1 = "v1"
+    V2 = "v2"
+    HYBRID = "hybrid"
+    UNKNOWN = "unknown"
+
+
 @dataclass
 class TorrentDiscoveryRequest:
     """Input payload for Torrent Discovery."""
@@ -88,6 +96,8 @@ class TorrentDiscoveryRequest:
     mode: DiscoveryMode = DiscoveryMode.OFFLINE
     timeout_seconds: float = 10.0
     probe_allowed: bool = False  # Explicit operator authorization for network probing
+    allow_private_tracker_probe: bool = False  # Explicit authorization for private tracker network probes
+    allow_libtorrent_network: bool = False  # Explicit operator authorization for libtorrent network mode
     preferred_engine: Optional[str] = None
 
 
@@ -105,10 +115,11 @@ class TorrentDiscoveryResult:
     video_candidates: List[Dict[str, Any]] = field(default_factory=list)
     seeders: Optional[int] = None
     metadata_complete: bool = False
-    download_tested: bool = False  # In discovery mode, NEVER test download payload
+    download_tested: bool = False  # download_tested=False denotes download was not invoked; not a zero-payload proof
     recommended_engine: str = RecommendedEngine.LIBTORRENT.value
 
     # Extended telemetry fields
+    torrent_format: str = TorrentFormat.UNKNOWN.value  # "v1" | "v2" | "hybrid" | "unknown"
     seeders_provenance: Optional[str] = "unverified"  # "unverified" | "live_tracker_scrape" | "simulated_contract_test"
     infohash_v1: Optional[str] = None
     infohash_v2: Optional[str] = None
@@ -116,12 +127,15 @@ class TorrentDiscoveryResult:
     is_multi_episode: bool = False
     piece_length: Optional[int] = None
     num_pieces: Optional[int] = None
-    trackers: List[str] = field(default_factory=list)
+    trackers: List[str] = field(default_factory=list)  # Strictly redacted tracker URLs
     error_message: Optional[str] = None
     probe_duration_ms: float = 0.0
 
+    # In-memory only operational fields (NEVER exported to JSON or logs)
+    _raw_trackers: List[str] = field(default_factory=list, repr=False)
+
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to JSON-serializable dictionary matching contract."""
+        """Convert to JSON-serializable dictionary matching contract. Secrets are never exposed."""
         data = {
             "source_type": self.source_type,
             "status": self.status,
@@ -135,6 +149,7 @@ class TorrentDiscoveryResult:
             "download_tested": self.download_tested,
             "recommended_engine": self.recommended_engine,
             # Extended metadata
+            "torrent_format": self.torrent_format,
             "seeders_provenance": self.seeders_provenance,
             "is_multi_file": self.is_multi_file,
             "is_multi_episode": self.is_multi_episode,

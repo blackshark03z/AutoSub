@@ -22,6 +22,7 @@ from app.services.torrent_discovery.models import (
     TorrentDiscoveryResult,
 )
 from app.services.torrent_discovery.probe import probe_swarm_metadata
+from app.services.torrent_discovery.redaction import sanitize_error_message
 from app.services.torrent_discovery.torrent_parser import (
     parse_torrent_bytes,
     parse_torrent_file,
@@ -72,6 +73,7 @@ class BuiltinTorrentDiscoveryAdapter(BaseTorrentDiscoveryAdapter):
                         source_type="torrent",
                         status=DiscoveryStatus.INFOHASH_ONLY.value,
                         infohash=parsed.infohash,
+                        torrent_format=parsed.torrent_format,
                         infohash_v1=parsed.infohash_v1,
                         infohash_v2=parsed.infohash_v2,
                         torrent_name=parsed.display_name,
@@ -85,6 +87,7 @@ class BuiltinTorrentDiscoveryAdapter(BaseTorrentDiscoveryAdapter):
                         is_multi_file=False,
                         is_multi_episode=False,
                         trackers=parsed.trackers,
+                        _raw_trackers=parsed._raw_trackers,
                         probe_duration_ms=duration_ms,
                     )
 
@@ -94,6 +97,8 @@ class BuiltinTorrentDiscoveryAdapter(BaseTorrentDiscoveryAdapter):
                     trackers=parsed.trackers,
                     timeout_seconds=request.timeout_seconds,
                     probe_allowed=request.probe_allowed,
+                    allow_private_tracker_probe=getattr(request, "allow_private_tracker_probe", False),
+                    raw_trackers=parsed._raw_trackers,
                 )
                 duration_ms = (time.monotonic() - start_time) * 1000.0
 
@@ -101,6 +106,7 @@ class BuiltinTorrentDiscoveryAdapter(BaseTorrentDiscoveryAdapter):
                     source_type="torrent",
                     status=status,
                     infohash=parsed.infohash,
+                    torrent_format=parsed.torrent_format,
                     infohash_v1=parsed.infohash_v1,
                     infohash_v2=parsed.infohash_v2,
                     torrent_name=parsed.display_name,
@@ -115,6 +121,7 @@ class BuiltinTorrentDiscoveryAdapter(BaseTorrentDiscoveryAdapter):
                     is_multi_file=False,
                     is_multi_episode=False,
                     trackers=parsed.trackers,
+                    _raw_trackers=parsed._raw_trackers,
                     error_message=err,
                     probe_duration_ms=duration_ms,
                 )
@@ -136,18 +143,18 @@ class BuiltinTorrentDiscoveryAdapter(BaseTorrentDiscoveryAdapter):
         except (InvalidMagnetUriError, InvalidTorrentFileError, BencodeSizeError) as exc:
             return TorrentDiscoveryResult(
                 status=DiscoveryStatus.INVALID_SOURCE.value,
-                error_message=str(exc),
+                error_message=sanitize_error_message(str(exc)),
                 probe_duration_ms=(time.monotonic() - start_time) * 1000.0,
             )
         except BencodeError as exc:
             return TorrentDiscoveryResult(
                 status=DiscoveryStatus.INVALID_SOURCE.value,
-                error_message=f"Bencode error: {exc}",
+                error_message=sanitize_error_message(f"Bencode error: {exc}"),
                 probe_duration_ms=(time.monotonic() - start_time) * 1000.0,
             )
         except Exception as exc:
             return TorrentDiscoveryResult(
                 status=DiscoveryStatus.ERROR.value,
-                error_message=f"Unexpected error: {exc}",
+                error_message=sanitize_error_message(f"Unexpected error: {exc}"),
                 probe_duration_ms=(time.monotonic() - start_time) * 1000.0,
             )

@@ -164,25 +164,54 @@ All discovery adapters normalize their output into the canonical schema below:
 
 ---
 
-## 5. Security, SSRF & Isolation Contracts
+## 5. Security, SSRF & Isolation Contracts (Hardened in WP-DL-001B.2)
 
-1. **Credential Sanitization:**
-   - Both adapters must sanitize authentication headers, basic auth passwords, and tracker passkeys (`?passkey=[REDACTED]`, `/announce/[REDACTED]/`) before serializing `protocol_telemetry` or logging.
-2. **SSRF Defense on Tracker URLs & HTTP Redirects:**
-   - Tracker scrape requests strictly enforce SSRF validation against loopback (`127.0.0.0/8`, `::1`), private networks (RFC 1918: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`; RFC 4193: `fc00::/7`), link-local (`169.254.0.0/16`), carrier-grade NAT (`100.64.0.0/10`), unspecified (`0.0.0.0`, `::`), and cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`, `100.100.100.200`, `fd00:ec2::254`).
-   - Blocks dangerous service ports (SSH 22, Redis 6379, Docker 2375, Kubelet 10250, SMB 445, etc.).
-   - Utilizes `SafeRedirectHandler` to intercept every 301/302/303/307/308 redirect and validate the target `Location` header before following.
-3. **Truthful Seeders Provenance Tracking:**
+1. **Libtorrent Metadata-Only Safety (P0-01):**
+   - Libtorrent network metadata probe mode is strictly **disabled by default** (`network_probe_enabled=False`, `allow_libtorrent_network=False`) returning `PROBE_NOT_ALLOWED`.
+   - No arbitrary listen ports are opened (`session.listen_on` is avoided/eliminated).
+   - Media piece download/upload is completely disabled (`upload_mode`, `default_dont_download`, `stop_when_ready`).
+   - Session and torrent handle lifecycle cleanup is strictly enforced in `try ... finally` blocks across all execution outcomes (success, timeout, exception).
+   - `download_tested=False` is documented as an operational indicator (download was not invoked), not a cryptographic proof of zero-download.
+
+2. **Tracker SSRF Hardening & DNS Rebinding TOCTOU Defense (P0-02):**
+   - Eliminates DNS rebinding TOCTOU vulnerability by pinning the pre-validated IP and connecting TCP sockets directly to the pinned IP (`PinnedIPHTTPConnection`, `PinnedIPHTTPSConnection`).
+   - For HTTPS, preserves SNI and TLS certificate hostname validation against the original hostname while connecting to the pinned IP.
+   - Blocks abnormal IP representations and encodings:
+     - Decimal integer IPs (e.g. `2130706433` -> `127.0.0.1`)
+     - Hexadecimal IPs (e.g. `0x7f000001` -> `127.0.0.1`)
+     - IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`, `::ffff:169.254.169.254`)
+     - 6to4 prefix (`2002::/16`) embedding private or loopback addresses
+     - Teredo prefix (`2001:0000::/32`) embedding private addresses
+     - Userinfo credentials embedded in URL (`user:pass@host`)
+     - Dangerous service ports (21, 22, 23, 25, 445, 2375, 6379, 10250, 11211, 27017, etc.)
+   - Multi-hop redirect protection via `SafeRedirectHandler`: enforces maximum 3 hops, re-validates each destination URL against SSRF, and updates pinned IP mappings.
+
+3. **Private Tracker Credential Handling (P1-01):**
+   - In-memory operational raw URLs (`_raw_trackers`) are strictly segregated from redacted output URLs (`trackers`).
+   - `_raw_trackers` is marked `repr=False` and excluded from serialization (`to_dict()`), logs, and string representations.
+   - Private tracker probes are **blocked by default** (`allow_private_tracker_probe=False`) to protect user passkeys and share ratios.
+   - All exception and log messages pass through `sanitize_error_message()` to scrub passkeys, tokens, and raw URLs.
+
+4. **Torrent Protocol Identity Correctness (P1-02):**
+   - Distinguishes `v1`, `v2`, and `hybrid` torrent formats per BEP 3 and BEP 52.
+   - **Critical invariant:** v2-only torrents strictly report `infohash_v1 = None` and `torrent_format = "v2"`. An invented SHA-1 hash calculated over the v2 info dict is NEVER assigned as a v1 infohash.
+   - Hybrid torrents report both valid `infohash_v1` (SHA-1) and `infohash_v2` (SHA-256).
+   - BEP 48 tracker scraping uses protocol-appropriate hashes (32-byte or truncated 20-byte for v2; 20-byte for v1).
+
+5. **Truthful Seeders Provenance Tracking:**
    - Telemetry tracks `seeders_provenance`:
      - `"unverified"`: default state when offline or unprobed.
      - `"live_tracker_scrape"`: verified against a live, reachable network tracker.
      - `"simulated_contract_test"`: simulated test fixture during unit/integration tests.
    - Prohibits claiming mock/simulated results as live swarm observations.
-4. **Operator Authorization Gate:**
+
+6. **Operator Authorization Gate:**
    - Neither adapter may perform active swarm probes or unauthenticated outbound scans unless `probe_allowed=True` is explicitly passed by the caller.
-5. **Payload Download Prohibition:**
-   - In Discovery Mode, neither adapter may download actual video content, segment files, or participate in BitTorrent seeding (`download_tested` is invariant `false`).
-6. **Denial of Service (DoS) Defense:**
+
+7. **Payload Download Prohibition:**
+   - In Discovery Mode, neither adapter may download actual video content, segment files, or participate in BitTorrent seeding.
+
+8. **Denial of Service (DoS) Defense:**
    - Torrent: 10 MB payload cap, 32-level bencode recursion limit, 50 MB string safety cap.
    - HTTP: 1 MB response cap on manifest headers, SSRF private IP rejection.
 
