@@ -1,7 +1,19 @@
 import re
 
 
-SENSITIVE_WORDS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTHORIZATION")
+SENSITIVE_WORDS = (
+    "KEY",
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "AUTHORIZATION",
+    "AUTH",
+    "SIG",
+    "SIGNATURE",
+    "CREDENTIAL",
+    "SESSDATA",
+    "BILI_JCT",
+)
 SECRET_VALUE_PATTERNS = (
     re.compile(r"AIza[0-9A-Za-z_\-]{20,}"),
     re.compile(r"sk_[0-9A-Za-z_\-]{16,}"),
@@ -22,23 +34,36 @@ def redact(value: object) -> object:
 
 
 def redact_url(url: str) -> str:
-    """Sanitize URL by masking tokens, keys, and credentials."""
+    """Sanitize URL by masking tokens, keys, userinfo credentials, and sensitive parameters."""
     if not url:
         return ""
     from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
     try:
         parsed = urlparse(url)
-        if not parsed.query:
-            return str(redact(url))
-        qs = parse_qs(parsed.query, keep_blank_values=True)
-        redacted_qs = {}
-        for k, v in qs.items():
-            if any(w in k.upper() for w in SENSITIVE_WORDS):
-                redacted_qs[k] = ["<redacted>"]
+        # 1. Sanitize userinfo in netloc (e.g., user:pass@host)
+        netloc = parsed.netloc
+        if "@" in netloc:
+            userinfo, host = netloc.split("@", 1)
+            if ":" in userinfo:
+                user, _ = userinfo.split(":", 1)
+                netloc = f"{user}:<redacted>@{host}"
             else:
-                redacted_qs[k] = [str(redact(item)) for item in v]
-        new_query = urlencode(redacted_qs, doseq=True)
-        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+                netloc = f"<redacted>@{host}"
+
+        # 2. Sanitize query parameters
+        new_query = ""
+        if parsed.query:
+            qs = parse_qs(parsed.query, keep_blank_values=True)
+            redacted_qs = {}
+            for k, v in qs.items():
+                if any(w in k.upper() for w in SENSITIVE_WORDS):
+                    redacted_qs[k] = ["<redacted>"]
+                else:
+                    redacted_qs[k] = [str(redact(item)) for item in v]
+            new_query = urlencode(redacted_qs, doseq=True)
+
+        return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, new_query, parsed.fragment))
     except Exception:
         return str(redact(url))
+
 

@@ -12,6 +12,7 @@ import numpy as np
 from PIL import ImageFont
 
 from app.core.media import media_summary
+from app.core.paths import safe_write_text
 from app.services.cjk_cleanup import source_region_union
 
 
@@ -352,7 +353,7 @@ def local_sub_overlay_layout_for_interval(
     bbox = interval.get("source_bbox")
     confidence = interval.get("confidence", 1.0)
     
-    # Step 5 - Detection Failure:
+    # Step 5 - Detection Failure / Unconfirmed:
     # If no confirmed subtitle region with good confidence, fail-safe:
     # Do not guess wide bbox, do not black out bottom of video.
     if bbox is None or interval.get("status") == "SUBTITLE_REGION_UNCONFIRMED" or confidence < 0.60:
@@ -376,65 +377,15 @@ def local_sub_overlay_layout_for_interval(
 
     orig_w = bbox["right_x"] - bbox["left_x"] + 1
     orig_h = bbox["bottom_y"] - bbox["top_y"] + 1
-    orig_cx = (bbox["left_x"] + bbox["right_x"]) // 2
-    orig_cy = (bbox["top_y"] + bbox["bottom_y"]) // 2
-
-    # Step 3 - Equivalent font size based on original Chinese character height (within ~10%)
-    source_char_h = interval.get("text_height") or orig_h
-    target_font_size = max(18, round(source_char_h * 0.98))
-    active_font = _font_with_size(font, target_font_size)
-
-    # Step 4 - Handling Vietnamese translation:
-    # Priority:
-    # 1. Concise, natural translation
-    # 2. Wrap into two lines when appropriate
-    # 3. Slight font reduction (up to 10%) if needed
-    # 4. If still doesn't fit, mark NEEDS_REVIEW
-    # Never expand into a giant black band!
-    max_safe_width = int(output_width * 0.88)
-    single_box = multiline_text_box(text, active_font)
-    text_w = single_box["width"]
-    text_h = single_box["height"]
-    render_text = text
-    line_count = 1
-    status = "PASS"
-    review_reason = None
-
-    target_fit_width = max(orig_w * 1.15, 320)
-    if text_w > target_fit_width and " " in text:
-        wrapped = wrap_subtitle_text(text, active_font, max(orig_w, int(output_width * 0.70)))
-        wrap_box = multiline_text_box(wrapped, active_font)
-        if wrap_box["width"] <= max_safe_width and wrapped.count("\n") <= 1:
-            render_text = wrapped
-            text_w = wrap_box["width"]
-            text_h = wrap_box["height"]
-            line_count = wrapped.count("\n") + 1
-        else:
-            reduced_size = max(16, round(target_font_size * 0.90))
-            reduced_font = _font_with_size(font, reduced_size)
-            reduced_wrapped = wrap_subtitle_text(text, reduced_font, max_safe_width)
-            reduced_box = multiline_text_box(reduced_wrapped, reduced_font)
-            if reduced_box["width"] <= max_safe_width and reduced_wrapped.count("\n") <= 1:
-                render_text = reduced_wrapped
-                active_font = reduced_font
-                target_font_size = reduced_size
-                text_w = reduced_box["width"]
-                text_h = reduced_box["height"]
-                line_count = reduced_wrapped.count("\n") + 1
-            else:
-                status = "NEEDS_REVIEW"
-                review_reason = "translation_exceeds_safe_width"
-    elif text_w > max_safe_width:
-        status = "NEEDS_REVIEW"
-        review_reason = "translation_exceeds_safe_width"
 
     # Step 2 - Mask:
-    # Padding: 2-4px scaled at 720p
-    pad_px = max(2, min(5, round(3.0 * (output_height / 720.0))))
-    mask_w = min(max_safe_width, max(orig_w, text_w) + (2 * pad_px))
-    mask_h = max(orig_h, text_h) + (2 * pad_px)
-    mask_x = max(0, min(output_width - mask_w, orig_cx - mask_w // 2))
-    mask_y = max(0, min(output_height - mask_h, orig_cy - mask_h // 2))
+    # Padding: 2-4px scaled at 720p (default 3px)
+    # Mask width and height MUST be based strictly on source_bbox, never text_bbox!
+    pad_px = max(2, min(4, round(3.0 * (output_height / 720.0))))
+    mask_w = orig_w + (2 * pad_px)
+    mask_h = orig_h + (2 * pad_px)
+    mask_x = max(0, min(output_width - mask_w, bbox["left_x"] - pad_px))
+    mask_y = max(0, min(output_height - mask_h, bbox["top_y"] - pad_px))
 
     center_x = mask_x + mask_w // 2
     center_y = mask_y + mask_h // 2
@@ -448,6 +399,82 @@ def local_sub_overlay_layout_for_interval(
         "bottom_y": mask_y + mask_h - 1,
         "padding_px": pad_px,
     }
+
+    # Step 3 - Equivalent font size based on original Chinese character height (within ~10-15%)
+    source_char_h = interval.get("text_height") or orig_h
+    target_font_size = max(18, round(source_char_h * 0.96))
+    active_font = _font_with_size(font, target_font_size)
+
+    # Step 4 - Handling Vietnamese translation:
+    # Priority:
+    # 1. Concise, natural translation
+    # 2. Wrap into at most two lines when appropriate
+    # 3. Slight font reduction (up to ~12%) if needed
+    # 4. If still doesn't fit within source mask width, mark NEEDS_REVIEW
+    # NEVER expand mask beyond source_bbox + pad_px!
+    single_box = multiline_text_box(text, active_font)
+    text_w = single_box["width"]
+    text_h = single_box["height"]
+    render_text = text
+    line_count = max(1, text.count("\n") + 1)
+    status = "PASS"
+    review_reason = None
+
+    available_w = mask_w
+    if text_w > available_w:
+        if "\n" in text:
+            # Multi-line text provided; try slight font reduction
+            reduced_size = max(16, round(target_font_size * 0.88))
+            reduced_font = _font_with_size(font, reduced_size)
+            reduced_box = multiline_text_box(text, reduced_font)
+            if reduced_box["width"] <= available_w:
+                render_text = text
+                active_font = reduced_font
+                target_font_size = reduced_size
+                text_w = reduced_box["width"]
+                text_h = reduced_box["height"]
+                line_count = max(1, text.count("\n") + 1)
+            else:
+                status = "NEEDS_REVIEW"
+                review_reason = "translation_exceeds_source_mask_width"
+                render_text = text
+                active_font = reduced_font
+                target_font_size = reduced_size
+                text_w = reduced_box["width"]
+                text_h = reduced_box["height"]
+                line_count = max(1, text.count("\n") + 1)
+        elif " " in text:
+            wrapped = wrap_subtitle_text(text, active_font, available_w)
+            wrap_box = multiline_text_box(wrapped, active_font)
+            if wrap_box["width"] <= available_w and wrapped.count("\n") <= 1:
+                render_text = wrapped
+                text_w = wrap_box["width"]
+                text_h = wrap_box["height"]
+                line_count = wrapped.count("\n") + 1
+            else:
+                reduced_size = max(16, round(target_font_size * 0.88))
+                reduced_font = _font_with_size(font, reduced_size)
+                reduced_wrapped = wrap_subtitle_text(text, reduced_font, available_w)
+                reduced_box = multiline_text_box(reduced_wrapped, reduced_font)
+                if reduced_box["width"] <= available_w and reduced_wrapped.count("\n") <= 1:
+                    render_text = reduced_wrapped
+                    active_font = reduced_font
+                    target_font_size = reduced_size
+                    text_w = reduced_box["width"]
+                    text_h = reduced_box["height"]
+                    line_count = reduced_wrapped.count("\n") + 1
+                else:
+                    status = "NEEDS_REVIEW"
+                    review_reason = "translation_exceeds_source_mask_width"
+                    render_text = reduced_wrapped
+                    active_font = reduced_font
+                    target_font_size = reduced_size
+                    text_w = reduced_box["width"]
+                    text_h = reduced_box["height"]
+                    line_count = reduced_wrapped.count("\n") + 1
+        else:
+            status = "NEEDS_REVIEW"
+            review_reason = "translation_exceeds_source_mask_width"
 
     return {
         "overlay_mode": "LOCAL_SUB_MASK_OVERLAY",
@@ -468,6 +495,7 @@ def local_sub_overlay_layout_for_interval(
         "confidence": confidence,
         "mask_area_frame_percent": round(mask_w * mask_h * 100 / (output_width * output_height), 4),
     }
+
 
 
 def nearest_source_interval(intervals: list[dict[str, Any]], cue_start: float, cue_end: float) -> dict[str, Any]:
@@ -494,6 +522,8 @@ def default_source_interval(cue_start: float, cue_end: float) -> dict[str, Any]:
         "end_time": round(cue_end, 3),
         "source_bbox": None,
         "source_only": False,
+        "status": "SUBTITLE_REGION_UNCONFIRMED",
+        "confidence": 0.0,
     }
 
 
@@ -518,7 +548,6 @@ def write_clean_subtitles_ass(
     output_width: int,
     output_height: int,
 ) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
     layout_by_segment = {layout["segment_id"]: layout for layout in layouts}
     events = []
     for cue in cues:
@@ -536,6 +565,8 @@ def write_clean_subtitles_ass(
         if end_ms <= start_ms:
             continue
         if layout.get("overlay_mode") == "LOCAL_SUB_MASK_OVERLAY":
+            if layout.get("status") == "SUBTITLE_REGION_UNCONFIRMED":
+                continue
             override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad0\\pos({layout['center_x']},{layout['anchor_y']})}}"
         else:
             override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad1\\pos({layout['center_x']},{layout['anchor_y']})}}"
@@ -558,7 +589,7 @@ Style: Default,Arial,{font_size},&H00FFFFFF,&H00000000,&H00000000,&H00000000,0,0
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-    path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+    safe_write_text(path, header + "\n".join(events) + "\n", encoding="utf-8")
     return path
 
 
@@ -572,6 +603,9 @@ def render_source_replacement_video(
     mode: str = "legacy",
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if mode == "LOCAL_SUB_MASK_OVERLAY":
+        if any(l.get("status") == "SUBTITLE_REGION_UNCONFIRMED" for l in layouts):
+            raise ValueError("Cannot render video: SUBTITLE_REGION_UNCONFIRMED detected for one or more cues.")
     filter_value = build_source_replacement_filter(intervals, layouts, ass_path, mode=mode)
     temp_output = output_path.with_suffix(".tmp.mp4")
     subprocess.run(
@@ -734,35 +768,41 @@ def merged_interval_duration(intervals: list[dict[str, Any]]) -> float:
 
 
 def subtitle_plate_stats(layouts: list[dict[str, Any]], *, output_width: int, output_height: int) -> dict[str, Any]:
-    if not layouts:
+    active_layouts = [item for item in layouts if item.get("plate")]
+    if not active_layouts:
         return {
-            "font_size": None,
+            "font_size": layouts[0].get("font_size") if layouts else None,
             "plate_median_width": 0,
             "plate_median_height": 0,
             "plate_p95_width": 0,
             "plate_p95_height": 0,
             "plate_average_frame_area_percent": 0.0,
+            "one_line_count": sum(1 for item in layouts if item.get("line_count") == 1),
+            "two_line_count": sum(1 for item in layouts if item.get("line_count") == 2),
+            "subtitle_clipping_count": 0,
+            "max_line_count": max((item.get("line_count", 1) for item in layouts), default=1),
         }
-    widths = [item["plate"]["width"] for item in layouts]
-    heights = [item["plate"]["height"] for item in layouts]
-    areas = [item["plate"]["width"] * item["plate"]["height"] for item in layouts]
-    anchor_ys = [item["anchor_y"] for item in layouts]
+    widths = [item["plate"]["width"] for item in active_layouts]
+    heights = [item["plate"]["height"] for item in active_layouts]
+    areas = [item["plate"]["width"] * item["plate"]["height"] for item in active_layouts]
+    anchor_ys = [item["anchor_y"] for item in active_layouts]
+    baseline_zones = [item["source_baseline_zone"] for item in active_layouts if item.get("source_baseline_zone")]
     return {
-        "font_size": layouts[0]["font_size"] if layouts else None,
+        "font_size": active_layouts[0].get("font_size"),
         "source_baseline_zone_median": [
-            round(statistics.median(item["source_baseline_zone"][0] for item in layouts), 3),
-            round(statistics.median(item["source_baseline_zone"][1] for item in layouts), 3),
-        ],
-        "subtitle_anchor_y_median": round(statistics.median(anchor_ys), 3),
-        "plate_median_width": round(statistics.median(widths), 3),
-        "plate_median_height": round(statistics.median(heights), 3),
-        "plate_p95_width": percentile(widths, 95),
-        "plate_p95_height": percentile(heights, 95),
-        "plate_average_frame_area_percent": round(statistics.mean(areas) * 100 / (output_width * output_height), 4),
-        "one_line_count": sum(1 for item in layouts if item["line_count"] == 1),
-        "two_line_count": sum(1 for item in layouts if item["line_count"] == 2),
-        "subtitle_clipping_count": sum(1 for item in layouts if item["clipping"]),
-        "max_line_count": max(item["line_count"] for item in layouts),
+            round(statistics.median(zone[0] for zone in baseline_zones), 3),
+            round(statistics.median(zone[1] for zone in baseline_zones), 3),
+        ] if baseline_zones else [0, 0],
+        "subtitle_anchor_y_median": round(statistics.median(anchor_ys), 3) if anchor_ys else 0,
+        "plate_median_width": round(statistics.median(widths), 3) if widths else 0,
+        "plate_median_height": round(statistics.median(heights), 3) if heights else 0,
+        "plate_p95_width": percentile(widths, 95) if widths else 0,
+        "plate_p95_height": percentile(heights, 95) if heights else 0,
+        "plate_average_frame_area_percent": round(statistics.mean(areas) * 100 / (output_width * output_height), 4) if areas else 0.0,
+        "one_line_count": sum(1 for item in layouts if item.get("line_count") == 1),
+        "two_line_count": sum(1 for item in layouts if item.get("line_count") == 2),
+        "subtitle_clipping_count": sum(1 for item in active_layouts if item.get("clipping", False)),
+        "max_line_count": max((item.get("line_count", 1) for item in layouts), default=1),
     }
 
 
@@ -894,7 +934,7 @@ def union_boxes(boxes: list[dict[str, int] | None]) -> dict[str, int] | None:
 
 def infer_line_count(raw: dict[str, int], output_height: int) -> int:
     height = raw["bottom_y"] - raw["top_y"] + 1
-    threshold = max(42, round(output_height * 0.12))
+    threshold = max(48, round(output_height * 0.07))
     return 2 if height >= threshold else 1
 
 

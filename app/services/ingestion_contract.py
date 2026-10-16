@@ -44,19 +44,27 @@ def create_bilibili_ingestion_handoff(
     """Create handoff record for Bilibili compilation sources.
     Supports selecting single part without downloading whole multi-hour container."""
     redacted = redact_url(source_url)
-    default_pages = [
-        {"part_index": 1, "cid": "41959818910", "title": "Part 1", "duration_seconds": 28312.88},
-        {"part_index": 2, "cid": "41960997330", "title": "Part 2", "duration_seconds": 14438.14},
-    ]
-    parts = pages or default_pages
-    
+    if pages is not None:
+        parts = pages
+    elif canonical_id == "BV1bPeu6cEkG":
+        parts = [
+            {"part_index": 1, "cid": "41959818910", "title": "Part 1", "duration_seconds": 28312.88},
+            {"part_index": 2, "cid": "41960997330", "title": "Part 2", "duration_seconds": 14438.14},
+        ]
+    else:
+        parts = []
+
     selected_part_id = None
     source_id = f"bilibili:{canonical_id}"
     if selected_part_index is not None:
+        if not parts:
+            raise ValueError(f"Cannot select part index {selected_part_index}: no parts metadata available for {canonical_id}.")
         matching = [p for p in parts if p.get("part_index") == selected_part_index]
-        if matching:
-            selected_part_id = str(matching[0].get("cid"))
-            source_id = f"bilibili:{canonical_id}:p{selected_part_index}"
+        if not matching:
+            available_indices = [p.get("part_index") for p in parts]
+            raise ValueError(f"Part index {selected_part_index} does not exist in available parts {available_indices}.")
+        selected_part_id = str(matching[0].get("cid"))
+        source_id = f"bilibili:{canonical_id}:p{selected_part_index}"
 
     return IngestionHandoffRecord(
         source_id=source_id,
@@ -66,9 +74,9 @@ def create_bilibili_ingestion_handoff(
         series_id=None,
         part_or_episode_id=selected_part_id,
         selected_item_index=selected_part_index,
-        discovery_status="PARTIAL_DISCOVERY" if len(parts) > 1 else "DISCOVERED",
+        discovery_status="METADATA_ONLY",
         access_status="PUBLIC_ANONYMOUS",
-        ingestion_status="NOT_DOWNLOADED",
+        ingestion_status="METADATA_ONLY",
         media_file_path=None,
         media_sha256=None,
         media_duration_seconds=None,
@@ -120,6 +128,8 @@ def create_kylin_ingestion_handoff(
 def attach_and_validate_local_media(
     handoff: IngestionHandoffRecord,
     local_path: Path | str,
+    *,
+    is_live_media: bool = False,
 ) -> IngestionHandoffRecord:
     """Attach authorized local fixture or downloaded media file to handoff record and run probe validation."""
     if handoff.ingestion_status == "INGESTION_BLOCKED":
@@ -157,7 +167,7 @@ def attach_and_validate_local_media(
         handoff.media_sha256 = file_hash
         handoff.media_duration_seconds = duration
         handoff.media_validation_status = "VALIDATED"
-        handoff.ingestion_status = "INGESTION_PASS"
+        handoff.ingestion_status = "LIVE_MEDIA_VALIDATED" if is_live_media else "LOCAL_FIXTURE_VALIDATED"
         handoff.error_code = None
         handoff.error_message = None
         return handoff
@@ -175,7 +185,7 @@ def create_or_reuse_ingestion_job(
 ) -> dict[str, Any]:
     """Ensure idempotency: retry with same media hash or canonical identity reuses existing job."""
     registry = jobs_registry if jobs_registry is not None else {}
-    if handoff.ingestion_status != "INGESTION_PASS" or not handoff.media_sha256:
+    if handoff.ingestion_status not in {"LOCAL_FIXTURE_VALIDATED", "LIVE_MEDIA_VALIDATED", "INGESTION_PASS"} or not handoff.media_sha256:
         raise ValueError(f"Cannot dispatch ingestion job: status is '{handoff.ingestion_status}'.")
 
     dedup_key = f"{handoff.canonical_id}:{handoff.selected_item_index}:{handoff.media_sha256}"

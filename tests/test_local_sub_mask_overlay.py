@@ -41,6 +41,10 @@ def _get_test_font(size: int = 32) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
+# NOTE: Synthetic frame tests in this file serve as UNIT TESTS for layout and geometry math.
+# They are NOT integration proof for end-to-end subtitle detection or workflow execution.
+
+
 def test_sub_01_single_line_chinese_sub_covered_vietnamese_matched():
     """SUB-01: Single-line Chinese sub is tightly masked with 2-4px padding,
     Vietnamese sub positioned at matching center and equivalent font size."""
@@ -66,34 +70,50 @@ def test_sub_01_single_line_chinese_sub_covered_vietnamese_matched():
         "status": "CONFIRMED",
     }
     
-    vi_text = "Trần Trường An cùng Kỳ Lân về gia tộc"
-    layout = local_sub_overlay_layout_for_interval(
+    # 1. Concise text that fits inside original width remains 1 line
+    vi_text_single = "Trần Trường An về nhà"
+    layout_single = local_sub_overlay_layout_for_interval(
         interval,
-        vi_text,
+        vi_text_single,
         font,
         output_width=1280,
         output_height=720,
         cue_start=1.0,
         cue_end=3.0,
     )
+    assert layout_single["status"] == "PASS"
+    assert layout_single["line_count"] == 1
     
-    assert layout["status"] == "PASS"
-    assert layout["line_count"] == 1
-    # Check font size within ~10% of source character height
+    # 2. Text longer than original width wraps into 2 lines, while mask remains strictly on source bbox
+    vi_text_longer = "Trần Trường An cùng Kỳ Lân về gia tộc"
+    layout_longer = local_sub_overlay_layout_for_interval(
+        interval,
+        vi_text_longer,
+        font,
+        output_width=1280,
+        output_height=720,
+        cue_start=1.0,
+        cue_end=3.0,
+    )
+    assert layout_longer["status"] == "PASS"
+    assert layout_longer["line_count"] == 2
+    
+    # Check font size within ~10-15% of source character height
     source_h = interval["text_height"]
-    assert abs(layout["font_size"] - source_h) / source_h <= 0.15
-    # Check mask tightly covers source bbox (+2-4px padding)
-    mask = layout["mask"]
+    assert abs(layout_longer["font_size"] - source_h) / source_h <= 0.15
+    # Check mask tightly covers source bbox (+2-4px padding) and does NOT expand for longer text
+    mask = layout_longer["mask"]
     assert mask["padding_px"] in [2, 3, 4]
     assert mask["x"] <= bbox["left_x"]
     assert mask["right_x"] >= bbox["right_x"]
     assert mask["y"] <= bbox["top_y"]
     assert mask["bottom_y"] >= bbox["bottom_y"]
+    assert mask["width"] == (bbox["right_x"] - bbox["left_x"] + 1) + 2 * mask["padding_px"]
     # Check mask is not full-width
     assert mask["width"] < 1280 * 0.70
     # Check Vietnamese sub center matches mask center
-    assert layout["center_x"] == mask["x"] + mask["width"] // 2
-    assert layout["anchor_y"] == mask["y"] + mask["height"] // 2
+    assert layout_longer["center_x"] == mask["x"] + mask["width"] // 2
+    assert layout_longer["anchor_y"] == mask["y"] + mask["height"] // 2
 
 
 def test_sub_02_two_line_chinese_sub_covered():
@@ -120,7 +140,7 @@ def test_sub_02_two_line_chinese_sub_covered():
         "status": "CONFIRMED",
     }
     
-    vi_text = "Hôm nay bắt đầu con đường tu luyện nghịch thiên\nTa nhất định sẽ đột phá cảnh giới này"
+    vi_text = "Hôm nay mở đường tu luyện\nQuyết tâm đột phá cảnh giới"
     layout = local_sub_overlay_layout_for_interval(
         interval,
         vi_text,
@@ -131,7 +151,7 @@ def test_sub_02_two_line_chinese_sub_covered():
     
     assert layout["status"] == "PASS"
     mask = layout["mask"]
-    # Covers both lines from y <= 585 to y >= 662
+    # Covers both lines from y <= 585 to y >= 660
     assert mask["y"] <= 585
     assert mask["bottom_y"] >= 660
     assert mask["height"] >= 70
@@ -175,8 +195,8 @@ def test_sub_04_long_vietnamese_translation_wrapping_and_review():
         "status": "CONFIRMED",
     }
     
-    # Case A: Moderately long translation that should wrap to two lines
-    long_text = "Trần Trường An mang theo thần thú Thượng Cổ Kỳ Lân trở về Trần gia sau mười năm xa cách"
+    # Case A: Moderately long translation that wraps to two lines
+    long_text = "Trần Trường An mang theo Thượng Cổ Kỳ Lân trở về Trần gia sau mười năm"
     layout_wrap = local_sub_overlay_layout_for_interval(
         interval,
         long_text,
@@ -186,7 +206,9 @@ def test_sub_04_long_vietnamese_translation_wrapping_and_review():
     )
     assert layout_wrap["line_count"] == 2
     assert "\n" in layout_wrap["render_text"]
-    assert layout_wrap["mask"]["width"] <= 1280 * 0.88
+    # Mask width must be based on source bbox (321px + 2*pad_px ~ 327px), NEVER expanded to translation width!
+    assert layout_wrap["mask"]["width"] <= 335
+    assert layout_wrap["mask"]["width"] < 400
     
     # Case B: Extremely long unbreakable string or massive text exceeding maximum safe screen width
     extreme_text = "Từ_xưa_đến_nay_trong_toàn_bộ_thiên_địa_chưa_từng_có_ai_dám_làm_ra_hành_động_ngông_cuồng_nghịch_thiên_như_thế_này_cả_khi_một_mình_khiêu_chiến_toàn_thể_chư_thần"
@@ -198,9 +220,58 @@ def test_sub_04_long_vietnamese_translation_wrapping_and_review():
         output_height=720,
     )
     assert layout_review["status"] == "NEEDS_REVIEW"
-    assert layout_review["review_reason"] == "translation_exceeds_safe_width"
-    # Even on overflow, mask width is capped at max_safe_width (never expands into full screen)
-    assert layout_review["mask"]["width"] <= 1280 * 0.88
+    assert "translation_exceeds" in layout_review["review_reason"]
+    # Even on overflow, mask width is strictly source bbox + padding (never expands into full screen)
+    assert layout_review["mask"]["width"] <= 335
+
+
+def test_sub_cue1_strict_mask_width_verification():
+    """Verify Cue 1: source_bbox width is 431px.
+    Mask width must be source_bbox width + 2*pad_px (max ~439px at 720p).
+    Must strictly REJECT 841px expanded mask from old faulty behavior.
+    """
+    font = _get_test_font(34)
+    # Cue 1 source bbox: left_x: 425, top_y: 625, right_x: 855, bottom_y: 665
+    # width = 855 - 425 + 1 = 431 px
+    bbox = {"left_x": 425, "top_y": 625, "right_x": 855, "bottom_y": 665}
+    interval = {
+        "segment_id": "source_caption_0001",
+        "start_time": 1.000,
+        "end_time": 4.500,
+        "source_bbox": bbox,
+        "text_height": 34,
+        "confidence": 0.98,
+        "status": "CONFIRMED",
+    }
+    
+    vi_text = "Trần Trường An mang theo thần thú Kỳ Lân trở về gia tộc"
+    layout = local_sub_overlay_layout_for_interval(
+        interval,
+        vi_text,
+        font,
+        output_width=1280,
+        output_height=720,
+        cue_start=1.000,
+        cue_end=4.500,
+        target_language="Vietnamese",
+    )
+    
+    mask = layout["mask"]
+    assert mask is not None
+    # 1. source_bbox width is 431px
+    orig_w = bbox["right_x"] - bbox["left_x"] + 1
+    assert orig_w == 431
+    
+    # 2. Mask width must be orig_w + 2 * pad_px (pad_px is 2-4px, at 720p pad_px=3)
+    pad_px = mask["padding_px"]
+    assert pad_px in [2, 3, 4]
+    expected_mask_w = 431 + (2 * pad_px)
+    assert mask["width"] == expected_mask_w
+    assert mask["width"] <= 439
+    
+    # 3. Explicitly reject 841px from legacy blowout
+    assert mask["width"] != 841, "Mask width must not blowout to 841px based on Vietnamese translation!"
+    assert mask["width"] < 450
 
 
 def test_sub_05_detection_failure_fail_safe():

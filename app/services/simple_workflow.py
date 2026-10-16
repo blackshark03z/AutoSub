@@ -12,7 +12,7 @@ from uuid import uuid4
 from app.core.config import get_settings
 from app.core.hashing import sha256_file
 from app.core.media import media_summary
-from app.core.paths import ensure_dir
+from app.core.paths import ensure_dir, safe_write_text, safe_read_text
 from app.core.preflight import RUN_ONLY_MIN_FREE_BYTES, storage_preflight
 from app.db.session import session_scope
 from app.domain.models import Project, SimpleWorkflowRun
@@ -716,6 +716,8 @@ def _copy_source_into_work(run_dir: Path, source: Path) -> None:
 
 def _write_manifest(run_dir: Path, row: SimpleWorkflowRun, status: str, result_validation: dict[str, Any] | None = None) -> None:
     requested = json.loads(row.requested_settings_json or "{}")
+    render_mode = requested.get("render_mode") or requested.get("subtitle_render_mode") or requested.get("overlay_mode") or ("LOCAL_SUB_MASK_OVERLAY" if str(requested.get("target_language") or "").strip().lower() in {"vietnamese", "vi"} and requested.get("render_mode") != "legacy" else "legacy")
+    target_language = str(requested.get("target_language") or ("Vietnamese" if render_mode == "LOCAL_SUB_MASK_OVERLAY" else "English"))
     payload = {
         "schema_version": 1,
         "run_id": row.run_id,
@@ -729,11 +731,17 @@ def _write_manifest(run_dir: Path, row: SimpleWorkflowRun, status: str, result_v
         "provider_calls": _provider_calls_for_run(row.run_id),
         "upload_publish": {"upload": "not_performed", "publish": "not_performed"},
         "workflow_mode": requested.get("resolved_mode") or requested.get("caption_mode"),
+        "render_mode": render_mode,
+        "target_language": target_language,
         "result_validation": result_validation or _completed_result_validation(row),
-        "subtitle_track_lineage": "canonical cue timing -> active content track resolver -> English layout -> presentation plate -> existing source-suppressed visual -> final render",
+        "subtitle_track_lineage": (
+            "canonical cue timing -> active content track resolver -> Vietnamese local sub mask overlay -> final render"
+            if render_mode == "LOCAL_SUB_MASK_OVERLAY"
+            else "canonical cue timing -> active content track resolver -> English layout -> presentation plate -> existing source-suppressed visual -> final render"
+        ),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    safe_write_text(run_dir / "run_manifest.json", json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _render_progress_path(run_dir: Path) -> Path:
@@ -861,11 +869,40 @@ def _run_ffmpeg_with_progress(
 def _bounded_subtitle_process(row: SimpleWorkflowRun, resolved: dict[str, Any]) -> None:
     run_dir = Path(row.run_directory)
     source = Path(row.source_path)
-    log_path = run_dir / "logs" / "processing.log"
-    log_path.write_text("\n".join(label for _, label in USER_STAGES), encoding="utf-8")
     subtitles_dir = run_dir / "subtitles"
-    ass_path = subtitles_dir / "dialogue_subtitles_en.ass"
-    if resolved.get("subtitle_provenance") in SOURCE_CAPTION_MODES:
+    subtitles_dir.mkdir(parents=True, exist_ok=True)
+
+    requested = json.loads(row.requested_settings_json or "{}")
+    render_mode = (
+        requested.get("render_mode")
+        or requested.get("subtitle_render_mode")
+        or requested.get("overlay_mode")
+        or ("LOCAL_SUB_MASK_OVERLAY" if str(requested.get("target_language") or "").strip().lower() in {"vietnamese", "vi"} and requested.get("render_mode") != "legacy" else "legacy")
+    )
+    target_language = str(requested.get("target_language") or ("Vietnamese" if render_mode == "LOCAL_SUB_MASK_OVERLAY" else "English"))
+
+    log_path = run_dir / "logs" / "processing.log"
+    safe_write_text(
+        log_path,
+        "\n".join(label for _, label in USER_STAGES) + f"\nRender mode: {render_mode}\nTarget language: {target_language}\n",
+        encoding="utf-8",
+    )
+
+    lang_code = "vi" if target_language.lower() in {"vietnamese", "vi"} or render_mode == "LOCAL_SUB_MASK_OVERLAY" else "en"
+    ass_path = subtitles_dir / f"dialogue_subtitles_{lang_code}.ass"
+
+    if render_mode == "LOCAL_SUB_MASK_OVERLAY":
+        plan = build_source_replacement_plan(
+            source,
+            resolved.get("cues", []),
+            font_path=get_settings().font_path,
+            mode="LOCAL_SUB_MASK_OVERLAY",
+            target_language=target_language,
+        )
+        unconfirmed = [l for l in plan.get("layouts", []) if l.get("status") == "SUBTITLE_REGION_UNCONFIRMED"]
+        if unconfirmed:
+            raise ValueError("Subtitle render blocked: SUBTITLE_REGION_UNCONFIRMED detected for one or more cues.")
+    elif resolved.get("subtitle_provenance") in SOURCE_CAPTION_MODES:
         plan = build_source_caption_render_plan(
             source,
             resolved.get("cues", []),
@@ -873,7 +910,14 @@ def _bounded_subtitle_process(row: SimpleWorkflowRun, resolved: dict[str, Any]) 
             subtitle_provenance=str(resolved.get("subtitle_provenance") or SOURCE_CAPTION_GEMINI_MODE),
         )
     else:
-        plan = build_source_replacement_plan(source, resolved.get("cues", []), font_path=get_settings().font_path)
+        plan = build_source_replacement_plan(
+            source,
+            resolved.get("cues", []),
+            font_path=get_settings().font_path,
+            mode="legacy",
+            target_language=target_language,
+        )
+
     use_source_mask = bool(plan["intervals"] and plan["layouts"])
     if use_source_mask:
         write_clean_subtitles_ass(
@@ -884,25 +928,33 @@ def _bounded_subtitle_process(row: SimpleWorkflowRun, resolved: dict[str, Any]) 
             output_width=plan["output_width"],
             output_height=plan["output_height"],
         )
+        if lang_code == "vi":
+            write_clean_subtitles_ass(
+                plan["render_cues"],
+                plan["layouts"],
+                subtitles_dir / "dialogue_subtitles_en.ass",
+                font_size=plan["font_size"],
+                output_width=plan["output_width"],
+                output_height=plan["output_height"],
+            )
     else:
         _write_ass_subtitles(ass_path, resolved)
-    subtitles_dir.mkdir(parents=True, exist_ok=True)
-    (subtitles_dir / "render_plan.json").write_text(
-        json.dumps(
-            {
-                "intervals": plan["intervals"],
-                "interval_stats": plan["interval_stats"],
-                "plate_stats": plan["plate_stats"],
-                "review_times": plan["review_times"],
-                "subtitle_provenance": resolved.get("subtitle_provenance"),
-                "ocr_model": (resolved.get("active_track") or {}).get("metadata", {}).get("ocr_model"),
-                "translation_model": (resolved.get("active_track") or {}).get("metadata", {}).get("translation_model"),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+        if lang_code == "vi":
+            _write_ass_subtitles(subtitles_dir / "dialogue_subtitles_en.ass", resolved)
+
+    plan_payload = {
+        "intervals": plan["intervals"],
+        "interval_stats": plan["interval_stats"],
+        "plate_stats": plan["plate_stats"],
+        "review_times": plan["review_times"],
+        "render_mode": render_mode,
+        "target_language": target_language,
+        "subtitle_provenance": resolved.get("subtitle_provenance"),
+        "ocr_model": (resolved.get("active_track") or {}).get("metadata", {}).get("ocr_model"),
+        "translation_model": (resolved.get("active_track") or {}).get("metadata", {}).get("translation_model"),
+    }
+    safe_write_text(subtitles_dir / "render_plan.json", json.dumps(plan_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
     expected_dialogues = len(plan.get("render_cues", [])) if use_source_mask else sum(
         1 for cue in resolved.get("cues", []) if str(cue.get("resolved_text") or cue.get("text") or "").strip()
     )
@@ -912,9 +964,14 @@ def _bounded_subtitle_process(row: SimpleWorkflowRun, resolved: dict[str, Any]) 
     temp_output = output.with_name(f"{output.stem}.tmp{output.suffix}")
     filter_script_path: Path | None = None
     if use_source_mask:
-        filter_value = build_source_replacement_filter(plan["intervals"], plan["layouts"], ass_path)
+        filter_value = build_source_replacement_filter(plan["intervals"], plan["layouts"], ass_path, mode=render_mode)
+        if render_mode == "LOCAL_SUB_MASK_OVERLAY":
+            if "delogo=" in filter_value:
+                raise ValueError("LOCAL_SUB_MASK_OVERLAY must not use delogo filter.")
+            if "drawbox=" not in filter_value:
+                raise ValueError("LOCAL_SUB_MASK_OVERLAY must use drawbox filter.")
         filter_script_path = subtitles_dir / "ffmpeg_filter_script.txt"
-        filter_script_path.write_text(filter_value, encoding="utf-8")
+        safe_write_text(filter_script_path, filter_value, encoding="utf-8")
         command = [
             "ffmpeg",
             "-y",
@@ -923,8 +980,8 @@ def _bounded_subtitle_process(row: SimpleWorkflowRun, resolved: dict[str, Any]) 
             "error",
             "-i",
             str(source),
-            "-filter_script:v",
-            str(filter_script_path),
+            "-vf",
+            filter_value,
             "-c:v",
             "libx264",
             "-preset",
@@ -954,6 +1011,19 @@ def _bounded_subtitle_process(row: SimpleWorkflowRun, resolved: dict[str, Any]) 
         expect_masked=use_source_mask,
         filter_script_path=filter_script_path,
     )
+    render_manifest_data = {
+        "run_id": row.run_id,
+        "render_mode": render_mode,
+        "target_language": target_language,
+        "filter": "LOCAL_SUB_MASK_OVERLAY" if render_mode == "LOCAL_SUB_MASK_OVERLAY" else "legacy",
+        "use_source_mask": use_source_mask,
+        "dialogue_count": expected_dialogues,
+        "ass_path": str(ass_path),
+        "output_path": str(output),
+    }
+    safe_write_text(subtitles_dir / "render_manifest.json", json.dumps(render_manifest_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    safe_write_text(run_dir / "render_manifest.json", json.dumps(render_manifest_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
     render_progress = _load_render_progress(run_dir) or {}
     _write_render_progress(
         run_dir,
@@ -1278,8 +1348,14 @@ def _completed_result_validation(row: SimpleWorkflowRun) -> dict[str, Any]:
             "ass_dialogue_count": None,
         }
     output = Path(row.output_path) if row.output_path else None
-    source = Path(row.source_path)
-    ass_path = Path(row.run_directory) / "subtitles" / "dialogue_subtitles_en.ass"
+    target_lang = str(requested.get("target_language") or "").strip().lower()
+    render_mode = requested.get("render_mode") or requested.get("subtitle_render_mode") or requested.get("overlay_mode") or ""
+    lang_code = "vi" if target_lang in {"vietnamese", "vi"} or render_mode == "LOCAL_SUB_MASK_OVERLAY" else "en"
+    ass_path = Path(row.run_directory) / "subtitles" / f"dialogue_subtitles_{lang_code}.ass"
+    if not ass_path.exists():
+        fallback_ass = Path(row.run_directory) / "subtitles" / "dialogue_subtitles_en.ass"
+        if fallback_ass.exists():
+            ass_path = fallback_ass
     dialogue_count = _valid_ass_dialogue_count(ass_path) if subtitle_required else None
 
     reason_code = None

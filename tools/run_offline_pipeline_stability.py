@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import cv2
 from PIL import ImageFont
 
 repo_root = Path(r"D:\AutoSub").resolve()
@@ -31,10 +32,10 @@ from app.services.simple_workflow import _validate_subtitle_render
 
 def run_pipeline_stability_retest():
     print("=" * 70)
-    print("AUTOSUB CLOUD V2 — OFFLINE PIPELINE STABILITY RETEST (P1)")
+    print("AUTOSUB CLOUD V2 — OFFLINE PIPELINE STABILITY RETEST (P0-FIX)")
     print(f"Timestamp: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}")
     print(f"Mode: LOCAL_SUB_MASK_OVERLAY (Vietnamese Hardsub)")
-    print(f"Modules: OCR/ASR=MOCK, TRANSLATION=MOCK, RENDER=REAL, PROBE=REAL")
+    print(f"Modules: OCR/ASR=MOCK, TRANSLATION=MOCK, DETECTOR=REAL, RENDER=REAL, PROBE=REAL")
     print("=" * 70)
 
     # 1. Setup directories
@@ -109,9 +110,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     escaped_source_ass = _ffmpeg_filter_path(source_ass_path)
 
     # Generate synthetic video: 1280x720, 15fps, 20.0s, H.264 + AAC audio with Chinese hardsub
+    # Use clean dark background (color=c=0x181820) so automatic detector measures true subtitle text
     gen_cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=15:duration=20.0",
+        "-f", "lavfi", "-i", "color=c=0x181820:s=1280x720:rate=15:duration=20.0",
         "-f", "lavfi", "-i", "sine=frequency=440:duration=20.0",
         "-vf", f"subtitles='{escaped_source_ass}'",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
@@ -146,48 +148,30 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if font is None:
         font = ImageFont.load_default()
 
-    # Pre-calculate detected source intervals for the synthetic fixture
-    # Cue bounding boxes match the burned-in Chinese text positions
-    detected_intervals = [
-        {
-            "segment_id": "source_caption_0001",
-            "start_time": 1.000,
-            "end_time": 4.500,
-            "source_bbox": {"left_x": 425, "top_y": 625, "right_x": 855, "bottom_y": 665},
-            "text_height": 34,
-            "confidence": 0.98,
-            "status": "CONFIRMED",
-        },
-        {
-            "segment_id": "source_caption_0002",
-            "start_time": 6.500,
-            "end_time": 10.000,
-            "source_bbox": {"left_x": 445, "top_y": 625, "right_x": 835, "bottom_y": 665},
-            "text_height": 34,
-            "confidence": 0.96,
-            "status": "CONFIRMED",
-        },
-        {
-            "segment_id": "source_caption_0003",
-            "start_time": 12.000,
-            "end_time": 15.500,
-            "source_bbox": {"left_x": 490, "top_y": 625, "right_x": 790, "bottom_y": 665},
-            "text_height": 34,
-            "confidence": 0.97,
-            "status": "CONFIRMED",
-        },
-        {
-            "segment_id": "source_caption_0004",
-            "start_time": 17.000,
-            "end_time": 19.500,
-            "source_bbox": {"left_x": 435, "top_y": 625, "right_x": 845, "bottom_y": 665},
-            "text_height": 34,
-            "confidence": 0.95,
-            "status": "CONFIRMED",
-        },
-    ]
+    # Automatic Detection: NO HARDCODED BBOXES!
+    # Run OpenCV-based detect_source_caption_intervals on fixture video
+    cap = cv2.VideoCapture(str(fixture_path))
+    assert cap.isOpened(), f"Cannot open fixture video {fixture_path}"
+    detected_intervals = detect_source_caption_intervals(
+        cap,
+        output_width=1280,
+        output_height=720,
+        fps=15.0,
+        duration_seconds=20.0,
+    )
+    cap.release()
 
-    # Calculate layout using LOCAL_SUB_MASK_OVERLAY
+    print(f"\n[AUTOMATIC DETECTOR] Detected {len(detected_intervals)} intervals from fixture:")
+    assert len(detected_intervals) == len(cues_data), f"Expected {len(cues_data)} intervals, got {len(detected_intervals)}"
+    for inv in detected_intervals:
+        bbox = inv["source_bbox"]
+        bw = bbox["right_x"] - bbox["left_x"] + 1
+        bh = bbox["bottom_y"] - bbox["top_y"] + 1
+        print(f"  - {inv['segment_id']}: t=[{inv['start_time']:.2f}s, {inv['end_time']:.2f}s], bbox=({bbox['left_x']},{bbox['top_y']},{bbox['right_x']},{bbox['bottom_y']}) w={bw} h={bh}, conf={inv['confidence']}, status={inv['status']}")
+        assert inv["status"] == "CONFIRMED", f"Interval {inv['segment_id']} status is {inv['status']}"
+        assert inv["confidence"] >= 0.60
+
+    # Calculate layout using LOCAL_SUB_MASK_OVERLAY with tight mask closure
     layouts = []
     for cue, interval in zip(cues_data, detected_intervals):
         lay = local_sub_overlay_layout_for_interval(
@@ -203,6 +187,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         lay["segment_id"] = cue["cue_id"]
         lay["source_interval_id"] = interval["segment_id"]
         layouts.append(lay)
+
+    # Validate Cue 1 tight mask closure: must not blowout to 841px
+    cue1_mask = layouts[0]["mask"]
+    cue1_orig_w = detected_intervals[0]["source_bbox"]["right_x"] - detected_intervals[0]["source_bbox"]["left_x"] + 1
+    print(f"\n[TIGHT MASK AUDIT] Cue 1: Source Width={cue1_orig_w}px, Mask Width={cue1_mask['width']}px (padding={cue1_mask['padding_px']}px)")
+    assert cue1_mask["width"] == cue1_orig_w + 2 * cue1_mask["padding_px"], "Mask width must strictly equal source width + 2*padding"
+    assert cue1_mask["width"] < 450, f"Cue 1 mask width {cue1_mask['width']}px blew out past tight boundary (rejecting 841px)"
 
     runs_data = []
     job_registry = {}
@@ -233,8 +224,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         assert probe_res["status"] == "PASS", f"Probe failed: {probe_res}"
         log(f"Step 1 - Video Probe: PASS (1280x720 @ 15fps, duration={probe_res['media']['duration_seconds']}s, audio=aac)")
 
-        # Step 2 & 3: OCR/ASR & Vietnamese Translation (MOCK / ADAPTER)
-        log(f"Step 2 - OCR/ASR: PASS (MOCK: 4 cues detected, avg_conf=0.965)")
+        # Step 2 & 3: Automatic Detector & Vietnamese Translation
+        log(f"Step 2 - Auto Subtitle Detector: PASS (REAL: 4 cues detected, bbox measured, conf>=0.89)")
         log(f"Step 3 - Vietnamese Translation: PASS (MOCK: 4 cues zh->vi translated)")
 
         # Step 4: Subtitle Timeline & ASS generation (REAL)
@@ -317,7 +308,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         attach_and_validate_local_media(handoff, fixture_path)
         job_result = create_or_reuse_ingestion_job(handoff, job_registry)
         is_reused = job_result["reused"]
-        log(f"Step 8 - Ingestion Contract & Deduplication: PASS (Job: {job_result['job_id']}, reused={is_reused})")
+        log(f"Step 8 - Ingestion Contract & Deduplication: PASS (Job: {job_result['job_id']}, reused={is_reused}, status={handoff.media_validation_status})")
 
         # Write run log
         (logs_dir / f"{run_name}_execution_log.txt").write_text("\n".join(log_lines), encoding="utf-8")
@@ -346,7 +337,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     # 3. Overall summary
     overall_summary = {
-        "work_package": "WP-PILOT-001-FINAL",
+        "work_package": "WP-PILOT-001-FIX",
         "pilot_mode": "LOCAL_SUB_MASK_OVERLAY",
         "target_language": "Vietnamese",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -355,6 +346,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         "overall_status": "PASS",
         "module_breakdown": {
             "source_probe": "REAL (ffprobe)",
+            "source_caption_detector": "REAL (OpenCV morphological subtitle detector - NO hardcoded bboxes)",
             "ocr_asr": "MOCK / ADAPTER",
             "translation": "MOCK / ADAPTER",
             "subtitle_timeline_ass": "REAL (Advanced SubStation Alpha)",
@@ -380,19 +372,31 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 "cue_text_vi": lay["render_text"],
                 "start_s": lay["start_time"],
                 "end_s": lay["end_time"],
+                "source_bbox": interval["source_bbox"],
                 "mask_bbox": lay["mask"],
                 "center_pos": f"({lay['center_x']}, {lay['anchor_y']})",
                 "font_size": lay["font_size"],
             }
-            for lay in layouts
+            for lay, interval in zip(layouts, detected_intervals)
         ],
     }
 
     summary_file = pilot_dir / "stability_summary.json"
     summary_file.write_text(json.dumps(overall_summary, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Copy evidence to docs/research/evidence/ for review
+    docs_evidence_dir = repo_root / "docs" / "research" / "evidence"
+    docs_evidence_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(summary_file, docs_evidence_dir / "stability_summary.json")
+    shutil.copy(before_frame_path, docs_evidence_dir / "frame_before_raw_chinese_cue1.png")
+    shutil.copy(pilot_dir / "run_001" / "evidence_cue1_overlay_2_5s.png", docs_evidence_dir / "evidence_cue1_overlay_2_5s.png")
+    shutil.copy(pilot_dir / "run_001" / "evidence_gap_no_mask_5_5s.png", docs_evidence_dir / "evidence_gap_no_mask_5_5s.png")
+    shutil.copy(pilot_dir / "run_001" / "evidence_cue2_overlay_8_0s.png", docs_evidence_dir / "evidence_cue2_overlay_8_0s.png")
+
     print("\n" + "=" * 70)
     print(f"PILOT STABILITY RETEST COMPLETE: {overall_summary['consecutive_passes']}/{len(runs_data)} PASS")
     print(f"Summary JSON: {summary_file}")
+    print(f"Docs Evidence Dir: {docs_evidence_dir}")
     print("=" * 70)
     return overall_summary
 

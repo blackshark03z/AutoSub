@@ -27,13 +27,14 @@ def synthetic_video_fixture(tmp_path: Path) -> Path:
 
 
 def test_contract_01_recognized_link_without_media_is_not_downloaded():
-    """Handoff contract: discovery metadata identified, but ingestion status must be NOT_DOWNLOADED."""
+    """Handoff contract: discovery metadata identified, but ingestion status must be METADATA_ONLY."""
     url = "https://b23.tv/gK7gvDO"
     handoff = create_bilibili_ingestion_handoff(url, canonical_id="BV1bPeu6cEkG")
     
     assert handoff.canonical_id == "BV1bPeu6cEkG"
     assert handoff.platform == "bilibili"
-    assert handoff.ingestion_status == "NOT_DOWNLOADED"
+    assert handoff.ingestion_status == "METADATA_ONLY"
+    assert handoff.discovery_status == "METADATA_ONLY"
     assert handoff.media_validation_status == "NOT_RUN"
     assert handoff.media_file_path is None
     assert handoff.media_sha256 is None
@@ -116,18 +117,24 @@ def test_contract_05_corrupt_media_file_fails_validation(tmp_path: Path):
 
 
 def test_contract_06_valid_local_media_passes_validation(synthetic_video_fixture: Path):
-    """Handoff contract: Valid local fixture triggers INGESTION_PASS with hash and duration."""
+    """Handoff contract: Valid local fixture triggers LOCAL_FIXTURE_VALIDATED with hash and duration,
+    while verified live media triggers LIVE_MEDIA_VALIDATED."""
     url = "https://b23.tv/gK7gvDO"
-    handoff = create_bilibili_ingestion_handoff(url, selected_part_index=1)
+    handoff_local = create_bilibili_ingestion_handoff(url, selected_part_index=1)
+    res_local = attach_and_validate_local_media(handoff_local, synthetic_video_fixture, is_live_media=False)
     
-    res = attach_and_validate_local_media(handoff, synthetic_video_fixture)
-    
-    assert res.ingestion_status == "INGESTION_PASS"
-    assert res.media_validation_status == "VALIDATED"
-    assert res.media_file_path is not None
-    assert res.media_sha256 is not None and len(res.media_sha256) == 64
-    assert res.media_duration_seconds is not None and res.media_duration_seconds > 0.0
-    assert res.error_code is None
+    assert res_local.ingestion_status == "LOCAL_FIXTURE_VALIDATED"
+    assert res_local.media_validation_status == "VALIDATED"
+    assert res_local.media_file_path is not None
+    assert res_local.media_sha256 is not None and len(res_local.media_sha256) == 64
+    assert res_local.media_duration_seconds is not None and res_local.media_duration_seconds > 0.0
+    assert res_local.error_code is None
+
+    # Test verified live media flag
+    handoff_live = create_bilibili_ingestion_handoff(url, selected_part_index=1)
+    res_live = attach_and_validate_local_media(handoff_live, synthetic_video_fixture, is_live_media=True)
+    assert res_live.ingestion_status == "LIVE_MEDIA_VALIDATED"
+    assert res_live.media_validation_status == "VALIDATED"
 
 
 def test_contract_07_job_deduplication_prevents_duplicate_processing(synthetic_video_fixture: Path):
@@ -144,3 +151,58 @@ def test_contract_07_job_deduplication_prevents_duplicate_processing(synthetic_v
     job_2 = create_or_reuse_ingestion_job(handoff, jobs_registry)
     assert job_2["reused"] is True
     assert job_2["job_id"] == job_1["job_id"]
+
+
+def test_contract_08_invalid_part_index_raises_clear_error():
+    """Handoff contract: Requesting a non-existent part index raises a clear ValueError."""
+    url = "https://b23.tv/gK7gvDO"
+    pages = [
+        {"part_index": 1, "cid": "41959818910", "title": "Part 1", "duration_seconds": 28312.88},
+        {"part_index": 2, "cid": "41960997330", "title": "Part 2", "duration_seconds": 14438.14},
+    ]
+    with pytest.raises(ValueError, match="Part index 99 does not exist"):
+        create_bilibili_ingestion_handoff(url, canonical_id="BV1bPeu6cEkG", pages=pages, selected_part_index=99)
+
+
+def test_contract_09_arbitrary_bv_id_has_no_hardcoded_cids():
+    """Handoff contract: Arbitrary BV ID does not inherit hardcoded CIDs from BV1bPeu6cEkG."""
+    arbitrary_bv = "BV1xx411c7mD"
+    handoff = create_bilibili_ingestion_handoff("https://bilibili.com/video/BV1xx411c7mD", canonical_id=arbitrary_bv)
+    assert handoff.parts_or_chapters == []
+    assert handoff.canonical_id == arbitrary_bv
+
+
+def test_contract_10_redact_url_sanitizes_userinfo_and_query_credentials():
+    """Handoff contract: URL containing user credentials in userinfo or query params is redacted."""
+    from app.core.redaction import redact_url
+    url_with_creds = "https://user:my_secret_pwd@api.bilibili.com/x/player/playurl?cid=123&bili_jct=supersecrettoken&token=xyz"
+    redacted = redact_url(url_with_creds)
+    assert "my_secret_pwd" not in redacted
+    assert "supersecrettoken" not in redacted
+    assert "xyz" not in redacted
+    assert "user:<redacted>@api.bilibili.com" in redacted
+    assert "bili_jct=%3Credacted%3E" in redacted or "bili_jct=<redacted>" in redacted
+
+
+def test_contract_11_four_ingestion_states_distinct_and_independent(synthetic_video_fixture: Path):
+    """Handoff contract: METADATA_ONLY, LOCAL_FIXTURE_VALIDATED, INGESTION_BLOCKED,
+    and LIVE_MEDIA_VALIDATED are mutually distinct states."""
+    # 1. METADATA_ONLY
+    h1 = create_bilibili_ingestion_handoff("https://b23.tv/gK7gvDO", canonical_id="BV1bPeu6cEkG")
+    assert h1.ingestion_status == "METADATA_ONLY"
+
+    # 2. LOCAL_FIXTURE_VALIDATED
+    h2 = attach_and_validate_local_media(create_bilibili_ingestion_handoff("https://b23.tv/gK7gvDO", selected_part_index=1), synthetic_video_fixture, is_live_media=False)
+    assert h2.ingestion_status == "LOCAL_FIXTURE_VALIDATED"
+
+    # 3. INGESTION_BLOCKED
+    h3 = create_kylin_ingestion_handoff("https://kylin.hainanyuyue.com/s/i9J6kMK62PE/")
+    assert h3.ingestion_status == "INGESTION_BLOCKED"
+
+    # 4. LIVE_MEDIA_VALIDATED
+    h4 = attach_and_validate_local_media(create_bilibili_ingestion_handoff("https://b23.tv/gK7gvDO", selected_part_index=1), synthetic_video_fixture, is_live_media=True)
+    assert h4.ingestion_status == "LIVE_MEDIA_VALIDATED"
+
+    distinct_states = {h1.ingestion_status, h2.ingestion_status, h3.ingestion_status, h4.ingestion_status}
+    assert len(distinct_states) == 4, f"Expected 4 distinct states, got {distinct_states}"
+
