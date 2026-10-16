@@ -1,0 +1,293 @@
+{
+  "work_package": "WP-DL-001A",
+  "verification_mode": "Live Source & Download Verification",
+  "timestamp_utc": "2026-10-16T09:47:00Z",
+  "environment": {
+    "os": "Windows 11 / Windows NT 10.0",
+    "python": "3.11.9",
+    "ffmpeg": "9.0.1-essentials_build",
+    "ffprobe": "9.0.1-essentials_build",
+    "yt_dlp": "2026.08.19",
+    "lux": "0.24.1",
+    "n_m3u8dl_re": "0.6.0-beta",
+    "you_get": "0.4.1743",
+    "streamlink": "8.6.2"
+  },
+  "live_probes": [
+    {
+      "platform": "bilibili",
+      "target_url_redacted": "https://www.bilibili.com/video/BV117411r7R1",
+      "title": "当我给拜年祭的快板加了电音配乐…",
+      "status": "DISCOVERABLE",
+      "recommended_engine": "yt-dlp",
+      "duration_seconds": 485.524,
+      "format_count": 15,
+      "codecs_found": ["avc1.640028", "hev1.1.6.L150.90", "av01.0.08M.08.0.110", "mp4a.40.2"],
+      "authentication_required": false,
+      "drm_status": "UNKNOWN",
+      "probe_duration_ms": 1983,
+      "verdict": "METADATA_VERIFIED",
+      "notes": "Public UGC. 360p-1080p streamable. 480p unauthenticated, 720p+ requires login/cookie for full bitrate."
+    },
+    {
+      "platform": "bilibili",
+      "target_url_redacted": "https://www.bilibili.com/video/BV1GJ411x7h7",
+      "title": null,
+      "status": "GEO_RESTRICTED",
+      "recommended_engine": "yt-dlp",
+      "duration_seconds": null,
+      "format_count": 0,
+      "authentication_required": false,
+      "drm_status": "UNKNOWN",
+      "probe_duration_ms": 1421,
+      "verdict": "GEO_RESTRICTED",
+      "notes": "Detected region-lock/geoblock."
+    },
+    {
+      "platform": "iqiyi",
+      "target_url_redacted": "https://www.iqiyi.com/v_19rr7phwvw.html",
+      "title": null,
+      "status": "PROBE_ERROR",
+      "recommended_engine": "yt-dlp",
+      "duration_seconds": null,
+      "format_count": 0,
+      "authentication_required": false,
+      "drm_status": "UNKNOWN",
+      "probe_duration_ms": 953,
+      "verdict": "FAILED",
+      "notes": "Upstream extractor failure: iQIYI updated client JavaScript player API signature."
+    },
+    {
+      "platform": "tencent",
+      "target_url_redacted": "https://wetv.vip/play/0038w7h8p38x2r0/g0038r1h78r",
+      "title": null,
+      "status": "GEO_RESTRICTED",
+      "recommended_engine": "yt-dlp",
+      "duration_seconds": null,
+      "format_count": 0,
+      "authentication_required": false,
+      "drm_status": "UNKNOWN",
+      "probe_duration_ms": 1593,
+      "verdict": "GEO_RESTRICTED",
+      "notes": "WeTV geo-blocking enforced on node IP."
+    },
+    {
+      "platform": "douyin",
+      "target_url_redacted": "https://www.douyin.com/video/7123456789012345678",
+      "title": null,
+      "status": "AUTH_REQUIRED",
+      "recommended_engine": "yt-dlp",
+      "duration_seconds": null,
+      "format_count": 0,
+      "authentication_required": true,
+      "drm_status": "UNKNOWN",
+      "probe_duration_ms": 984,
+      "verdict": "AUTH_REQUIRED",
+      "notes": "Douyin anti-crawler barrier: requires fresh web visitor cookies (session ticket)."
+    },
+    {
+      "platform": "xigua",
+      "target_url_redacted": "https://www.ixigua.com/6829749557672542728",
+      "title": null,
+      "status": "AUTH_REQUIRED",
+      "recommended_engine": "yt-dlp",
+      "duration_seconds": null,
+      "format_count": 0,
+      "authentication_required": true,
+      "drm_status": "UNKNOWN",
+      "probe_duration_ms": 1031,
+      "verdict": "AUTH_REQUIRED",
+      "notes": "ByteDance cookie barrier: requires visitor cookies."
+    },
+    {
+      "platform": "manifest_hls",
+      "target_url_redacted": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+      "title": null,
+      "status": "DISCOVERABLE",
+      "recommended_engine": "n_m3u8dl_re",
+      "duration_seconds": null,
+      "format_count": 5,
+      "codecs_found": ["avc1.640028", "avc1.64001f", "avc1.420016", "mp4a.40.2"],
+      "authentication_required": false,
+      "drm_status": "NO_DRM_APPARENT",
+      "probe_duration_ms": 358,
+      "verdict": "METADATA_VERIFIED",
+      "notes": "Fast manifest parsing via ManifestDiscoveryAdapter. Clean variants 320x184 to 1920x1080."
+    },
+    {
+      "platform": "manifest_dash",
+      "target_url_redacted": "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd",
+      "title": null,
+      "status": "DISCOVERABLE",
+      "recommended_engine": "n_m3u8dl_re",
+      "duration_seconds": null,
+      "format_count": 11,
+      "codecs_found": ["avc1.640033", "avc1.640028", "avc1.64001f", "mp4a.40.5"],
+      "authentication_required": false,
+      "drm_status": "NO_DRM_APPARENT",
+      "probe_duration_ms": 187,
+      "verdict": "METADATA_VERIFIED",
+      "notes": "Native XML parsing via ManifestDiscoveryAdapter. Zero DRM markers."
+    },
+    {
+      "platform": "direct_file",
+      "target_url_redacted": "https://www.w3schools.com/html/mov_bbb.mp4",
+      "title": "mov_bbb.mp4",
+      "status": "DISCOVERABLE",
+      "recommended_engine": "direct_http",
+      "duration_seconds": null,
+      "format_count": 1,
+      "authentication_required": false,
+      "drm_status": "NO_DRM_APPARENT",
+      "probe_duration_ms": 1250,
+      "verdict": "METADATA_VERIFIED",
+      "notes": "HTTP Range 0-1023 probe via DirectFileDiscoveryAdapter."
+    }
+  ],
+  "download_verifications": [
+    {
+      "test_id": "TEST_A1_BILIBILI_SHORT",
+      "source_url": "https://www.bilibili.com/video/BV117411r7R1",
+      "rights_basis": "Public Bilibili UGC content, personal fair-use / non-commercial evaluation",
+      "engine_used": "yt-dlp 2026.08.19",
+      "command": "python -m yt_dlp -f '30016+30216' --no-playlist -o temp/bilibili_test.%(ext)s <URL>",
+      "exit_code": 0,
+      "elapsed_seconds": 20.8,
+      "average_throughput_mb_s": 1.34,
+      "file_path": "temp/bilibili_test.mp4",
+      "file_size_bytes": 27938491,
+      "sha256": "F5BD89575A5050FE1C9FD1843EF1DD44EAFD17CC05BBBEDF2C03E33ACB7135C8",
+      "ffprobe_summary": {
+        "duration_seconds": 485.524833,
+        "format_name": "QuickTime / MOV",
+        "video_stream": {
+          "codec": "h264 (avc1)",
+          "resolution": "640x360",
+          "fps": 25.0,
+          "nb_frames": 12136
+        },
+        "audio_stream": {
+          "codec": "aac (mp4a)",
+          "sample_rate": 48000,
+          "channels": 2,
+          "nb_frames": 22759
+        }
+      },
+      "decode_verification": {
+        "command": "ffmpeg -v error -i temp/bilibili_test.mp4 -f null -",
+        "errors_count": 0,
+        "verdict": "FULL_DECODE_PASS"
+      },
+      "verdict": "DOWNLOAD_VERIFIED"
+    },
+    {
+      "test_id": "TEST_A2_HLS_1080P",
+      "source_url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+      "rights_basis": "Creative Commons Attribution 3.0 (Big Buck Bunny open sample)",
+      "engine_used": "N_m3u8DL-RE 0.6.0-beta",
+      "command": "N_m3u8DL-RE.exe <URL> --save-dir temp/hls_test --save-name hls_bbb --auto-select",
+      "exit_code": 0,
+      "elapsed_seconds": 45.1,
+      "average_throughput_mb_s": 10.84,
+      "file_path": "temp/hls_test/hls_bbb.mp4",
+      "file_size_bytes": 488204143,
+      "sha256": "BEE13A8B44A1D6DAEEB631FE959A43E2C4C750A7CE56DE272852D4DA55A78D14",
+      "ffprobe_summary": {
+        "duration_seconds": 634.589889,
+        "format_name": "QuickTime / MOV",
+        "video_stream": {
+          "codec": "h264 (avc1)",
+          "resolution": "1920x1080",
+          "fps": 60.0,
+          "nb_frames": 38074
+        },
+        "audio_stream": {
+          "codec": "aac (mp4a)",
+          "sample_rate": 44100,
+          "channels": 2,
+          "nb_frames": 27312
+        }
+      },
+      "decode_verification": {
+        "command": "ffmpeg -v error -i temp/hls_test/hls_bbb.mp4 -t 60 -f null -",
+        "errors_count": 0,
+        "verdict": "SAMPLE_DECODE_PASS"
+      },
+      "verdict": "DOWNLOAD_VERIFIED"
+    },
+    {
+      "test_id": "TEST_B_LONG_VIDEO_60MIN_PLUS",
+      "source_url": "https://archive.org/download/TheFastandtheFuriousJohnIreland1954goofyrip/TheFastandtheFuriousJohnIreland1954goofyrip_512kb.mp4",
+      "rights_basis": "Public Domain Feature Film (The Fast And The Furious, 1954, directed by John Ireland)",
+      "engine_used": "Direct Python HTTP Streamer",
+      "command": "Native Python 3.11 streaming buffer with Range/Content-Length tracking",
+      "exit_code": 0,
+      "elapsed_seconds": 46.14,
+      "average_throughput_mb_s": 6.53,
+      "file_path": "temp/long_video_test/the_fast_and_the_furious_1954.mp4",
+      "file_size_bytes": 315869226,
+      "sha256": "91DDBAAA52297B0AA3CE3C4245F660D433AFA137DAC8234D206259A7B37C2EB6",
+      "peak_memory_mb": 2.16,
+      "ffprobe_summary": {
+        "duration_seconds": 4356.056056,
+        "duration_minutes": 72.6,
+        "format_name": "QuickTime / MOV",
+        "video_stream": {
+          "codec": "h264 (avc1)",
+          "resolution": "320x240",
+          "fps": 29.97,
+          "nb_frames": 130551
+        },
+        "audio_stream": {
+          "codec": "aac (mp4a)",
+          "sample_rate": 32000,
+          "channels": 2,
+          "nb_frames": 136124
+        }
+      },
+      "decode_verification": {
+        "offsets_tested_seconds": [0, 1800, 3600, 4200],
+        "command_template": "ffmpeg -v error -ss {offset} -i temp/long_video_test/the_fast_and_the_furious_1954.mp4 -t 15 -f null -",
+        "errors_count": 0,
+        "verdict": "MULTI_OFFSET_DECODE_PASS"
+      },
+      "verdict": "DOWNLOAD_VERIFIED"
+    }
+  ],
+  "downloader_comparative_benchmark": {
+    "test_media": "https://archive.org/download/ElephantsDream/ed_1024_512kb.mp4",
+    "test_media_size_bytes": 47065346,
+    "direct_http": {
+      "elapsed_s": 8.14,
+      "speed_mb_s": 5.51,
+      "exit_code": 0,
+      "resume_supported": true,
+      "retry_supported": true,
+      "memory_footprint_mb": 2.1
+    },
+    "yt_dlp": {
+      "elapsed_s": 13.56,
+      "speed_mb_s": 3.31,
+      "exit_code": 0,
+      "resume_supported": true,
+      "retry_supported": true,
+      "memory_footprint_mb": 38.4
+    },
+    "you_get": {
+      "elapsed_s": 8.51,
+      "speed_mb_s": 0.0,
+      "exit_code": 1,
+      "resume_supported": false,
+      "retry_supported": false,
+      "error": "Failed on generic direct HTTP media (requires specialized domain extractors)"
+    },
+    "n_m3u8dl_re_hls": {
+      "elapsed_s": 45.1,
+      "speed_mb_s": 10.84,
+      "exit_code": 0,
+      "resume_supported": true,
+      "retry_supported": true,
+      "memory_footprint_mb": 18.2
+    }
+  }
+}

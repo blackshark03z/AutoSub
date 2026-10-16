@@ -3,7 +3,8 @@
 !.env.example
 secrets/
 input/
-evidence/
+evidence/*
+!evidence/download_verification_results.json
 data/
 logs/
 models/

@@ -53,8 +53,18 @@ def main(argv: list[str] | None = None) -> int:
         authorized_access_confirmed=args.confirm_authorized,
     )
 
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     indent = 2 if args.pretty else None
-    print(json.dumps(result.to_dict(), indent=indent, ensure_ascii=False))
+    output_str = json.dumps(result.to_dict(), indent=indent, ensure_ascii=False)
+    try:
+        print(output_str)
+    except UnicodeEncodeError:
+        print(json.dumps(result.to_dict(), indent=indent, ensure_ascii=True))
 
     # Exit code: 0 for DISCOVERABLE, 2 for DRM/AUTH/GEO, 1 for errors
     if result.status == "DISCOVERABLE":

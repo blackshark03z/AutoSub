@@ -123,7 +123,17 @@ def safe_http_fetch(
             def redirect_request(self, req, fp, code, msg, hdrs, newurl):
                 return None
 
-        opener = urllib.request.build_opener(NoRedirectHandler)
+        handlers = [NoRedirectHandler]
+        if current_url.lower().startswith("https:"):
+            try:
+                import certifi
+                import ssl
+                ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+                handlers.append(urllib.request.HTTPSHandler(context=ssl_ctx))
+            except Exception:
+                pass
+
+        opener = urllib.request.build_opener(*handlers)
         try:
             with opener.open(req, timeout=timeout_seconds) as response:
                 status_code = response.status
