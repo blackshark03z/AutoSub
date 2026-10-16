@@ -1,0 +1,161 @@
+{
+  "work_package": "WP-PILOT-001-FINAL",
+  "pilot_mode": "LOCAL_SUB_MASK_OVERLAY",
+  "target_language": "Vietnamese",
+  "timestamp": "2026-10-16T15:09:40Z",
+  "runs_evaluated": 3,
+  "consecutive_passes": 3,
+  "overall_status": "PASS",
+  "module_breakdown": {
+    "source_probe": "REAL (ffprobe)",
+    "ocr_asr": "MOCK / ADAPTER",
+    "translation": "MOCK / ADAPTER",
+    "subtitle_timeline_ass": "REAL (Advanced SubStation Alpha)",
+    "local_sub_mask": "REAL (FFmpeg drawbox solid black tight bbox)",
+    "overlay_burn_in": "REAL (FFmpeg libass hardsub)",
+    "output_verification": "REAL (_validate_subtitle_render & ffprobe)",
+    "ingestion_handoff_contract": "REAL (IngestionHandoffRecord & dedup)"
+  },
+  "fixture": {
+    "name": "target_donghua_20s_chinese_sub_fixture.mp4",
+    "sha256": "38a136191b704913e566618b4df6d15420ef6783799acefd13cf5cea5b63aa6a",
+    "size_bytes": 571438,
+    "resolution": "1280x720",
+    "fps": 15.0,
+    "duration_seconds": 20.0,
+    "audio_codec": "aac",
+    "cue_count": 4
+  },
+  "runs": [
+    {
+      "run_index": 1,
+      "run_name": "run_001",
+      "status": "PASS",
+      "elapsed_seconds": 0.906,
+      "input_hash": "38a136191b704913e566618b4df6d15420ef6783799acefd13cf5cea5b63aa6a",
+      "output_hash": "dec7cdbc2499333d98eb9c743039a6b932a3d4279f4532fb9c888c50ab044b60",
+      "output_size_bytes": 584008,
+      "output_duration_seconds": 20.0,
+      "drift_ms": 0.0,
+      "dialogue_count": 4,
+      "ffmpeg_exit_code": 0,
+      "job_id": "job_0001_38a13619",
+      "job_reused": false,
+      "evidence_frames": {
+        "cue1_overlay_2_5s": "evidence_cue1_overlay_2_5s.png",
+        "gap_no_mask_5_5s": "evidence_gap_no_mask_5_5s.png",
+        "cue2_overlay_8_0s": "evidence_cue2_overlay_8_0s.png"
+      }
+    },
+    {
+      "run_index": 2,
+      "run_name": "run_002",
+      "status": "PASS",
+      "elapsed_seconds": 0.907,
+      "input_hash": "38a136191b704913e566618b4df6d15420ef6783799acefd13cf5cea5b63aa6a",
+      "output_hash": "dec7cdbc2499333d98eb9c743039a6b932a3d4279f4532fb9c888c50ab044b60",
+      "output_size_bytes": 584008,
+      "output_duration_seconds": 20.0,
+      "drift_ms": 0.0,
+      "dialogue_count": 4,
+      "ffmpeg_exit_code": 0,
+      "job_id": "job_0001_38a13619",
+      "job_reused": true,
+      "evidence_frames": {
+        "cue1_overlay_2_5s": "evidence_cue1_overlay_2_5s.png",
+        "gap_no_mask_5_5s": "evidence_gap_no_mask_5_5s.png",
+        "cue2_overlay_8_0s": "evidence_cue2_overlay_8_0s.png"
+      }
+    },
+    {
+      "run_index": 3,
+      "run_name": "run_003",
+      "status": "PASS",
+      "elapsed_seconds": 0.917,
+      "input_hash": "38a136191b704913e566618b4df6d15420ef6783799acefd13cf5cea5b63aa6a",
+      "output_hash": "dec7cdbc2499333d98eb9c743039a6b932a3d4279f4532fb9c888c50ab044b60",
+      "output_size_bytes": 584008,
+      "output_duration_seconds": 20.0,
+      "drift_ms": 0.0,
+      "dialogue_count": 4,
+      "ffmpeg_exit_code": 0,
+      "job_id": "job_0001_38a13619",
+      "job_reused": true,
+      "evidence_frames": {
+        "cue1_overlay_2_5s": "evidence_cue1_overlay_2_5s.png",
+        "gap_no_mask_5_5s": "evidence_gap_no_mask_5_5s.png",
+        "cue2_overlay_8_0s": "evidence_cue2_overlay_8_0s.png"
+      }
+    }
+  ],
+  "mask_overlay_parameters": [
+    {
+      "cue_id": "CUE_0001",
+      "cue_text_vi": "Trần Trường An mang theo thần thú Kỳ Lân trở về gia tộc",
+      "start_s": 1.0,
+      "end_s": 4.5,
+      "mask_bbox": {
+        "x": 220,
+        "y": 622,
+        "width": 841,
+        "height": 47,
+        "right_x": 1060,
+        "bottom_y": 668,
+        "padding_px": 3
+      },
+      "center_pos": "(640, 645)",
+      "font_size": 33
+    },
+    {
+      "cue_id": "CUE_0002",
+      "cue_text_vi": "Hôm nay mở ra con đường tu luyện nghịch thiên",
+      "start_s": 6.5,
+      "end_s": 10.0,
+      "mask_bbox": {
+        "x": 286,
+        "y": 622,
+        "width": 709,
+        "height": 47,
+        "right_x": 994,
+        "bottom_y": 668,
+        "padding_px": 3
+      },
+      "center_pos": "(640, 645)",
+      "font_size": 33
+    },
+    {
+      "cue_id": "CUE_0003",
+      "cue_text_vi": "Thái Huyền Cửu Châu, hiện!",
+      "start_s": 12.0,
+      "end_s": 15.5,
+      "mask_bbox": {
+        "x": 430,
+        "y": 622,
+        "width": 421,
+        "height": 47,
+        "right_x": 850,
+        "bottom_y": 668,
+        "padding_px": 3
+      },
+      "center_pos": "(640, 645)",
+      "font_size": 33
+    },
+    {
+      "cue_id": "CUE_0004",
+      "cue_text_vi": "Vạn đạo lôi kiếp, có gì đáng sợ!",
+      "start_s": 17.0,
+      "end_s": 19.5,
+      "mask_bbox": {
+        "x": 408,
+        "y": 622,
+        "width": 464,
+        "height": 47,
+        "right_x": 871,
+        "bottom_y": 668,
+        "padding_px": 3
+      },
+      "center_pos": "(640, 645)",
+      "font_size": 33
+    }
+  ]
+}

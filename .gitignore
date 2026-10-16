@@ -3,7 +3,7 @@
 !.env.example
 secrets/
 input/
-evidence/
+/evidence/
 data/
 logs/
 models/
@@ -48,3 +48,5 @@ build_temp/
 temp/
 *.exe
 *.zip
+scratch/
+

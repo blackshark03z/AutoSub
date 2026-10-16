@@ -1041,7 +1041,7 @@ def _validate_subtitle_render(
         searchable += " " + filter_script_path.read_text(encoding="utf-8")
     if "subtitles=" not in searchable:
         raise ValueError("Subtitle render validation failed: render command did not include subtitle burn-in.")
-    if expect_masked and "delogo=" not in searchable:
+    if expect_masked and "delogo=" not in searchable and "drawbox=" not in searchable:
         raise ValueError("Subtitle render validation failed: render command did not include source subtitle suppression.")
     if sha256_file(source) == sha256_file(output):
         raise ValueError("Subtitle render validation failed: output video is byte-identical to input.")

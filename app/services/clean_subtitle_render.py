@@ -34,6 +34,8 @@ def build_source_replacement_plan(
     *,
     font_path: Path,
     font_size: int | None = None,
+    mode: str = "legacy",
+    target_language: str = "English",
 ) -> dict[str, Any]:
     media = media_summary(source_path)
     output_width = int(media["video"].get("width") or 0) or DETECTION_WIDTH
@@ -66,15 +68,27 @@ def build_source_replacement_plan(
             cue_end = end_ms / 1000.0
             cue_segment_id = str(cue.get("cue_id") or cue.get("id") or f"segment_{len(layouts) + 1:04d}")
             interval = nearest_source_interval(intervals, cue_start, cue_end)
-            layout = english_layout_for_interval(
-                interval,
-                text,
-                font,
-                output_width=output_width,
-                output_height=output_height,
-                cue_start=cue_start,
-                cue_end=cue_end,
-            )
+            if mode == "LOCAL_SUB_MASK_OVERLAY":
+                layout = local_sub_overlay_layout_for_interval(
+                    interval,
+                    text,
+                    font,
+                    output_width=output_width,
+                    output_height=output_height,
+                    cue_start=cue_start,
+                    cue_end=cue_end,
+                    target_language=target_language,
+                )
+            else:
+                layout = english_layout_for_interval(
+                    interval,
+                    text,
+                    font,
+                    output_width=output_width,
+                    output_height=output_height,
+                    cue_start=cue_start,
+                    cue_end=cue_end,
+                )
             layout["segment_id"] = cue_segment_id
             layout["source_interval_id"] = interval["segment_id"]
             layouts.append(layout)
@@ -122,9 +136,9 @@ def detect_source_caption_intervals(
             frame = read_frame(cap, time_s, output_width, output_height)
         except RuntimeError:
             break
-        bbox, _ = detect_source_subtitle_bbox(frame, output_width=output_width, output_height=output_height)
+        bbox, metrics = detect_source_subtitle_bbox(frame, output_width=output_width, output_height=output_height)
         if bbox:
-            detections.append({"time": round(time_s, 3), "bbox": bbox})
+            detections.append({"time": round(time_s, 3), "bbox": bbox, "metrics": metrics})
         time_s += sample_step
 
     groups: list[list[dict[str, Any]]] = []
@@ -146,6 +160,10 @@ def detect_source_caption_intervals(
         mask = source_region_union([raw], width=output_width, height=output_height, padding_x=pad_x, padding_y=pad_y)
         base_start = max(0.0, group[0]["time"] - sample_step / 2)
         base_end = min(duration_seconds, group[-1]["time"] + sample_step / 2)
+        group_confs = [item["metrics"].get("confidence", 0.95) for item in group if "metrics" in item]
+        avg_conf = statistics.mean(group_confs) if group_confs else 0.95
+        group_text_hs = [item["metrics"].get("text_height") for item in group if item.get("metrics", {}).get("text_height")]
+        avg_text_h = round(statistics.mean(group_text_hs)) if group_text_hs else (raw["bottom_y"] - raw["top_y"] + 1)
         intervals.append(
             {
                 "segment_id": f"source_caption_{index:04d}",
@@ -162,15 +180,28 @@ def detect_source_caption_intervals(
                 "source_bbox": raw,
                 "source_only": True,
                 "detection_sample_count": len(group),
+                "confidence": round(avg_conf, 2),
+                "text_height": avg_text_h,
+                "status": "CONFIRMED" if avg_conf >= 0.60 else "SUBTITLE_REGION_UNCONFIRMED",
             }
         )
     return intervals
 
 
-def detect_source_subtitle_bbox(frame_bgr: np.ndarray, *, output_width: int, output_height: int) -> tuple[dict[str, int] | None, dict[str, int]]:
-    detection_frame = cv2.resize(frame_bgr, (DETECTION_WIDTH, DETECTION_HEIGHT))
-    roi_y0, roi_y1 = 555, 690
-    roi_x0, roi_x1 = 160, 1120
+def detect_source_subtitle_bbox(frame_bgr: np.ndarray, *, output_width: int, output_height: int) -> tuple[dict[str, int] | None, dict[str, Any]]:
+    is_portrait = output_width < output_height
+    if is_portrait:
+        det_w, det_h = 720, 1280
+        roi_y0 = int(round(det_h * 0.65))
+        roi_y1 = int(round(det_h * 0.90))
+        roi_x0 = int(round(det_w * 0.08))
+        roi_x1 = int(round(det_w * 0.92))
+    else:
+        det_w, det_h = DETECTION_WIDTH, DETECTION_HEIGHT
+        roi_y0, roi_y1 = 555, 690
+        roi_x0, roi_x1 = 160, 1120
+
+    detection_frame = cv2.resize(frame_bgr, (det_w, det_h))
     roi = detection_frame[roi_y0:roi_y1, roi_x0:roi_x1]
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -184,14 +215,25 @@ def detect_source_subtitle_bbox(frame_bgr: np.ndarray, *, output_width: int, out
         x, y, w, h, area = stats[label]
         abs_x = int(x + roi_x0)
         abs_y = int(y + roi_y0)
-        if area < 8 or h < 3 or abs_y < 558 or abs_y > 681:
+        if area < 8 or h < 3:
             continue
+        if is_portrait:
+            if abs_y < roi_y0 + 3 or abs_y > roi_y1 - 3:
+                continue
+        else:
+            if abs_y < 558 or abs_y > 681:
+                continue
         components.append((abs_x, abs_y, int(w), int(h), int(area)))
     if not components:
-        return None, {"component_count": 0, "pixel_count": int(mask.sum() // 255)}
+        return None, {
+            "component_count": 0,
+            "pixel_count": int(mask.sum() // 255),
+            "confidence": 0.0,
+            "status": "SUBTITLE_REGION_UNCONFIRMED",
+        }
 
-    scale_x = output_width / DETECTION_WIDTH
-    scale_y = output_height / DETECTION_HEIGHT
+    scale_x = output_width / det_w
+    scale_y = output_height / det_h
     bbox = {
         "left_x": round(min(x for x, _, _, _, _ in components) * scale_x),
         "top_y": round(min(y for _, y, _, _, _ in components) * scale_y),
@@ -200,11 +242,33 @@ def detect_source_subtitle_bbox(frame_bgr: np.ndarray, *, output_width: int, out
     }
     width = bbox["right_x"] - bbox["left_x"] + 1
     height = bbox["bottom_y"] - bbox["top_y"] + 1
-    min_width = max(100, round(output_width * 0.06))
-    min_height = max(24, round(output_height * 0.02))
+    min_width = max(80 if is_portrait else 100, round(output_width * (0.08 if is_portrait else 0.06)))
+    min_height = max(18 if is_portrait else 24, round(output_height * (0.015 if is_portrait else 0.02)))
+
+    char_heights = [int(round(h * scale_y)) for _, _, _, h, _ in components if h >= 6]
+    text_height = int(round(statistics.median(char_heights))) if char_heights else height
+
+    comp_score = min(1.0, len(components) / 3.0)
+    y_tops = [y for _, y, _, _, _ in components]
+    y_var = statistics.pstdev(y_tops) if len(y_tops) > 1 else 0.0
+    align_score = max(0.5, 1.0 - (y_var / max(15.0, float(height))))
+    confidence = round(0.5 * comp_score + 0.5 * align_score, 2)
+
     if width < min_width or height < min_height:
-        return None, {"component_count": len(components), "pixel_count": int(mask.sum() // 255), "rejected": "bbox_too_small"}
-    return bbox, {"component_count": len(components), "pixel_count": int(mask.sum() // 255)}
+        return None, {
+            "component_count": len(components),
+            "pixel_count": int(mask.sum() // 255),
+            "confidence": min(0.4, confidence),
+            "rejected": "bbox_too_small",
+            "status": "SUBTITLE_REGION_UNCONFIRMED",
+        }
+    return bbox, {
+        "component_count": len(components),
+        "pixel_count": int(mask.sum() // 255),
+        "confidence": confidence,
+        "text_height": text_height,
+        "status": "CONFIRMED" if confidence >= 0.60 else "SUBTITLE_REGION_UNCONFIRMED",
+    }
 
 
 def english_layout_for_interval(
@@ -255,6 +319,154 @@ def english_layout_for_interval(
         "source_baseline_zone": [max(0, bbox["bottom_y"] - 12), bbox["bottom_y"]],
         "plate_area_frame_percent": round(plate_width * plate_height * 100 / (output_width * output_height), 4),
         "clipping": plate_x <= 0 or (plate_x + plate_width - 1) >= output_width - 1 or plate_y <= 0 or (plate_y + plate_height - 1) >= output_height - 1,
+    }
+
+
+def _font_with_size(font: ImageFont.FreeTypeFont, size: int) -> ImageFont.FreeTypeFont:
+    if getattr(font, "size", None) == size:
+        return font
+    font_path = getattr(font, "path", None)
+    if font_path and Path(font_path).exists():
+        try:
+            return ImageFont.truetype(str(font_path), size)
+        except Exception:
+            pass
+    try:
+        return ImageFont.truetype("arial.ttf", size)
+    except Exception:
+        return font
+
+
+def local_sub_overlay_layout_for_interval(
+    interval: dict[str, Any],
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    *,
+    output_width: int,
+    output_height: int,
+    cue_start: float | None = None,
+    cue_end: float | None = None,
+    target_language: str = "Vietnamese",
+) -> dict[str, Any]:
+    """Calculate tight mask bbox and equivalent-size overlay positioned exactly on source subtitle."""
+    bbox = interval.get("source_bbox")
+    confidence = interval.get("confidence", 1.0)
+    
+    # Step 5 - Detection Failure:
+    # If no confirmed subtitle region with good confidence, fail-safe:
+    # Do not guess wide bbox, do not black out bottom of video.
+    if bbox is None or interval.get("status") == "SUBTITLE_REGION_UNCONFIRMED" or confidence < 0.60:
+        return {
+            "overlay_mode": "LOCAL_SUB_MASK_OVERLAY",
+            "status": "SUBTITLE_REGION_UNCONFIRMED",
+            "render_text": text,
+            "center_x": output_width // 2,
+            "anchor_y": round(output_height * LOWER_SAFE_ANCHOR_RATIO),
+            "start_time": round(cue_start if cue_start is not None else interval.get("start_time", 0.0), 3),
+            "end_time": round(cue_end if cue_end is not None else interval.get("end_time", 0.0), 3),
+            "line_count": 1,
+            "font_size": font.size,
+            "text_width": 0,
+            "text_height": 0,
+            "mask": None,
+            "plate": None,
+            "confidence": confidence,
+            "review_reason": "source_subtitle_region_unconfirmed",
+        }
+
+    orig_w = bbox["right_x"] - bbox["left_x"] + 1
+    orig_h = bbox["bottom_y"] - bbox["top_y"] + 1
+    orig_cx = (bbox["left_x"] + bbox["right_x"]) // 2
+    orig_cy = (bbox["top_y"] + bbox["bottom_y"]) // 2
+
+    # Step 3 - Equivalent font size based on original Chinese character height (within ~10%)
+    source_char_h = interval.get("text_height") or orig_h
+    target_font_size = max(18, round(source_char_h * 0.98))
+    active_font = _font_with_size(font, target_font_size)
+
+    # Step 4 - Handling Vietnamese translation:
+    # Priority:
+    # 1. Concise, natural translation
+    # 2. Wrap into two lines when appropriate
+    # 3. Slight font reduction (up to 10%) if needed
+    # 4. If still doesn't fit, mark NEEDS_REVIEW
+    # Never expand into a giant black band!
+    max_safe_width = int(output_width * 0.88)
+    single_box = multiline_text_box(text, active_font)
+    text_w = single_box["width"]
+    text_h = single_box["height"]
+    render_text = text
+    line_count = 1
+    status = "PASS"
+    review_reason = None
+
+    target_fit_width = max(orig_w * 1.15, 320)
+    if text_w > target_fit_width and " " in text:
+        wrapped = wrap_subtitle_text(text, active_font, max(orig_w, int(output_width * 0.70)))
+        wrap_box = multiline_text_box(wrapped, active_font)
+        if wrap_box["width"] <= max_safe_width and wrapped.count("\n") <= 1:
+            render_text = wrapped
+            text_w = wrap_box["width"]
+            text_h = wrap_box["height"]
+            line_count = wrapped.count("\n") + 1
+        else:
+            reduced_size = max(16, round(target_font_size * 0.90))
+            reduced_font = _font_with_size(font, reduced_size)
+            reduced_wrapped = wrap_subtitle_text(text, reduced_font, max_safe_width)
+            reduced_box = multiline_text_box(reduced_wrapped, reduced_font)
+            if reduced_box["width"] <= max_safe_width and reduced_wrapped.count("\n") <= 1:
+                render_text = reduced_wrapped
+                active_font = reduced_font
+                target_font_size = reduced_size
+                text_w = reduced_box["width"]
+                text_h = reduced_box["height"]
+                line_count = reduced_wrapped.count("\n") + 1
+            else:
+                status = "NEEDS_REVIEW"
+                review_reason = "translation_exceeds_safe_width"
+    elif text_w > max_safe_width:
+        status = "NEEDS_REVIEW"
+        review_reason = "translation_exceeds_safe_width"
+
+    # Step 2 - Mask:
+    # Padding: 2-4px scaled at 720p
+    pad_px = max(2, min(5, round(3.0 * (output_height / 720.0))))
+    mask_w = min(max_safe_width, max(orig_w, text_w) + (2 * pad_px))
+    mask_h = max(orig_h, text_h) + (2 * pad_px)
+    mask_x = max(0, min(output_width - mask_w, orig_cx - mask_w // 2))
+    mask_y = max(0, min(output_height - mask_h, orig_cy - mask_h // 2))
+
+    center_x = mask_x + mask_w // 2
+    center_y = mask_y + mask_h // 2
+
+    mask_dict = {
+        "x": mask_x,
+        "y": mask_y,
+        "width": mask_w,
+        "height": mask_h,
+        "right_x": mask_x + mask_w - 1,
+        "bottom_y": mask_y + mask_h - 1,
+        "padding_px": pad_px,
+    }
+
+    return {
+        "overlay_mode": "LOCAL_SUB_MASK_OVERLAY",
+        "status": status,
+        "review_reason": review_reason,
+        "render_text": render_text,
+        "center_x": center_x,
+        "anchor_y": center_y,
+        "start_time": round(cue_start if cue_start is not None else interval["start_time"], 3),
+        "end_time": round(cue_end if cue_end is not None else interval["end_time"], 3),
+        "line_count": line_count,
+        "font_size": target_font_size,
+        "text_width": text_w,
+        "text_height": text_h,
+        "mask": mask_dict,
+        "plate": mask_dict,
+        "source_bbox": bbox,
+        "confidence": confidence,
+        "mask_area_frame_percent": round(mask_w * mask_h * 100 / (output_width * output_height), 4),
     }
 
 
@@ -323,7 +535,10 @@ def write_clean_subtitles_ass(
         end_ms = int(cue.get("end_ms") or 0)
         if end_ms <= start_ms:
             continue
-        override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad1\\pos({layout['center_x']},{layout['anchor_y']})}}"
+        if layout.get("overlay_mode") == "LOCAL_SUB_MASK_OVERLAY":
+            override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad0\\pos({layout['center_x']},{layout['anchor_y']})}}"
+        else:
+            override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad1\\pos({layout['center_x']},{layout['anchor_y']})}}"
         events.append(
             "Dialogue: 2,"
             f"{format_ass_timestamp(start_ms)},{format_ass_timestamp(end_ms)},"
@@ -338,7 +553,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,{font_size},&H00FFFFFF,&H00000000,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,5,60,60,0,1
+Style: Default,Arial,{font_size},&H00FFFFFF,&H00000000,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,5,60,60,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -353,9 +568,11 @@ def render_source_replacement_video(
     output_path: Path,
     intervals: list[dict[str, Any]],
     layouts: list[dict[str, Any]],
+    *,
+    mode: str = "legacy",
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    filter_value = build_source_replacement_filter(intervals, layouts, ass_path)
+    filter_value = build_source_replacement_filter(intervals, layouts, ass_path, mode=mode)
     temp_output = output_path.with_suffix(".tmp.mp4")
     subprocess.run(
         [
@@ -389,7 +606,11 @@ def build_source_replacement_filter(
     intervals: list[dict[str, Any]],
     layouts: list[dict[str, Any]],
     ass_path: Path,
+    *,
+    mode: str = "legacy",
 ) -> str:
+    if mode == "LOCAL_SUB_MASK_OVERLAY" or any(l.get("overlay_mode") == "LOCAL_SUB_MASK_OVERLAY" for l in layouts):
+        return build_local_sub_mask_overlay_filter(intervals, layouts, ass_path)
     ass = _ffmpeg_filter_path(ass_path)
     filters = []
     intervals_by_id = {str(interval.get("segment_id") or ""): interval for interval in intervals}
@@ -409,12 +630,41 @@ def build_source_replacement_filter(
             f"show=0:enable='{enable}'"
         )
     for layout in layouts:
-        plate = layout["plate"]
+        plate = layout.get("plate")
+        if not plate:
+            continue
         enable = f"between(t\\,{layout['start_time']:.3f}\\,{layout['end_time']:.3f})"
         filters.append(
             "drawbox="
             f"x={plate['x']}:y={plate['y']}:w={plate['width']}:h={plate['height']}:"
             f"color=black@{PLATE_OPACITY:.3f}:t=fill:enable='{enable}'"
+        )
+    filters.append(f"subtitles='{ass}'")
+    return ",".join(filters)
+
+
+def build_local_sub_mask_overlay_filter(
+    intervals: list[dict[str, Any]],
+    layouts: list[dict[str, Any]],
+    ass_path: Path,
+) -> str:
+    """Build filter string for LOCAL_SUB_MASK_OVERLAY.
+    Uses ONLY solid black drawbox over the exact detected Chinese sub bbox,
+    with no delogo and no lower-third independent plate.
+    """
+    ass = _ffmpeg_filter_path(ass_path)
+    filters = []
+    for layout in layouts:
+        if layout.get("status") == "SUBTITLE_REGION_UNCONFIRMED":
+            continue
+        mask = layout.get("mask") or layout.get("plate")
+        if not mask:
+            continue
+        enable = f"between(t\\,{layout['start_time']:.3f}\\,{layout['end_time']:.3f})"
+        filters.append(
+            f"drawbox="
+            f"x={mask['x']}:y={mask['y']}:w={mask['width']}:h={mask['height']}:"
+            f"color=black@1.0:t=fill:enable='{enable}'"
         )
     filters.append(f"subtitles='{ass}'")
     return ",".join(filters)
