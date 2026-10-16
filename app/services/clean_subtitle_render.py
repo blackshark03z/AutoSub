@@ -401,94 +401,107 @@ def local_sub_overlay_layout_for_interval(
     }
 
     # Step 3 - Equivalent font size based on original Chinese character height (within ~10-15%)
-    source_char_h = interval.get("text_height") or orig_h
+    line_cnt = interval.get("line_count") or (2 if orig_h >= max(48, round(output_height * 0.07)) else 1)
+    source_char_h = interval.get("text_height")
+    if not source_char_h or source_char_h > (orig_h if line_cnt == 1 else orig_h // line_cnt + 6):
+        source_char_h = orig_h if line_cnt == 1 else round(orig_h / max(1, line_cnt))
     target_font_size = max(18, round(source_char_h * 0.96))
-    active_font = _font_with_size(font, target_font_size)
-
-    # Step 4 - Handling Vietnamese translation:
-    # Priority:
-    # 1. Concise, natural translation
-    # 2. Wrap into at most two lines when appropriate
-    # 3. Slight font reduction (up to ~12%) if needed
-    # 4. If still doesn't fit within source mask width, mark NEEDS_REVIEW
-    # NEVER expand mask beyond source_bbox + pad_px!
-    single_box = multiline_text_box(text, active_font)
-    text_w = single_box["width"]
-    text_h = single_box["height"]
-    render_text = text
-    line_count = max(1, text.count("\n") + 1)
-    status = "PASS"
-    review_reason = None
+    min_font_size = max(16, round(target_font_size * 0.88))
 
     available_w = mask_w
-    if text_w > available_w:
+    available_h = mask_h
+
+    # Step 4 - Layout selection according to Owner rules:
+    # 1. Ưu tiên một dòng khi đủ chỗ ở cỡ chữ tương đương.
+    # 2. Cho phép hai dòng nếu vùng phụ đề nguồn và bố cục thực tế chứa được hai dòng một cách hợp lý.
+    # 3. Nếu chữ Việt vượt giới hạn bố cục, không tự động nới mask.
+    # 4. Nếu không thể giữ cỡ chữ, vị trí và độ dễ đọc theo yêu cầu Owner, trả NEEDS_REVIEW.
+    chosen_layout = None
+
+    # Priority 1: One-line layout (only if text has no explicit newline)
+    if "\n" not in text:
+        for sz in range(target_font_size, min_font_size - 1, -1):
+            f = _font_with_size(font, sz)
+            box = multiline_text_box(text, f)
+            if box["width"] <= available_w and box["height"] <= available_h:
+                chosen_layout = {
+                    "status": "PASS",
+                    "review_reason": None,
+                    "render_text": text,
+                    "font_size": sz,
+                    "line_count": 1,
+                    "text_width": box["width"],
+                    "text_height": box["height"],
+                }
+                break
+
+    # Priority 2: Two-line layout (if one-line didn't fit, or text already has explicit newline)
+    if chosen_layout is None:
+        for sz in range(target_font_size, min_font_size - 1, -1):
+            f = _font_with_size(font, sz)
+            if "\n" in text:
+                cand_text = text
+            elif " " in text:
+                cand_text = wrap_subtitle_text(text, f, available_w)
+            else:
+                cand_text = text
+            if cand_text.count("\n") == 1:
+                box = multiline_text_box(cand_text, f)
+                if box["width"] <= available_w and box["height"] <= available_h:
+                    chosen_layout = {
+                        "status": "PASS",
+                        "review_reason": None,
+                        "render_text": cand_text,
+                        "font_size": sz,
+                        "line_count": 2,
+                        "text_width": box["width"],
+                        "text_height": box["height"],
+                    }
+                    break
+
+    # Priority 3: Neither fits within mask limits at allowed font sizes -> NEEDS_REVIEW
+    if chosen_layout is None:
+        f_min = _font_with_size(font, min_font_size)
         if "\n" in text:
-            # Multi-line text provided; try slight font reduction
-            reduced_size = max(16, round(target_font_size * 0.88))
-            reduced_font = _font_with_size(font, reduced_size)
-            reduced_box = multiline_text_box(text, reduced_font)
-            if reduced_box["width"] <= available_w:
-                render_text = text
-                active_font = reduced_font
-                target_font_size = reduced_size
-                text_w = reduced_box["width"]
-                text_h = reduced_box["height"]
-                line_count = max(1, text.count("\n") + 1)
-            else:
-                status = "NEEDS_REVIEW"
-                review_reason = "translation_exceeds_source_mask_width"
-                render_text = text
-                active_font = reduced_font
-                target_font_size = reduced_size
-                text_w = reduced_box["width"]
-                text_h = reduced_box["height"]
-                line_count = max(1, text.count("\n") + 1)
+            fallback_text = text
         elif " " in text:
-            wrapped = wrap_subtitle_text(text, active_font, available_w)
-            wrap_box = multiline_text_box(wrapped, active_font)
-            if wrap_box["width"] <= available_w and wrapped.count("\n") <= 1:
-                render_text = wrapped
-                text_w = wrap_box["width"]
-                text_h = wrap_box["height"]
-                line_count = wrapped.count("\n") + 1
-            else:
-                reduced_size = max(16, round(target_font_size * 0.88))
-                reduced_font = _font_with_size(font, reduced_size)
-                reduced_wrapped = wrap_subtitle_text(text, reduced_font, available_w)
-                reduced_box = multiline_text_box(reduced_wrapped, reduced_font)
-                if reduced_box["width"] <= available_w and reduced_wrapped.count("\n") <= 1:
-                    render_text = reduced_wrapped
-                    active_font = reduced_font
-                    target_font_size = reduced_size
-                    text_w = reduced_box["width"]
-                    text_h = reduced_box["height"]
-                    line_count = reduced_wrapped.count("\n") + 1
-                else:
-                    status = "NEEDS_REVIEW"
-                    review_reason = "translation_exceeds_source_mask_width"
-                    render_text = reduced_wrapped
-                    active_font = reduced_font
-                    target_font_size = reduced_size
-                    text_w = reduced_box["width"]
-                    text_h = reduced_box["height"]
-                    line_count = reduced_wrapped.count("\n") + 1
+            fallback_text = wrap_subtitle_text(text, f_min, available_w)
         else:
-            status = "NEEDS_REVIEW"
-            review_reason = "translation_exceeds_source_mask_width"
+            fallback_text = text
+        fallback_box = multiline_text_box(fallback_text, f_min)
+
+        w_overflow = fallback_box["width"] > available_w
+        h_overflow = fallback_box["height"] > available_h
+        if w_overflow and h_overflow:
+            reason = "translation_exceeds_layout_boundary"
+        elif h_overflow:
+            reason = "translation_exceeds_source_mask_height"
+        else:
+            reason = "translation_exceeds_source_mask_width"
+
+        chosen_layout = {
+            "status": "NEEDS_REVIEW",
+            "review_reason": reason,
+            "render_text": fallback_text,
+            "font_size": min_font_size,
+            "line_count": max(1, fallback_text.count("\n") + 1),
+            "text_width": fallback_box["width"],
+            "text_height": fallback_box["height"],
+        }
 
     return {
         "overlay_mode": "LOCAL_SUB_MASK_OVERLAY",
-        "status": status,
-        "review_reason": review_reason,
-        "render_text": render_text,
+        "status": chosen_layout["status"],
+        "review_reason": chosen_layout["review_reason"],
+        "render_text": chosen_layout["render_text"],
         "center_x": center_x,
         "anchor_y": center_y,
         "start_time": round(cue_start if cue_start is not None else interval["start_time"], 3),
         "end_time": round(cue_end if cue_end is not None else interval["end_time"], 3),
-        "line_count": line_count,
-        "font_size": target_font_size,
-        "text_width": text_w,
-        "text_height": text_h,
+        "line_count": chosen_layout["line_count"],
+        "font_size": chosen_layout["font_size"],
+        "text_width": chosen_layout["text_width"],
+        "text_height": chosen_layout["text_height"],
         "mask": mask_dict,
         "plate": mask_dict,
         "source_bbox": bbox,
@@ -565,7 +578,7 @@ def write_clean_subtitles_ass(
         if end_ms <= start_ms:
             continue
         if layout.get("overlay_mode") == "LOCAL_SUB_MASK_OVERLAY":
-            if layout.get("status") == "SUBTITLE_REGION_UNCONFIRMED":
+            if layout.get("status") in {"SUBTITLE_REGION_UNCONFIRMED", "NEEDS_REVIEW"}:
                 continue
             override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad0\\pos({layout['center_x']},{layout['anchor_y']})}}"
         else:
@@ -606,6 +619,8 @@ def render_source_replacement_video(
     if mode == "LOCAL_SUB_MASK_OVERLAY":
         if any(l.get("status") == "SUBTITLE_REGION_UNCONFIRMED" for l in layouts):
             raise ValueError("Cannot render video: SUBTITLE_REGION_UNCONFIRMED detected for one or more cues.")
+        if any(l.get("status") == "NEEDS_REVIEW" for l in layouts):
+            raise ValueError("Cannot render video: SUBTITLE_LAYOUT_NEEDS_REVIEW detected for one or more cues.")
     filter_value = build_source_replacement_filter(intervals, layouts, ass_path, mode=mode)
     temp_output = output_path.with_suffix(".tmp.mp4")
     subprocess.run(
@@ -689,7 +704,7 @@ def build_local_sub_mask_overlay_filter(
     ass = _ffmpeg_filter_path(ass_path)
     filters = []
     for layout in layouts:
-        if layout.get("status") == "SUBTITLE_REGION_UNCONFIRMED":
+        if layout.get("status") in {"SUBTITLE_REGION_UNCONFIRMED", "NEEDS_REVIEW"}:
             continue
         mask = layout.get("mask") or layout.get("plate")
         if not mask:

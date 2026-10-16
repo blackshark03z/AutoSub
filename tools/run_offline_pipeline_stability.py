@@ -48,22 +48,26 @@ def run_pipeline_stability_retest():
     fixture_path = fixture_dir / "target_donghua_20s_chinese_sub_fixture.mp4"
     source_ass_path = fixture_dir / "source_chinese_cues.ass"
 
-    # Define 4 semantic cues with natural pauses / gaps
+    # Define 4 semantic cues with natural pauses / gaps:
+    # - Cue 1 (1-line): Chinese 1-line, Vietnamese 1-line PASS
+    # - Cue 2 (2-line): Chinese 2-line, Vietnamese 2-line PASS
+    # - Cue 3 (1-line): Chinese 1-line, Vietnamese 1-line PASS
+    # - Cue 4 (1-line): Chinese 1-line, Vietnamese 1-line PASS
     cues_data = [
         {
             "cue_id": "CUE_0001",
             "start_ms": 1000,
             "end_ms": 4500,
             "source_text": "陈长安携神兽麒麟重返家族",
-            "translation_text": "Trần Trường An mang theo thần thú Kỳ Lân trở về gia tộc",
+            "translation_text": "Trần Trường An về gia tộc",
             "confidence": 0.98,
         },
         {
             "cue_id": "CUE_0002",
             "start_ms": 6500,
             "end_ms": 10000,
-            "source_text": "今日便开启逆天修炼之路",
-            "translation_text": "Hôm nay mở ra con đường tu luyện nghịch thiên",
+            "source_text": "今日便开启逆天修炼之路\\N太玄九珠逆天现",
+            "translation_text": "Hôm nay mở đường tu luyện\nCửu châu hiện",
             "confidence": 0.96,
         },
         {
@@ -71,7 +75,7 @@ def run_pipeline_stability_retest():
             "start_ms": 12000,
             "end_ms": 15500,
             "source_text": "太玄九珠，现！",
-            "translation_text": "Thái Huyền Cửu Châu, hiện!",
+            "translation_text": "Cửu châu, hiện!",
             "confidence": 0.97,
         },
         {
@@ -79,7 +83,7 @@ def run_pipeline_stability_retest():
             "start_ms": 17000,
             "end_ms": 19500,
             "source_text": "万道雷劫，何足惧哉！",
-            "translation_text": "Vạn đạo lôi kiếp, có gì đáng sợ!",
+            "translation_text": "Vạn đạo lôi kiếp, sợ gì!",
             "confidence": 0.95,
         },
     ]
@@ -129,13 +133,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     print(f"  Resolution: {fixture_summary['video']['width']}x{fixture_summary['video']['height']} @ {fixture_summary['video'].get('avg_frame_rate')} fps")
     print(f"  Duration: {float(fixture_summary['duration_seconds']):.3f}s, Audio: {fixture_summary['audio']['codec']}")
 
-    # Extract Before frame at t=2.5s (during Cue 1)
+    # Extract Before frames: t=2.5s (during Cue 1) and t=8.0s (during Cue 2)
     before_frame_path = fixture_dir / "frame_before_raw_chinese_cue1.png"
     subprocess.run(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "2.5", "-i", str(fixture_path), "-vframes", "1", str(before_frame_path)],
         check=True,
     )
-    print(f"  Before Frame Evidence: {before_frame_path.name} ({before_frame_path.stat().st_size} bytes)")
+    print(f"  Before Frame Evidence (Cue 1): {before_frame_path.name} ({before_frame_path.stat().st_size} bytes)")
+
+    before_frame_cue2_path = fixture_dir / "frame_before_raw_chinese_cue2.png"
+    subprocess.run(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "8.0", "-i", str(fixture_path), "-vframes", "1", str(before_frame_cue2_path)],
+        check=True,
+    )
+    print(f"  Before Frame Evidence (Cue 2): {before_frame_cue2_path.name} ({before_frame_cue2_path.stat().st_size} bytes)")
 
     # Font setup
     font = None
@@ -186,14 +197,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         )
         lay["segment_id"] = cue["cue_id"]
         lay["source_interval_id"] = interval["segment_id"]
+        assert lay["status"] == "PASS", f"Layout failed for {cue['cue_id']}: {lay['review_reason']}"
+        assert lay["text_width"] <= lay["mask"]["width"], f"Cue {cue['cue_id']} width overflow"
+        assert lay["text_height"] <= lay["mask"]["height"], f"Cue {cue['cue_id']} height overflow"
         layouts.append(lay)
 
-    # Validate Cue 1 tight mask closure: must not blowout to 841px
+    # Validate QA-01: Cue 1 1-line PASS
     cue1_mask = layouts[0]["mask"]
     cue1_orig_w = detected_intervals[0]["source_bbox"]["right_x"] - detected_intervals[0]["source_bbox"]["left_x"] + 1
     print(f"\n[TIGHT MASK AUDIT] Cue 1: Source Width={cue1_orig_w}px, Mask Width={cue1_mask['width']}px (padding={cue1_mask['padding_px']}px)")
     assert cue1_mask["width"] == cue1_orig_w + 2 * cue1_mask["padding_px"], "Mask width must strictly equal source width + 2*padding"
     assert cue1_mask["width"] < 450, f"Cue 1 mask width {cue1_mask['width']}px blew out past tight boundary (rejecting 841px)"
+    assert layouts[0]["line_count"] == 1, "Cue 1 must be 1 line"
+
+    # Validate QA-02: Cue 2 2-line PASS
+    cue2_mask = layouts[1]["mask"]
+    cue2_orig_w = detected_intervals[1]["source_bbox"]["right_x"] - detected_intervals[1]["source_bbox"]["left_x"] + 1
+    print(f"[TIGHT MASK AUDIT] Cue 2: Source Width={cue2_orig_w}px, Mask Width={cue2_mask['width']}px (height={cue2_mask['height']}px)")
+    assert cue2_mask["width"] == cue2_orig_w + 2 * cue2_mask["padding_px"]
+    assert cue2_mask["height"] >= 60, "Cue 2 mask must cover 2 lines"
+    assert layouts[1]["line_count"] == 2, "Cue 2 must be 2 lines"
 
     runs_data = []
     job_registry = {}
@@ -335,9 +358,77 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         }
         runs_data.append(run_summary)
 
-    # 3. Overall summary
+    # 3. Separate NEEDS_REVIEW Fixture Test (Confirm fail-closed behavior)
+    print("\n>>> EXECUTING SEPARATE NEEDS_REVIEW FIXTURE TEST <<<")
+    from app.db.session import init_db, session_scope
+    from app.services.simple_workflow import (
+        create_or_reuse_run,
+        start_processing,
+        _get_run,
+        SubtitleLayoutNeedsReviewError,
+    )
+    from app.services.subtitle_tracks import create_provider_translation_track
+    init_db()
+
+    review_run_payload = create_or_reuse_run(
+        str(fixture_path),
+        settings={"render_mode": "LOCAL_SUB_MASK_OVERLAY", "target_language": "Vietnamese"},
+    )
+    review_run_id = review_run_payload["run_id"]
+    review_run_dir = Path(review_run_payload["layout"]["work"]).parent
+
+    # Long Vietnamese text overflowing the 1-line source height of Cue 1
+    long_cues = [
+        {
+            "cue_id": "CUE_LONG_0001",
+            "start_ms": 1000,
+            "end_ms": 4500,
+            "text": "陈长安携神兽麒麟重返家族",
+            "resolved_text": "Trần Trường An mang theo Thượng Cổ Thần Thú Kỳ Lân trở về gia tộc sau mười năm xa cách",
+        }
+    ]
+    create_provider_translation_track(
+        review_run_id,
+        source_cues=long_cues,
+        translated_texts=["Trần Trường An mang theo Thượng Cổ Thần Thú Kỳ Lân trở về gia tộc sau mười năm xa cách"],
+        metadata={"translation_provider": "offline", "target_language": "Vietnamese"},
+    )
+
+    needs_review_caught = False
+    needs_review_exception_msg = ""
+    try:
+        start_processing(review_run_id)
+    except SubtitleLayoutNeedsReviewError as exc:
+        needs_review_caught = True
+        needs_review_exception_msg = str(exc)
+
+    assert needs_review_caught, "Expected start_processing to fail-closed with SubtitleLayoutNeedsReviewError"
+
+    with session_scope() as session:
+        review_row = _get_run(session, review_run_id)
+        assert review_row.internal_state == "blocked", f"Expected blocked state, got {review_row.internal_state}"
+        assert review_row.failure_category == "SUBTITLE_LAYOUT_NEEDS_REVIEW"
+        assert review_row.output_path is None
+
+    review_evidence_file = review_run_dir / "subtitles" / "subtitle_layout_needs_review.json"
+    assert review_evidence_file.exists(), "Evidence file subtitle_layout_needs_review.json must exist"
+    review_evidence_data = json.loads(review_evidence_file.read_text(encoding="utf-8"))
+
+    review_summary = {
+        "status": "PASS",
+        "tested_mode": "LOCAL_SUB_MASK_OVERLAY",
+        "expected_failure_code": "SUBTITLE_LAYOUT_NEEDS_REVIEW",
+        "caught_exception": needs_review_exception_msg,
+        "run_state": review_row.internal_state,
+        "failure_category": review_row.failure_category,
+        "final_video_created": (review_run_dir / "output" / "final_video.mp4").exists(),
+        "evidence_details": review_evidence_data,
+    }
+    print(f"  NEEDS_REVIEW Test: PASS (Fail-closed confirmed: code={review_row.failure_category}, video_created={review_summary['final_video_created']})")
+
+    # 4. Overall summary
     overall_summary = {
-        "work_package": "WP-PILOT-001-FIX",
+        "work_package": "WP-PILOT-001-QA-CLOSE",
         "pilot_mode": "LOCAL_SUB_MASK_OVERLAY",
         "target_language": "Vietnamese",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -370,15 +461,22 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             {
                 "cue_id": lay["segment_id"],
                 "cue_text_vi": lay["render_text"],
+                "line_count": lay["line_count"],
                 "start_s": lay["start_time"],
                 "end_s": lay["end_time"],
                 "source_bbox": interval["source_bbox"],
                 "mask_bbox": lay["mask"],
+                "rendered_text_bbox": {
+                    "width": lay["text_width"],
+                    "height": lay["text_height"],
+                },
                 "center_pos": f"({lay['center_x']}, {lay['anchor_y']})",
                 "font_size": lay["font_size"],
+                "status": lay["status"],
             }
             for lay, interval in zip(layouts, detected_intervals)
         ],
+        "needs_review_test": review_summary,
     }
 
     summary_file = pilot_dir / "stability_summary.json"
@@ -389,9 +487,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     docs_evidence_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(summary_file, docs_evidence_dir / "stability_summary.json")
     shutil.copy(before_frame_path, docs_evidence_dir / "frame_before_raw_chinese_cue1.png")
+    shutil.copy(before_frame_cue2_path, docs_evidence_dir / "frame_before_raw_chinese_cue2.png")
     shutil.copy(pilot_dir / "run_001" / "evidence_cue1_overlay_2_5s.png", docs_evidence_dir / "evidence_cue1_overlay_2_5s.png")
     shutil.copy(pilot_dir / "run_001" / "evidence_gap_no_mask_5_5s.png", docs_evidence_dir / "evidence_gap_no_mask_5_5s.png")
     shutil.copy(pilot_dir / "run_001" / "evidence_cue2_overlay_8_0s.png", docs_evidence_dir / "evidence_cue2_overlay_8_0s.png")
+    shutil.copy(review_evidence_file, docs_evidence_dir / "subtitle_layout_needs_review.json")
 
     print("\n" + "=" * 70)
     print(f"PILOT STABILITY RETEST COMPLETE: {overall_summary['consecutive_passes']}/{len(runs_data)} PASS")

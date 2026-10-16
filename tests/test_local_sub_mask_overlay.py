@@ -70,7 +70,7 @@ def test_sub_01_single_line_chinese_sub_covered_vietnamese_matched():
         "status": "CONFIRMED",
     }
     
-    # 1. Concise text that fits inside original width remains 1 line
+    # 1. Concise text that fits inside original width and height remains 1 line PASS
     vi_text_single = "Trần Trường An về nhà"
     layout_single = local_sub_overlay_layout_for_interval(
         interval,
@@ -83,8 +83,26 @@ def test_sub_01_single_line_chinese_sub_covered_vietnamese_matched():
     )
     assert layout_single["status"] == "PASS"
     assert layout_single["line_count"] == 1
+    assert layout_single["text_width"] <= layout_single["mask"]["width"]
+    assert layout_single["text_height"] <= layout_single["mask"]["height"]
     
-    # 2. Text longer than original width wraps into 2 lines, while mask remains strictly on source bbox
+    # Check font size within ~10-15% of source character height
+    source_h = interval["text_height"]
+    assert abs(layout_single["font_size"] - source_h) / source_h <= 0.15
+    # Check mask tightly covers source bbox (+2-4px padding)
+    mask = layout_single["mask"]
+    assert mask["padding_px"] in [2, 3, 4]
+    assert mask["x"] <= bbox["left_x"]
+    assert mask["right_x"] >= bbox["right_x"]
+    assert mask["y"] <= bbox["top_y"]
+    assert mask["bottom_y"] >= bbox["bottom_y"]
+    assert mask["width"] == (bbox["right_x"] - bbox["left_x"] + 1) + 2 * mask["padding_px"]
+    assert mask["height"] == (bbox["bottom_y"] - bbox["top_y"] + 1) + 2 * mask["padding_px"]
+    assert mask["width"] < 1280 * 0.70
+    assert layout_single["center_x"] == mask["x"] + mask["width"] // 2
+    assert layout_single["anchor_y"] == mask["y"] + mask["height"] // 2
+
+    # 2. Text longer than original 1-line source height cannot fit 2 lines without overflowing mask height -> NEEDS_REVIEW
     vi_text_longer = "Trần Trường An cùng Kỳ Lân về gia tộc"
     layout_longer = local_sub_overlay_layout_for_interval(
         interval,
@@ -95,25 +113,11 @@ def test_sub_01_single_line_chinese_sub_covered_vietnamese_matched():
         cue_start=1.0,
         cue_end=3.0,
     )
-    assert layout_longer["status"] == "PASS"
-    assert layout_longer["line_count"] == 2
-    
-    # Check font size within ~10-15% of source character height
-    source_h = interval["text_height"]
-    assert abs(layout_longer["font_size"] - source_h) / source_h <= 0.15
-    # Check mask tightly covers source bbox (+2-4px padding) and does NOT expand for longer text
-    mask = layout_longer["mask"]
-    assert mask["padding_px"] in [2, 3, 4]
-    assert mask["x"] <= bbox["left_x"]
-    assert mask["right_x"] >= bbox["right_x"]
-    assert mask["y"] <= bbox["top_y"]
-    assert mask["bottom_y"] >= bbox["bottom_y"]
-    assert mask["width"] == (bbox["right_x"] - bbox["left_x"] + 1) + 2 * mask["padding_px"]
-    # Check mask is not full-width
-    assert mask["width"] < 1280 * 0.70
-    # Check Vietnamese sub center matches mask center
-    assert layout_longer["center_x"] == mask["x"] + mask["width"] // 2
-    assert layout_longer["anchor_y"] == mask["y"] + mask["height"] // 2
+    assert layout_longer["status"] == "NEEDS_REVIEW"
+    assert "translation_exceeds" in layout_longer["review_reason"]
+    # Mask must strictly remain source bbox + padding (never expanded)
+    assert layout_longer["mask"]["width"] == (bbox["right_x"] - bbox["left_x"] + 1) + 2 * layout_longer["mask"]["padding_px"]
+    assert layout_longer["mask"]["height"] == (bbox["bottom_y"] - bbox["top_y"] + 1) + 2 * layout_longer["mask"]["padding_px"]
 
 
 def test_sub_02_two_line_chinese_sub_covered():
@@ -195,22 +199,46 @@ def test_sub_04_long_vietnamese_translation_wrapping_and_review():
         "status": "CONFIRMED",
     }
     
-    # Case A: Moderately long translation that wraps to two lines
-    long_text = "Trần Trường An mang theo Thượng Cổ Kỳ Lân trở về Trần gia sau mười năm"
+    # Case A: Two-line source subtitle region cleanly contains two-line Vietnamese translation
+    bbox_2line = {"left_x": 380, "top_y": 585, "right_x": 900, "bottom_y": 655}
+    interval_2line = {
+        "source_bbox": bbox_2line,
+        "text_height": 30,
+        "start_time": 0.0,
+        "end_time": 3.0,
+        "confidence": 0.95,
+        "status": "CONFIRMED",
+        "line_count": 2,
+    }
+    long_text = "Trần Trường An mang theo Kỳ Lân\ntrở về Trần gia sau mười năm"
     layout_wrap = local_sub_overlay_layout_for_interval(
+        interval_2line,
+        long_text,
+        font,
+        output_width=1280,
+        output_height=720,
+    )
+    assert layout_wrap["status"] == "PASS"
+    assert layout_wrap["line_count"] == 2
+    assert "\n" in layout_wrap["render_text"]
+    assert layout_wrap["text_width"] <= layout_wrap["mask"]["width"]
+    assert layout_wrap["text_height"] <= layout_wrap["mask"]["height"]
+    assert layout_wrap["mask"]["width"] <= 530
+    
+    # Case B: 1-line source height cannot accommodate 2 lines -> NEEDS_REVIEW without expanding mask
+    layout_1line_overflow = local_sub_overlay_layout_for_interval(
         interval,
         long_text,
         font,
         output_width=1280,
         output_height=720,
     )
-    assert layout_wrap["line_count"] == 2
-    assert "\n" in layout_wrap["render_text"]
-    # Mask width must be based on source bbox (321px + 2*pad_px ~ 327px), NEVER expanded to translation width!
-    assert layout_wrap["mask"]["width"] <= 335
-    assert layout_wrap["mask"]["width"] < 400
-    
-    # Case B: Extremely long unbreakable string or massive text exceeding maximum safe screen width
+    assert layout_1line_overflow["status"] == "NEEDS_REVIEW"
+    assert "translation_exceeds" in layout_1line_overflow["review_reason"]
+    assert layout_1line_overflow["mask"]["width"] <= 335
+    assert layout_1line_overflow["mask"]["height"] <= 45
+
+    # Case C: Extremely long unbreakable string or massive text exceeding maximum safe screen width
     extreme_text = "Từ_xưa_đến_nay_trong_toàn_bộ_thiên_địa_chưa_từng_có_ai_dám_làm_ra_hành_động_ngông_cuồng_nghịch_thiên_như_thế_này_cả_khi_một_mình_khiêu_chiến_toàn_thể_chư_thần"
     layout_review = local_sub_overlay_layout_for_interval(
         interval,

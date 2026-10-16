@@ -100,6 +100,14 @@ class RuntimeReadinessBlockedError(SubtitleContentUnavailableError):
     """The run is already persisted as blocked with a setup-specific reason."""
 
 
+class SubtitleLayoutNeedsReviewError(ValueError):
+    """Raised when one or more subtitle cues cannot fit within tight mask layout boundaries."""
+    def __init__(self, message: str, review_details: list[dict[str, Any]] | None = None):
+        super().__init__(message)
+        self.code = "SUBTITLE_LAYOUT_NEEDS_REVIEW"
+        self.review_details = review_details or []
+
+
 def supported_formats() -> list[str]:
     return sorted(SUPPORTED_VIDEO_EXTENSIONS)
 
@@ -460,6 +468,9 @@ def start_processing(run_id: str, *, accepted: bool = False) -> dict[str, Any]:
                 _write_manifest(Path(row.run_directory), row, status="completed")
                 return _serialize_run(row)
         except InvalidCompletedResultError:
+            raise
+        except SubtitleLayoutNeedsReviewError as exc:
+            _persist_subtitle_layout_needs_review(run_id, exc)
             raise
         except Exception as exc:
             _persist_processing_failure(run_id, "render_failed", "Render video", exc)
@@ -902,6 +913,37 @@ def _bounded_subtitle_process(row: SimpleWorkflowRun, resolved: dict[str, Any]) 
         unconfirmed = [l for l in plan.get("layouts", []) if l.get("status") == "SUBTITLE_REGION_UNCONFIRMED"]
         if unconfirmed:
             raise ValueError("Subtitle render blocked: SUBTITLE_REGION_UNCONFIRMED detected for one or more cues.")
+        needs_review = [l for l in plan.get("layouts", []) if l.get("status") == "NEEDS_REVIEW"]
+        if needs_review:
+            review_evidence = [
+                {
+                    "cue_id": l.get("segment_id"),
+                    "review_reason": l.get("review_reason"),
+                    "source_bbox": l.get("source_bbox"),
+                    "render_text": l.get("render_text"),
+                    "font_size": l.get("font_size"),
+                    "line_count": l.get("line_count"),
+                    "text_dimensions": {
+                        "width": l.get("text_width"),
+                        "height": l.get("text_height"),
+                    },
+                    "layout_limits": {
+                        "mask": l.get("mask"),
+                        "max_width": l.get("mask", {}).get("width") if l.get("mask") else None,
+                        "max_height": l.get("mask", {}).get("height") if l.get("mask") else None,
+                    },
+                }
+                for l in needs_review
+            ]
+            evidence_file = subtitles_dir / "subtitle_layout_needs_review.json"
+            safe_write_text(evidence_file, json.dumps(review_evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+            log_evidence_file = run_dir / "logs" / "subtitle_layout_needs_review.json"
+            safe_write_text(log_evidence_file, json.dumps(review_evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+            cues_summary = ", ".join(f"{r['cue_id']}: {r['review_reason']}" for r in review_evidence)
+            raise SubtitleLayoutNeedsReviewError(
+                f"Subtitle render blocked: SUBTITLE_LAYOUT_NEEDS_REVIEW detected for {len(needs_review)} cue(s): {cues_summary}",
+                review_details=review_evidence,
+            )
     elif resolved.get("subtitle_provenance") in SOURCE_CAPTION_MODES:
         plan = build_source_caption_render_plan(
             source,
@@ -1211,6 +1253,26 @@ def _persist_subtitle_source_block(run_id: str, exc: Exception) -> None:
         failure_path = Path(row.run_directory) / "logs" / "subtitle_source_block.json"
         failure_path.parent.mkdir(parents=True, exist_ok=True)
         failure_path.write_text(json.dumps(failure, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_manifest(Path(row.run_directory), row, status="blocked")
+
+
+def _persist_subtitle_layout_needs_review(run_id: str, exc: SubtitleLayoutNeedsReviewError) -> None:
+    with session_scope() as session:
+        row = _get_run(session, run_id)
+        row.failure_category = "SUBTITLE_LAYOUT_NEEDS_REVIEW"
+        row.internal_state = "blocked"
+        row.current_phase = "Render video"
+        row.output_path = None
+        row.output_hash = None
+        row.updated_at = datetime.now(timezone.utc)
+        payload = {
+            "code": "SUBTITLE_LAYOUT_NEEDS_REVIEW",
+            "message": str(exc),
+            "cues": exc.review_details,
+        }
+        log_path = Path(row.run_directory) / "logs" / "subtitle_layout_needs_review.json"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        safe_write_text(log_path, json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         _write_manifest(Path(row.run_directory), row, status="blocked")
 
 

@@ -116,14 +116,14 @@ def test_automatic_detector_e2e_integration(multi_cue_chinese_sub_video: Path, t
             "start_ms": 1000,
             "end_ms": 3500,
             "text": "陈长安携神兽麒麟重返家族",
-            "resolved_text": "Trần Trường An mang theo thần thú Kỳ Lân trở về gia tộc",
+            "resolved_text": "Trần Trường An về gia tộc",
         },
         {
             "cue_id": "CUE_0002",
             "start_ms": 5500,
             "end_ms": 8500,
             "text": "太玄九珠逆天现\n万道雷劫何足惧",
-            "resolved_text": "Thái Huyền Cửu Châu nghịch thiên hiện\nVạn đạo lôi kiếp có gì sợ",
+            "resolved_text": "Cửu châu hiện\nLôi kiếp sợ chi",
         },
     ]
 
@@ -138,9 +138,12 @@ def test_automatic_detector_e2e_integration(multi_cue_chinese_sub_video: Path, t
     layouts = plan["layouts"]
     assert len(layouts) == 2
 
-    # Check Cue 1 layout
+    # Check Cue 1 layout (QA-01 One-line PASS)
     lay1 = layouts[0]
     assert lay1["status"] == "PASS"
+    assert lay1["line_count"] == 1
+    assert lay1["text_width"] <= lay1["mask"]["width"]
+    assert lay1["text_height"] <= lay1["mask"]["height"]
     mask1 = lay1["mask"]
     assert mask1 is not None
     orig_w1 = bbox1["right_x"] - bbox1["left_x"] + 1
@@ -148,6 +151,19 @@ def test_automatic_detector_e2e_integration(multi_cue_chinese_sub_video: Path, t
     assert mask1["width"] < 450, "Cue 1 mask must not blowout to 841px"
     # Font size within ~15% of detected text height
     assert abs(lay1["font_size"] - inv1["text_height"]) <= 6
+
+    # Check Cue 2 layout (QA-02 Two-line PASS)
+    lay2 = layouts[1]
+    assert lay2["status"] == "PASS"
+    assert lay2["line_count"] == 2
+    assert lay2["text_width"] <= lay2["mask"]["width"]
+    assert lay2["text_height"] <= lay2["mask"]["height"]
+    mask2 = lay2["mask"]
+    assert mask2 is not None
+    orig_w2 = bbox2["right_x"] - bbox2["left_x"] + 1
+    assert mask2["width"] == orig_w2 + 2 * mask2["padding_px"]
+    assert mask2["height"] == (bbox2["bottom_y"] - bbox2["top_y"] + 1) + 2 * mask2["padding_px"]
+    assert mask2["height"] >= 60
 
     # 3. Step 3: Write ASS and render with FFmpeg
     ass_path = tmp_path / "dialogue_subtitles_vi.ass"
@@ -248,3 +264,53 @@ def test_automatic_detector_failure_case_blocks_render(tmp_path: Path):
             plan["layouts"],
             mode="LOCAL_SUB_MASK_OVERLAY",
         )
+
+
+def test_automatic_detector_needs_review_case_blocks_render(multi_cue_chinese_sub_video: Path, tmp_path: Path):
+    """QA-03 Acceptance: When a cue translation is too long to fit inside the detected source
+    subtitle layout boundaries at allowable font size, build_source_replacement_plan marks it
+    NEEDS_REVIEW, and render_source_replacement_video blocks render with SUBTITLE_LAYOUT_NEEDS_REVIEW.
+    """
+    font_path = Path("C:/Windows/Fonts/arial.ttf")
+    if not font_path.exists():
+        font_path = Path("C:/Windows/Fonts/segoeui.ttf")
+
+    # Cue 1 has a very long translation that cannot fit in the 1-line source bbox height
+    cues = [
+        {
+            "cue_id": "CUE_0001",
+            "start_ms": 1000,
+            "end_ms": 3500,
+            "text": "陈长安携神兽麒麟重返家族",
+            "resolved_text": "Trần Trường An mang theo Thượng Cổ Thần Thú Kỳ Lân trở về gia tộc sau mười năm xa cách",
+        }
+    ]
+
+    plan = build_source_replacement_plan(
+        multi_cue_chinese_sub_video,
+        cues,
+        font_path=font_path,
+        mode="LOCAL_SUB_MASK_OVERLAY",
+        target_language="Vietnamese",
+    )
+
+    assert len(plan["layouts"]) == 1
+    layout = plan["layouts"][0]
+    assert layout["status"] == "NEEDS_REVIEW"
+    assert "translation_exceeds" in layout["review_reason"]
+
+    # Render attempt MUST be blocked with SUBTITLE_LAYOUT_NEEDS_REVIEW
+    output_video = tmp_path / "should_not_exist_needs_review.mp4"
+    ass_path = tmp_path / "temp_needs_review.ass"
+    write_clean_subtitles_ass(plan["render_cues"], plan["layouts"], ass_path, font_size=32, output_width=1280, output_height=720)
+
+    with pytest.raises(ValueError, match="SUBTITLE_LAYOUT_NEEDS_REVIEW"):
+        render_source_replacement_video(
+            multi_cue_chinese_sub_video,
+            ass_path,
+            output_video,
+            plan["intervals"],
+            plan["layouts"],
+            mode="LOCAL_SUB_MASK_OVERLAY",
+        )
+    assert not output_video.exists()

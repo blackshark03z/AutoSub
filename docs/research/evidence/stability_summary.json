@@ -1,8 +1,8 @@
 {
-  "work_package": "WP-PILOT-001-FIX",
+  "work_package": "WP-PILOT-001-QA-CLOSE",
   "pilot_mode": "LOCAL_SUB_MASK_OVERLAY",
   "target_language": "Vietnamese",
-  "timestamp": "2026-10-16T15:53:17Z",
+  "timestamp": "2026-10-16T16:23:46Z",
   "runs_evaluated": 3,
   "consecutive_passes": 3,
   "overall_status": "PASS",
@@ -19,8 +19,8 @@
   },
   "fixture": {
     "name": "target_donghua_20s_chinese_sub_fixture.mp4",
-    "sha256": "5a5a202176ac131bbed8e071a0a678153fc8f88ddcd8d05d954ad55cbdfef136",
-    "size_bytes": 365602,
+    "sha256": "a2cd17dc01f6b23b04860357716e34b90eea88526139788df8b77a66edec5109",
+    "size_bytes": 368992,
     "resolution": "1280x720",
     "fps": 15.0,
     "duration_seconds": 20.0,
@@ -32,15 +32,15 @@
       "run_index": 1,
       "run_name": "run_001",
       "status": "PASS",
-      "elapsed_seconds": 0.809,
-      "input_hash": "5a5a202176ac131bbed8e071a0a678153fc8f88ddcd8d05d954ad55cbdfef136",
-      "output_hash": "537aa5f5e5568230ef661bf10a9a66602ed574e65196d78ffbe2e5e0a6427ce7",
-      "output_size_bytes": 363779,
+      "elapsed_seconds": 0.762,
+      "input_hash": "a2cd17dc01f6b23b04860357716e34b90eea88526139788df8b77a66edec5109",
+      "output_hash": "1bed4a3de41387ac65bd4ac149ec2c9fea5652a44fe53f58ebe3b4b783dade76",
+      "output_size_bytes": 357219,
       "output_duration_seconds": 20.0,
       "drift_ms": 0.0,
       "dialogue_count": 4,
       "ffmpeg_exit_code": 0,
-      "job_id": "job_0001_5a5a2021",
+      "job_id": "job_0001_a2cd17dc",
       "job_reused": false,
       "evidence_frames": {
         "cue1_overlay_2_5s": "evidence_cue1_overlay_2_5s.png",
@@ -52,15 +52,15 @@
       "run_index": 2,
       "run_name": "run_002",
       "status": "PASS",
-      "elapsed_seconds": 0.842,
-      "input_hash": "5a5a202176ac131bbed8e071a0a678153fc8f88ddcd8d05d954ad55cbdfef136",
-      "output_hash": "537aa5f5e5568230ef661bf10a9a66602ed574e65196d78ffbe2e5e0a6427ce7",
-      "output_size_bytes": 363779,
+      "elapsed_seconds": 0.736,
+      "input_hash": "a2cd17dc01f6b23b04860357716e34b90eea88526139788df8b77a66edec5109",
+      "output_hash": "1bed4a3de41387ac65bd4ac149ec2c9fea5652a44fe53f58ebe3b4b783dade76",
+      "output_size_bytes": 357219,
       "output_duration_seconds": 20.0,
       "drift_ms": 0.0,
       "dialogue_count": 4,
       "ffmpeg_exit_code": 0,
-      "job_id": "job_0001_5a5a2021",
+      "job_id": "job_0001_a2cd17dc",
       "job_reused": true,
       "evidence_frames": {
         "cue1_overlay_2_5s": "evidence_cue1_overlay_2_5s.png",
@@ -72,15 +72,15 @@
       "run_index": 3,
       "run_name": "run_003",
       "status": "PASS",
-      "elapsed_seconds": 0.868,
-      "input_hash": "5a5a202176ac131bbed8e071a0a678153fc8f88ddcd8d05d954ad55cbdfef136",
-      "output_hash": "537aa5f5e5568230ef661bf10a9a66602ed574e65196d78ffbe2e5e0a6427ce7",
-      "output_size_bytes": 363779,
+      "elapsed_seconds": 0.776,
+      "input_hash": "a2cd17dc01f6b23b04860357716e34b90eea88526139788df8b77a66edec5109",
+      "output_hash": "1bed4a3de41387ac65bd4ac149ec2c9fea5652a44fe53f58ebe3b4b783dade76",
+      "output_size_bytes": 357219,
       "output_duration_seconds": 20.0,
       "drift_ms": 0.0,
       "dialogue_count": 4,
       "ffmpeg_exit_code": 0,
-      "job_id": "job_0001_5a5a2021",
+      "job_id": "job_0001_a2cd17dc",
       "job_reused": true,
       "evidence_frames": {
         "cue1_overlay_2_5s": "evidence_cue1_overlay_2_5s.png",
@@ -92,7 +92,8 @@
   "mask_overlay_parameters": [
     {
       "cue_id": "CUE_0001",
-      "cue_text_vi": "Trần Trường An mang theo\nthần thú Kỳ Lân trở về gia tộc",
+      "cue_text_vi": "Trần Trường An về gia tộc",
+      "line_count": 1,
       "start_s": 1.0,
       "end_s": 4.5,
       "source_bbox": {
@@ -110,35 +111,47 @@
         "bottom_y": 665,
         "padding_px": 3
       },
+      "rendered_text_bbox": {
+        "width": 341,
+        "height": 32
+      },
       "center_pos": "(640, 648)",
-      "font_size": 29
+      "font_size": 29,
+      "status": "PASS"
     },
     {
       "cue_id": "CUE_0002",
-      "cue_text_vi": "Hôm nay mở ra con đường\ntu luyện nghịch thiên",
+      "cue_text_vi": "Hôm nay mở đường tu luyện\nCửu châu hiện",
+      "line_count": 2,
       "start_s": 6.5,
       "end_s": 10.0,
       "source_bbox": {
         "left_x": 456,
-        "top_y": 633,
+        "top_y": 599,
         "right_x": 824,
         "bottom_y": 662
       },
       "mask_bbox": {
         "x": 453,
-        "y": 630,
+        "y": 596,
         "width": 375,
-        "height": 36,
+        "height": 70,
         "right_x": 827,
         "bottom_y": 665,
         "padding_px": 3
       },
-      "center_pos": "(640, 648)",
-      "font_size": 29
+      "rendered_text_bbox": {
+        "width": 370,
+        "height": 63
+      },
+      "center_pos": "(640, 631)",
+      "font_size": 29,
+      "status": "PASS"
     },
     {
       "cue_id": "CUE_0003",
-      "cue_text_vi": "Thái Huyền Cửu\nChâu, hiện!",
+      "cue_text_vi": "Cửu châu, hiện!",
+      "line_count": 1,
       "start_s": 12.0,
       "end_s": 15.5,
       "source_bbox": {
@@ -156,12 +169,18 @@
         "bottom_y": 665,
         "padding_px": 3
       },
+      "rendered_text_bbox": {
+        "width": 203,
+        "height": 26
+      },
       "center_pos": "(631, 648)",
-      "font_size": 28
+      "font_size": 28,
+      "status": "PASS"
     },
     {
       "cue_id": "CUE_0004",
-      "cue_text_vi": "Vạn đạo lôi kiếp,\ncó gì đáng sợ!",
+      "cue_text_vi": "Vạn đạo lôi kiếp, sợ gì!",
+      "line_count": 1,
       "start_s": 17.0,
       "end_s": 19.5,
       "source_bbox": {
@@ -179,8 +198,54 @@
         "bottom_y": 665,
         "padding_px": 3
       },
+      "rendered_text_bbox": {
+        "width": 291,
+        "height": 31
+      },
       "center_pos": "(630, 648)",
-      "font_size": 28
+      "font_size": 28,
+      "status": "PASS"
     }
-  ]
+  ],
+  "needs_review_test": {
+    "status": "PASS",
+    "tested_mode": "LOCAL_SUB_MASK_OVERLAY",
+    "expected_failure_code": "SUBTITLE_LAYOUT_NEEDS_REVIEW",
+    "caught_exception": "Subtitle render blocked: SUBTITLE_LAYOUT_NEEDS_REVIEW detected for 1 cue(s): CUE_LONG_0001: translation_exceeds_layout_boundary",
+    "run_state": "blocked",
+    "failure_category": "SUBTITLE_LAYOUT_NEEDS_REVIEW",
+    "final_video_created": false,
+    "evidence_details": [
+      {
+        "cue_id": "CUE_LONG_0001",
+        "review_reason": "translation_exceeds_layout_boundary",
+        "source_bbox": {
+          "left_x": 439,
+          "top_y": 633,
+          "right_x": 841,
+          "bottom_y": 662
+        },
+        "render_text": "Trần Trường An mang theo Thượng Cổ Thần\nThú Kỳ Lân trở về gia tộc sau mười năm xa cách",
+        "font_size": 26,
+        "line_count": 2,
+        "text_dimensions": {
+          "width": 555,
+          "height": 66
+        },
+        "layout_limits": {
+          "mask": {
+            "x": 436,
+            "y": 630,
+            "width": 409,
+            "height": 36,
+            "right_x": 844,
+            "bottom_y": 665,
+            "padding_px": 3
+          },
+          "max_width": 409,
+          "max_height": 36
+        }
+      }
+    ]
+  }
 }

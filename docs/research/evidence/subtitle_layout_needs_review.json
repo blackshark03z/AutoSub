@@ -1,0 +1,32 @@
+[
+  {
+    "cue_id": "CUE_LONG_0001",
+    "review_reason": "translation_exceeds_layout_boundary",
+    "source_bbox": {
+      "left_x": 439,
+      "top_y": 633,
+      "right_x": 841,
+      "bottom_y": 662
+    },
+    "render_text": "Trần Trường An mang theo Thượng Cổ Thần\nThú Kỳ Lân trở về gia tộc sau mười năm xa cách",
+    "font_size": 26,
+    "line_count": 2,
+    "text_dimensions": {
+      "width": 555,
+      "height": 66
+    },
+    "layout_limits": {
+      "mask": {
+        "x": 436,
+        "y": 630,
+        "width": 409,
+        "height": 36,
+        "right_x": 844,
+        "bottom_y": 665,
+        "padding_px": 3
+      },
+      "max_width": 409,
+      "max_height": 36
+    }
+  }
+]
