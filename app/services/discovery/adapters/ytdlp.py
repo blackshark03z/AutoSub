@@ -18,10 +18,15 @@ from app.services.discovery.ssrf import (
     SafeHTTPHandler,
     SafeHTTPSHandler,
     SsrfProtectionError,
+    validate_proxies_dict,
     validate_url_ssrf,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class SecureTransportUnavailableError(RuntimeError):
+    """Raised when safe transport for yt-dlp cannot be constructed or initialized."""
 
 
 class YtDlpDiscoveryAdapter:
@@ -41,9 +46,15 @@ class YtDlpDiscoveryAdapter:
 
             class SafeUrllibRH(yt_dlp.networking._urllib.UrllibRH):
                 def _create_instance(self, proxies, cookiejar, legacy_ssl_support=None):
+                    # Audit proxies configured for this request handler
+                    if proxies:
+                        safe, reason = validate_proxies_dict(proxies)
+                        if not safe:
+                            raise SsrfProtectionError(f"Blocked unsafe proxy configuration in UrllibRH: {reason}")
+
                     opener = yt_dlp.networking._urllib.urllib.request.OpenerDirector()
                     handlers = [
-                        yt_dlp.networking._urllib.ProxyHandler(proxies),
+                        yt_dlp.networking._urllib.ProxyHandler(proxies or {}),
                         SafeHTTPHandler(),
                         SafeHTTPSHandler(context=self._make_sslcontext(legacy_ssl_support=legacy_ssl_support)),
                         yt_dlp.networking._urllib.HTTPCookieProcessor(cookiejar),
@@ -60,11 +71,21 @@ class YtDlpDiscoveryAdapter:
                     return opener
 
             class SafeYoutubeDL(yt_dlp_module.YoutubeDL):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    # Audit configured proxies fail-closed
+                    if getattr(self, "proxies", None):
+                        safe, reason = validate_proxies_dict(self.proxies)
+                        if not safe:
+                            raise SsrfProtectionError(f"Blocked unsafe yt-dlp proxy configuration: {reason}")
+
                 def build_request_director(self, handlers, preferences=None):
-                    handlers = [SafeUrllibRH if issubclass(h, yt_dlp.networking._urllib.UrllibRH) else h for h in handlers]
-                    pref_set = set(preferences) if preferences else set()
-                    pref_set.add(lambda rh, _: 1000 if isinstance(rh, SafeUrllibRH) else 0)
-                    director = super().build_request_director(handlers, pref_set)
+                    # Fail-closed: Restrict handlers strictly to SafeUrllibRH.
+                    # Non-urllib handlers (e.g. RequestsRH, CurlCFFIRH, WebsocketsRH) bypass
+                    # our socket-level peer IP checks and must not be used.
+                    safe_handlers = [SafeUrllibRH]
+                    pref_set = {lambda rh, _: 1000 if isinstance(rh, SafeUrllibRH) else 0}
+                    director = super().build_request_director(safe_handlers, pref_set)
                     orig_send = director.send
 
                     def safe_send(request):
@@ -76,9 +97,11 @@ class YtDlpDiscoveryAdapter:
                     director.send = safe_send
                     return director
 
+            SafeYoutubeDL.SafeUrllibRH = SafeUrllibRH
             return SafeYoutubeDL
-        except Exception:
-            return yt_dlp_module.YoutubeDL
+        except Exception as exc:
+            logger.error("Failed to initialize safe yt-dlp transport: %s", exc)
+            raise SecureTransportUnavailableError(f"Failed to initialize secure transport for yt-dlp: {exc}") from exc
 
     def can_handle(self, url: str, platform: str | None = None) -> bool:
         # yt-dlp is our primary general extractor
@@ -102,13 +125,51 @@ class YtDlpDiscoveryAdapter:
 
         try:
             import yt_dlp
-            import unittest.mock
+        except ImportError:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            return DiscoveryResult(
+                source_url_redacted=redacted_url,
+                platform=platform_name,
+                status=DiscoveryStatus.PROBE_ERROR.value,
+                recommended_engine="yt-dlp",
+                title=None,
+                duration_seconds=None,
+                formats=[],
+                subtitle_languages=[],
+                authentication_required=False,
+                drm_status=DrmStatus.UNKNOWN.value,
+                probe_duration_ms=duration_ms,
+                download_tested=False,
+                error_code="YTDLP_NOT_INSTALLED",
+                error_message="yt-dlp is not installed in the current environment",
+            )
 
-            if isinstance(yt_dlp.YoutubeDL, unittest.mock.MagicMock) or not hasattr(yt_dlp.YoutubeDL, "build_request_director"):
+        try:
+            import unittest.mock
+            if isinstance(yt_dlp.YoutubeDL, unittest.mock.MagicMock):
                 ydl_cls = yt_dlp.YoutubeDL
             else:
                 ydl_cls = self._get_safe_ydl_cls(yt_dlp)
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            return DiscoveryResult(
+                source_url_redacted=redacted_url,
+                platform=platform_name,
+                status=DiscoveryStatus.PROBE_ERROR.value,
+                recommended_engine="yt-dlp",
+                title=None,
+                duration_seconds=None,
+                formats=[],
+                subtitle_languages=[],
+                authentication_required=False,
+                drm_status=DrmStatus.UNKNOWN.value,
+                probe_duration_ms=duration_ms,
+                download_tested=False,
+                error_code="SECURE_TRANSPORT_UNAVAILABLE",
+                error_message=f"Failed to initialize secure transport for yt-dlp: {exc}",
+            )
 
+        try:
             with ydl_cls(ydl_opts) as ydl:
                 info = ydl.extract_info(request.video_url, download=False)
 
@@ -205,7 +266,10 @@ class YtDlpDiscoveryAdapter:
             auth_required = False
             drm_status = DrmStatus.UNKNOWN.value
 
-            if "ssrf" in err_lower or "dns rebinding" in err_lower or isinstance(exc, SsrfProtectionError):
+            if isinstance(exc, SecureTransportUnavailableError) or "SECURE_TRANSPORT_UNAVAILABLE" in str(exc):
+                status = DiscoveryStatus.PROBE_ERROR.value
+                error_code = "SECURE_TRANSPORT_UNAVAILABLE"
+            elif "ssrf" in err_lower or "dns rebinding" in err_lower or isinstance(exc, SsrfProtectionError):
                 status = DiscoveryStatus.PROBE_ERROR.value
                 error_code = "SSRF_REJECTED"
             elif "drm" in err_lower or "protected" in err_lower:
@@ -257,3 +321,14 @@ class YtDlpDiscoveryAdapter:
         if "ixigua.com" in domain:
             return "xigua"
         return "generic"
+
+
+def get_safe_ydl_cls(yt_dlp_module: Any = None) -> Any:
+    """Helper to obtain hardened SafeYoutubeDL class fail-closed."""
+    if yt_dlp_module is None:
+        import yt_dlp
+        yt_dlp_module = yt_dlp
+    return YtDlpDiscoveryAdapter._get_safe_ydl_cls(yt_dlp_module)
+
+
+_get_safe_ydl_cls = get_safe_ydl_cls

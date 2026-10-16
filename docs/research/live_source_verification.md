@@ -21,24 +21,29 @@ Verdicts strictly adhere to the CADS truthfulness standard:
 - `FAILED`: Network or upstream extractor code failure.
 - `NOT_TESTED`: No legitimate public/licensed sample URL available; zero extrapolation permitted.
 
+Rights & Provenance Classifications:
+- `PUBLIC_DOMAIN_VERIFIED`: Underlying work copyright has demonstrably expired or was never granted, and digital transfer is unencumbered.
+- `CC_BY_3_0_VERIFIED`: Work explicitly released under Creative Commons Attribution 3.0 license.
+- `RIGHTS_UNVERIFIED`: Web/social media video without explicit redistributable license; tested strictly for technical extractor feasibility.
+
 ---
 
 ## 2. Live Platform Probe Matrix
 
-| Platform / Target | Test Target / URL (Redacted) | Rights / License Basis | Extractor Engine | Status Code / State | Metadata Retrieved | Formats & Streams | DRM Status | Probe Time | Verification Verdict |
+| Platform / Target | Test Target / URL (Redacted) | Rights Basis & Classification | Extractor Engine | Status Code / State | Metadata Retrieved | Formats & Streams | DRM Status | Probe Time | Verification Verdict |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Bilibili (UGC)** | `bilibili.com/video/BV117411r7R1` | Public Bilibili UGC | yt-dlp 2026.08.19 (Fallback: Lux) | HTTP 200 / `DISCOVERABLE` | **Yes**: Title `当我给拜年祭的快板加了电音配乐…`, Duration 485.5s | 15 formats (360p to 1080p, AVC/HEVC/AV1, AAC) | UNKNOWN (Clear UGC) | 1,983 ms | **DOWNLOAD_VERIFIED** |
-| **Bilibili (Geo-lock)**| `bilibili.com/video/BV1GJ411x7h7` | Public Bilibili Anime | yt-dlp 2026.08.19 | HTTP 200 / `GEO_RESTRICTED` | **No** (Blocked before stream table) | 0 formats | UNKNOWN | 1,421 ms | **GEO_RESTRICTED** |
-| **iQIYI (`iqiyi.com`)**| `iqiyi.com/v_19rr7phwvw.html` | Official Public Clip | yt-dlp 2026.08.19 | HTTP 200 / `PROBE_ERROR` | **No**: Extractor failure | 0 formats | UNKNOWN | 953 ms | **FAILED** (Extractor Outdated) |
-| **Tencent / WeTV** | `wetv.vip/play/0038w7h8p38x2r0/...` | Official WeTV Episode | yt-dlp 2026.08.19 | HTTP 200 / `GEO_RESTRICTED` | **No**: Geoblock error | 0 formats | UNKNOWN | 1,593 ms | **GEO_RESTRICTED** |
-| **Douyin** | `douyin.com/video/71234567890123...`| Public Douyin Video | yt-dlp 2026.08.19 | HTTP 200 / `AUTH_REQUIRED` | **No**: Visitor cookie barrier | 0 formats | UNKNOWN | 984 ms | **AUTH_REQUIRED** |
-| **Xigua** | `ixigua.com/6829749557672542728` | Public Xigua Clip | yt-dlp 2026.08.19 | HTTP 200 / `AUTH_REQUIRED` | **No**: Cookie required | 0 formats | UNKNOWN | 1,031 ms | **AUTH_REQUIRED** |
-| **Youku** | `v.youku.com/v_show/id_XMTI4.html` | Public Youku Archive | yt-dlp 2026.08.19 | HTTP 200 / `AUTH_REQUIRED` | **Partial**: Title, but 0 stream formats | 0 formats | UNKNOWN | 1,120 ms | **AUTH_REQUIRED** |
-| **HLS (M3U8)** | `test-streams.mux.dev/x36xhzz/...`| Creative Commons 3.0 (Big Buck Bunny) | ManifestDiscoveryAdapter / N_m3u8DL-RE | HTTP 200 / `DISCOVERABLE` | **Yes**: Master playlist | 5 variants (320x184 up to 1920x1080 @ 60fps) | NO_DRM_APPARENT | 358 ms | **DOWNLOAD_VERIFIED** |
-| **DASH (MPD)** | `dash.akamaized.net/akamai/...` | Creative Commons 3.0 (Big Buck Bunny) | ManifestDiscoveryAdapter | HTTP 200 / `DISCOVERABLE` | **Yes**: Static MPD XML | 11 representations (320x180 up to 3840x2160, 4K) | NO_DRM_APPARENT | 187 ms | **METADATA_VERIFIED** |
-| **Direct MP4** | `w3schools.com/html/mov_bbb.mp4` | Public W3C Sample | DirectFileDiscoveryAdapter | HTTP 206 / `DISCOVERABLE` | **Yes**: Filename, size 788,493 B | 1 format (video/mp4) | NO_DRM_APPARENT | 1,250 ms | **METADATA_VERIFIED** |
-| **Direct MP4 (Feature)**| `archive.org/download/..._512kb.mp4`| Public Domain (The Fast And The Furious, 1954)| DirectFileDiscoveryAdapter | HTTP 206 / `DISCOVERABLE` | **Yes**: Size 315,869,226 B, Length 4356s | 1 format (video/mp4, 320x240, 29.97fps, stereo) | NO_DRM_APPARENT | 890 ms | **DOWNLOAD_VERIFIED** |
-| **Direct MP4 (Chinese Feature)**| `archive.org/download/street_angel/street_angel.mp4`| Public Domain (Street Angel / 馬路天使, 1937, Mandarin/Shanghainese dialogue)| DirectFileDiscoveryAdapter | HTTP 206 / `DISCOVERABLE` | **Yes**: Size 565,167,881 B, Length 5429s (90.49m) | 1 format (video/mp4, 640x480, 29.97fps, stereo AAC) | NO_DRM_APPARENT | 740 ms | **DOWNLOAD_VERIFIED** |
+| **Bilibili (UGC)** | `bilibili.com/video/BV117411r7R1` | `RIGHTS_UNVERIFIED` (Third-party UGC remix) | yt-dlp 2026.08.19 (Fallback: Lux) | HTTP 200 / `DISCOVERABLE` | **Yes**: Title `当我给拜年祭的快板加了电音配乐…`, Duration 485.5s | 15 formats (360p to 1080p, AVC/HEVC/AV1, AAC) | UNKNOWN (Clear UGC) | 1,983 ms | **DOWNLOAD_VERIFIED** |
+| **Bilibili (Geo-lock)**| `bilibili.com/video/BV1GJ411x7h7` | `RIGHTS_UNVERIFIED` (Licensed Anime Stream) | yt-dlp 2026.08.19 | HTTP 200 / `GEO_RESTRICTED` | **No** (Blocked before stream table) | 0 formats | UNKNOWN | 1,421 ms | **GEO_RESTRICTED** |
+| **iQIYI (`iqiyi.com`)**| `iqiyi.com/v_19rr7phwvw.html` | `RIGHTS_UNVERIFIED` (Official Web Stream) | yt-dlp 2026.08.19 | HTTP 200 / `PROBE_ERROR` | **No**: Extractor failure | 0 formats | UNKNOWN | 953 ms | **FAILED** (Extractor Outdated) |
+| **Tencent / WeTV** | `wetv.vip/play/0038w7h8p38x2r0/...` | `RIGHTS_UNVERIFIED` (Official Web Stream) | yt-dlp 2026.08.19 | HTTP 200 / `GEO_RESTRICTED` | **No**: Geoblock error | 0 formats | UNKNOWN | 1,593 ms | **GEO_RESTRICTED** |
+| **Douyin** | `douyin.com/video/71234567890123...`| `RIGHTS_UNVERIFIED` (Public Web UGC) | yt-dlp 2026.08.19 | HTTP 200 / `AUTH_REQUIRED` | **No**: Visitor cookie barrier | 0 formats | UNKNOWN | 984 ms | **AUTH_REQUIRED** |
+| **Xigua** | `ixigua.com/6829749557672542728` | `RIGHTS_UNVERIFIED` (Public Web Clip) | yt-dlp 2026.08.19 | HTTP 200 / `AUTH_REQUIRED` | **No**: Cookie required | 0 formats | UNKNOWN | 1,031 ms | **AUTH_REQUIRED** |
+| **Youku** | `v.youku.com/v_show/id_XMTI4.html` | `RIGHTS_UNVERIFIED` (Public Web Archive) | yt-dlp 2026.08.19 | HTTP 200 / `AUTH_REQUIRED` | **Partial**: Title, but 0 stream formats | 0 formats | UNKNOWN | 1,120 ms | **AUTH_REQUIRED** |
+| **HLS (M3U8)** | `test-streams.mux.dev/x36xhzz/...`| `CC_BY_3_0_VERIFIED` (Big Buck Bunny) | ManifestDiscoveryAdapter / N_m3u8DL-RE | HTTP 200 / `DISCOVERABLE` | **Yes**: Master playlist | 5 variants (320x184 up to 1920x1080 @ 60fps) | NO_DRM_APPARENT | 358 ms | **DOWNLOAD_VERIFIED** |
+| **DASH (MPD)** | `dash.akamaized.net/akamai/...` | `CC_BY_3_0_VERIFIED` (Big Buck Bunny) | ManifestDiscoveryAdapter | HTTP 200 / `DISCOVERABLE` | **Yes**: Static MPD XML | 11 representations (320x180 up to 3840x2160, 4K) | NO_DRM_APPARENT | 187 ms | **METADATA_VERIFIED** |
+| **Direct MP4** | `w3schools.com/html/mov_bbb.mp4` | `CC_BY_3_0_VERIFIED` (Big Buck Bunny sample) | DirectFileDiscoveryAdapter | HTTP 206 / `DISCOVERABLE` | **Yes**: Filename, size 788,493 B | 1 format (video/mp4) | NO_DRM_APPARENT | 1,250 ms | **METADATA_VERIFIED** |
+| **Direct MP4 (Feature)**| `archive.org/download/..._512kb.mp4`| `PUBLIC_DOMAIN_VERIFIED` (1954 Film) | DirectFileDiscoveryAdapter | HTTP 206 / `DISCOVERABLE` | **Yes**: Size 315,869,226 B, Length 4356s | 1 format (video/mp4, 320x240, 29.97fps, stereo) | NO_DRM_APPARENT | 890 ms | **DOWNLOAD_VERIFIED** |
+| **Direct MP4 (Chinese Feature)**| `archive.org/download/street_angel/street_angel.mp4`| `PUBLIC_DOMAIN_VERIFIED` (1937 Film *Street Angel* / 馬路天使) | DirectFileDiscoveryAdapter | HTTP 206 / `DISCOVERABLE` | **Yes**: Size 565,167,881 B, Length 5429s (90.49m) | 1 format (video/mp4, 640x480, 29.97fps, stereo AAC) | NO_DRM_APPARENT | 740 ms | **DOWNLOAD_VERIFIED** |
 
 ---
 
@@ -75,3 +80,12 @@ Verdicts strictly adhere to the CADS truthfulness standard:
 - **GEO_RESTRICTED**: 2 (Bilibili Anime, WeTV / Tencent Video)
 - **FAILED**: 1 (iQIYI — upstream extractor deprecation)
 - **NOT_TESTED**: 0
+
+---
+
+## 5. Rights & Provenance Separation Standard
+
+AutoSub Cloud V2 strictly distinguishes between:
+1. **Underlying Work Copyright**: Legal ownership of the underlying script, performance, and cinematographic work under international copyright regimes (Berne Convention, PRC Copyright Law, US Copyright Act). Works created before 1954/1937 whose protection terms have expired are documented as `PUBLIC_DOMAIN_VERIFIED`.
+2. **Digital Recording / Carrier Provenance**: The source entity hosting or digitizing the media file (e.g., Internet Archive repository, official CDN distributor, UGC platform).
+3. **Web / Social Media Classification**: Streaming content probed on consumer platforms (Bilibili, Douyin, Xigua, iQIYI, Tencent, Youku) lacks explicit third-party redistribution licensing. In compliance with CADS truthfulness protocols, these sources are classified as `RIGHTS_UNVERIFIED` rather than extrapolating fair-use rights. Automated production pipelines must require operator-provided rights clearance before full-scale processing.

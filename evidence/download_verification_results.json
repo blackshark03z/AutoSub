@@ -26,6 +26,7 @@
       "authentication_required": false,
       "drm_status": "UNKNOWN",
       "probe_duration_ms": 1983,
+      "rights_verdict": "RIGHTS_UNVERIFIED",
       "verdict": "METADATA_VERIFIED",
       "notes": "Public UGC. 360p-1080p streamable. 480p unauthenticated, 720p+ requires login/cookie for full bitrate."
     },
@@ -40,6 +41,7 @@
       "authentication_required": false,
       "drm_status": "UNKNOWN",
       "probe_duration_ms": 1421,
+      "rights_verdict": "RIGHTS_UNVERIFIED",
       "verdict": "GEO_RESTRICTED",
       "notes": "Detected region-lock/geoblock."
     },
@@ -54,6 +56,7 @@
       "authentication_required": false,
       "drm_status": "UNKNOWN",
       "probe_duration_ms": 953,
+      "rights_verdict": "RIGHTS_UNVERIFIED",
       "verdict": "FAILED",
       "notes": "Upstream extractor failure: iQIYI updated client JavaScript player API signature."
     },
@@ -68,6 +71,7 @@
       "authentication_required": false,
       "drm_status": "UNKNOWN",
       "probe_duration_ms": 1593,
+      "rights_verdict": "RIGHTS_UNVERIFIED",
       "verdict": "GEO_RESTRICTED",
       "notes": "WeTV geo-blocking enforced on node IP."
     },
@@ -82,6 +86,7 @@
       "authentication_required": true,
       "drm_status": "UNKNOWN",
       "probe_duration_ms": 984,
+      "rights_verdict": "RIGHTS_UNVERIFIED",
       "verdict": "AUTH_REQUIRED",
       "notes": "Douyin anti-crawler barrier: requires fresh web visitor cookies (session ticket)."
     },
@@ -96,6 +101,7 @@
       "authentication_required": true,
       "drm_status": "UNKNOWN",
       "probe_duration_ms": 1031,
+      "rights_verdict": "RIGHTS_UNVERIFIED",
       "verdict": "AUTH_REQUIRED",
       "notes": "ByteDance cookie barrier: requires visitor cookies."
     },
@@ -111,6 +117,7 @@
       "authentication_required": false,
       "drm_status": "NO_DRM_APPARENT",
       "probe_duration_ms": 358,
+      "rights_verdict": "CC_BY_3_0_VERIFIED",
       "verdict": "METADATA_VERIFIED",
       "notes": "Fast manifest parsing via ManifestDiscoveryAdapter. Clean variants 320x184 to 1920x1080."
     },
@@ -126,6 +133,7 @@
       "authentication_required": false,
       "drm_status": "NO_DRM_APPARENT",
       "probe_duration_ms": 187,
+      "rights_verdict": "CC_BY_3_0_VERIFIED",
       "verdict": "METADATA_VERIFIED",
       "notes": "Native XML parsing via ManifestDiscoveryAdapter. Zero DRM markers."
     },
@@ -140,6 +148,7 @@
       "authentication_required": false,
       "drm_status": "NO_DRM_APPARENT",
       "probe_duration_ms": 1250,
+      "rights_verdict": "CC_BY_3_0_VERIFIED",
       "verdict": "METADATA_VERIFIED",
       "notes": "HTTP Range 0-1023 probe via DirectFileDiscoveryAdapter."
     }
@@ -148,7 +157,10 @@
     {
       "test_id": "TEST_A1_BILIBILI_SHORT",
       "source_url": "https://www.bilibili.com/video/BV117411r7R1",
-      "rights_basis": "Public Bilibili UGC content, personal fair-use / non-commercial evaluation",
+      "work_copyright_status": "Third-party audio/video remix of Chinese New Year Gala (拜年祭) content",
+      "digital_recording_provenance": "Bilibili UGC web stream",
+      "rights_verdict": "RIGHTS_UNVERIFIED",
+      "rights_basis": "Public Bilibili UGC content, unverified web redistribution rights (evaluated strictly for technical viability)",
       "engine_used": "yt-dlp 2026.08.19",
       "command": "python -m yt_dlp -f '30016+30216' --no-playlist -o temp/bilibili_test.%(ext)s <URL>",
       "exit_code": 0,
@@ -183,6 +195,9 @@
     {
       "test_id": "TEST_A2_HLS_1080P",
       "source_url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+      "work_copyright_status": "Creative Commons Attribution 3.0 (Big Buck Bunny, Blender Foundation)",
+      "digital_recording_provenance": "Mux Dev official test stream sample",
+      "rights_verdict": "CC_BY_3_0_VERIFIED",
       "rights_basis": "Creative Commons Attribution 3.0 (Big Buck Bunny open sample)",
       "engine_used": "N_m3u8DL-RE 0.6.0-beta",
       "command": "N_m3u8DL-RE.exe <URL> --save-dir temp/hls_test --save-name hls_bbb --auto-select",
@@ -218,6 +233,9 @@
     {
       "test_id": "TEST_B_LONG_VIDEO_60MIN_PLUS",
       "source_url": "https://archive.org/download/TheFastandtheFuriousJohnIreland1954goofyrip/TheFastandtheFuriousJohnIreland1954goofyrip_512kb.mp4",
+      "work_copyright_status": "Public Domain (1954 US feature film, copyright not renewed)",
+      "digital_recording_provenance": "Internet Archive digital transfer / upload (John Ireland 1954 goofyrip)",
+      "rights_verdict": "PUBLIC_DOMAIN_VERIFIED",
       "rights_basis": "Public Domain Feature Film (The Fast And The Furious, 1954, directed by John Ireland)",
       "engine_used": "Direct Python HTTP Streamer",
       "command": "Native Python 3.11 streaming buffer with Range/Content-Length tracking",
@@ -257,6 +275,9 @@
       "test_id": "TEST_C_CHINESE_LONG_VIDEO_90MIN",
       "title": "Street Angel (馬路天使, 1937)",
       "source_url": "https://archive.org/download/street_angel/street_angel.mp4",
+      "work_copyright_status": "Public Domain (1937 Republic of China film, Mingxing Film Company, Yuan Muzhi; copyright protection expired under PRC and Berne Convention terms >50 years posthumous)",
+      "digital_recording_provenance": "Internet Archive digitized transfer (archive.org/details/street_angel)",
+      "rights_verdict": "PUBLIC_DOMAIN_VERIFIED",
       "rights_basis": "Public Domain Feature Film (authentic Chinese Mandarin/Shanghainese audio dialogue, directed by Yuan Muzhi, starring Zhou Xuan & Zhao Dan)",
       "language": "zh",
       "engine_used": "Direct Python HTTP Streamer",

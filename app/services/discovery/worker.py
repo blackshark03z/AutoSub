@@ -35,7 +35,7 @@ class DiscoveryWorker:
         enforce_dns_validation: bool = True,
     ) -> None:
         self.adapters: list[DiscoveryAdapter] = list(adapters) if adapters is not None else [
-            ManifestDiscoveryAdapter(),
+            ManifestDiscoveryAdapter(enforce_dns_validation=enforce_dns_validation),
             DirectFileDiscoveryAdapter(),
             YtDlpDiscoveryAdapter(),
             LuxDiscoveryAdapter(),

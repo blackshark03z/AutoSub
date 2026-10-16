@@ -656,3 +656,245 @@ def test_ytdlp_adapter_redirect_ssrf_protection():
         assert result.status == DiscoveryStatus.PROBE_ERROR.value
         assert result.error_code == "SSRF_REJECTED"
 
+
+# ---------------------------------------------------------------------------
+# 11. Security Hardening & Fail-Closed Transport Tests
+# ---------------------------------------------------------------------------
+
+def test_ytdlp_fail_closed_when_secure_transport_fails():
+    from app.services.discovery.adapters.ytdlp import SecureTransportUnavailableError
+
+    adapter = YtDlpDiscoveryAdapter()
+    req = DiscoveryRequest(
+        video_url="https://www.bilibili.com/video/BV1test",
+        authorized_access_confirmed=True,
+    )
+
+    with patch.object(adapter, "_get_safe_ydl_cls", side_effect=SecureTransportUnavailableError("Secure transport failed")):
+        result = adapter.probe(req)
+        assert result.status == DiscoveryStatus.PROBE_ERROR.value
+        assert result.error_code == "SECURE_TRANSPORT_UNAVAILABLE"
+        assert result.download_tested is False
+        assert "Secure transport failed" in result.error_message
+
+
+def test_ytdlp_build_request_director_drops_insecure_handlers():
+    from app.services.discovery.adapters.ytdlp import _get_safe_ydl_cls
+
+    safe_ydl_cls = _get_safe_ydl_cls()
+    ydl = safe_ydl_cls({"quiet": True})
+    SafeUrllibRH = safe_ydl_cls.SafeUrllibRH
+
+    class DummyRequestsRH:
+        RH_NAME = "requests"
+
+    class DummyCurlRH:
+        RH_NAME = "curl_cffi"
+
+    class DummyWebsocketsRH:
+        RH_NAME = "websockets"
+
+    all_handlers = [SafeUrllibRH, DummyRequestsRH, DummyCurlRH, DummyWebsocketsRH]
+
+    director = ydl.build_request_director(all_handlers, {})
+    handler_classes = [h.__class__ for h in director.handlers.values()]
+    assert SafeUrllibRH in handler_classes
+    assert DummyRequestsRH not in handler_classes
+    assert DummyCurlRH not in handler_classes
+    assert DummyWebsocketsRH not in handler_classes
+
+
+def test_ytdlp_rejects_unsafe_proxy():
+    from app.services.discovery.adapters.ytdlp import _get_safe_ydl_cls
+
+    safe_ydl_cls = _get_safe_ydl_cls()
+    with pytest.raises(SsrfProtectionError) as exc_info:
+        safe_ydl_cls({"proxy": "http://127.0.0.1:8080"})
+    assert "Blocked unsafe yt-dlp proxy configuration" in str(exc_info.value)
+    assert "BLOCKED_IP_LITERAL" in str(exc_info.value)
+
+
+def test_ssrf_rejects_ipv4_mapped_ipv6():
+    # Loopback mapped IPv6
+    safe, reason = validate_url_ssrf("http://[::ffff:127.0.0.1]/video.mp4", resolve_dns=False)
+    assert not safe
+    assert "BLOCKED_IP_LITERAL" in reason
+
+    # Cloud metadata mapped IPv6
+    safe, reason = validate_url_ssrf("http://[::ffff:169.254.169.254]/meta-data", resolve_dns=False)
+    assert not safe
+    assert "BLOCKED_IP_LITERAL" in reason
+
+    # Private IP mapped IPv6
+    safe, reason = validate_url_ssrf("http://[::ffff:10.0.0.1]/stream.m3u8", resolve_dns=False)
+    assert not safe
+    assert "BLOCKED_IP_LITERAL" in reason
+
+    safe, reason = validate_url_ssrf("http://[::ffff:192.168.1.1]/media.mp4", resolve_dns=False)
+    assert not safe
+    assert "BLOCKED_IP_LITERAL" in reason
+
+
+def test_validate_proxy_url():
+    from app.services.discovery.ssrf import validate_proxy_url
+
+    # Loopback proxy rejected
+    safe, reason = validate_proxy_url("http://127.0.0.1:8080", resolve_dns=False)
+    assert not safe
+    assert "BLOCKED_IP_LITERAL" in reason
+
+    # Cloud metadata proxy rejected
+    safe, reason = validate_proxy_url("http://169.254.169.254:3128", resolve_dns=False)
+    assert not safe
+
+    # Non-HTTP proxy rejected
+    safe, reason = validate_proxy_url("socks5://127.0.0.1:1080", resolve_dns=False)
+    assert not safe
+
+
+def test_safe_http_fetch_injects_empty_proxy_handler_by_default():
+    with patch("urllib.request.build_opener") as mock_build_opener:
+        mock_opener = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"content-type": "text/plain"}
+        mock_resp.read.return_value = b"OK"
+        mock_opener.open.return_value = mock_resp
+        mock_build_opener.return_value = mock_opener
+
+        with patch("app.services.discovery.ssrf.validate_url_ssrf", return_value=(True, None)):
+            safe_http_fetch("https://example.com/test")
+
+        args, _ = mock_build_opener.call_args
+        handlers = args
+        handler_types = [type(h) for h in handlers]
+        assert urllib.request.ProxyHandler in handler_types
+        for h in handlers:
+            if isinstance(h, urllib.request.ProxyHandler):
+                assert h.proxies == {}
+
+
+def test_safe_http_connection_rejects_ipv4_mapped_ipv6_peer():
+    from app.services.discovery.ssrf import SafeHTTPConnection, SsrfProtectionError
+
+    conn = SafeHTTPConnection("example.com", 80)
+    mock_sock = MagicMock()
+    mock_sock.getpeername.return_value = ("::ffff:127.0.0.1", 80)
+    conn._create_connection = MagicMock(return_value=mock_sock)
+
+    with pytest.raises(SsrfProtectionError) as exc_info:
+        conn.connect()
+    assert "DNS rebinding detected" in str(exc_info.value)
+    mock_sock.close.assert_called_once()
+
+
+def test_manifest_adapter_hls_subtitle_ssrf_poisoning_rejected():
+    adapter = ManifestDiscoveryAdapter()
+    req = DiscoveryRequest(
+        video_url="https://legit-cdn.com/stream.m3u8",
+        authorized_access_confirmed=True,
+    )
+    poisoned_hls = (
+        "#EXTM3U\n"
+        '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="En",URI="http://169.254.169.254/subs.vtt"\n'
+        "#EXT-X-STREAM-INF:BANDWIDTH=1000000\n"
+        "video.m3u8\n"
+    )
+    with patch("app.services.discovery.adapters.manifest.safe_http_fetch") as mock_fetch:
+        mock_fetch.return_value = (200, {"content-type": "application/x-mpegURL"}, poisoned_hls.encode("utf-8"))
+        result = adapter.probe(req)
+        assert result.status == DiscoveryStatus.PROBE_ERROR.value
+        assert result.error_code == "SSRF_MANIFEST_POISONING"
+
+
+def test_manifest_adapter_hls_segment_ssrf_poisoning_rejected():
+    adapter = ManifestDiscoveryAdapter()
+    req = DiscoveryRequest(
+        video_url="https://legit-cdn.com/media.m3u8",
+        authorized_access_confirmed=True,
+    )
+    poisoned_media_playlist = (
+        "#EXTM3U\n"
+        "#EXT-X-TARGETDURATION:10\n"
+        "#EXTINF:10.0,\n"
+        "http://127.0.0.1:8000/internal_chunk.ts\n"
+        "#EXT-X-ENDLIST\n"
+    )
+    with patch("app.services.discovery.adapters.manifest.safe_http_fetch") as mock_fetch:
+        mock_fetch.return_value = (200, {"content-type": "application/x-mpegURL"}, poisoned_media_playlist.encode("utf-8"))
+        result = adapter.probe(req)
+        assert result.status == DiscoveryStatus.PROBE_ERROR.value
+        assert result.error_code == "SSRF_MANIFEST_POISONING"
+
+
+def test_manifest_adapter_hls_init_map_ssrf_poisoning_rejected():
+    adapter = ManifestDiscoveryAdapter()
+    req = DiscoveryRequest(
+        video_url="https://legit-cdn.com/media.m3u8",
+        authorized_access_confirmed=True,
+    )
+    poisoned_init = (
+        "#EXTM3U\n"
+        '#EXT-X-MAP:URI="http://169.254.169.254/init.mp4"\n'
+        "#EXTINF:10.0,\n"
+        "segment1.ts\n"
+    )
+    with patch("app.services.discovery.adapters.manifest.safe_http_fetch") as mock_fetch:
+        mock_fetch.return_value = (200, {"content-type": "application/x-mpegURL"}, poisoned_init.encode("utf-8"))
+        result = adapter.probe(req)
+        assert result.status == DiscoveryStatus.PROBE_ERROR.value
+        assert result.error_code == "SSRF_MANIFEST_POISONING"
+
+
+def test_manifest_adapter_dash_segment_template_ssrf_poisoning_rejected():
+    adapter = ManifestDiscoveryAdapter()
+    req = DiscoveryRequest(
+        video_url="https://legit-cdn.com/stream.mpd",
+        authorized_access_confirmed=True,
+    )
+    poisoned_dash = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">\n'
+        '  <Period>\n'
+        '    <AdaptationSet mimeType="video/mp4">\n'
+        '      <SegmentTemplate media="http://169.254.169.254/$Number$.m4s" initialization="http://127.0.0.1/init.mp4"/>\n'
+        '      <Representation id="1" bandwidth="1000000"/>\n'
+        '    </AdaptationSet>\n'
+        '  </Period>\n'
+        '</MPD>'
+    )
+    with patch("app.services.discovery.adapters.manifest.safe_http_fetch") as mock_fetch:
+        mock_fetch.return_value = (200, {"content-type": "application/dash+xml"}, poisoned_dash.encode("utf-8"))
+        result = adapter.probe(req)
+        assert result.status == DiscoveryStatus.PROBE_ERROR.value
+        assert result.error_code == "SSRF_MANIFEST_POISONING"
+
+
+def test_manifest_adapter_dash_segment_url_ssrf_poisoning_rejected():
+    adapter = ManifestDiscoveryAdapter()
+    req = DiscoveryRequest(
+        video_url="https://legit-cdn.com/stream.mpd",
+        authorized_access_confirmed=True,
+    )
+    poisoned_dash = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">\n'
+        '  <Period>\n'
+        '    <AdaptationSet mimeType="video/mp4">\n'
+        '      <SegmentList>\n'
+        '        <Initialization sourceURL="http://10.0.0.1/init.mp4"/>\n'
+        '        <SegmentURL media="http://172.16.0.1/seg1.m4s"/>\n'
+        '      </SegmentList>\n'
+        '      <Representation id="1" bandwidth="1000000"/>\n'
+        '    </AdaptationSet>\n'
+        '  </Period>\n'
+        '</MPD>'
+    )
+    with patch("app.services.discovery.adapters.manifest.safe_http_fetch") as mock_fetch:
+        mock_fetch.return_value = (200, {"content-type": "application/dash+xml"}, poisoned_dash.encode("utf-8"))
+        result = adapter.probe(req)
+        assert result.status == DiscoveryStatus.PROBE_ERROR.value
+        assert result.error_code == "SSRF_MANIFEST_POISONING"
+
+

@@ -37,6 +37,10 @@ class SsrfProtectionError(ValueError):
 
 
 def is_ip_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # 1. Unpack IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1, ::ffff:7f00:1, ::ffff:169.254.169.254)
+    if isinstance(ip, ipaddress.IPv6Address) and getattr(ip, "ipv4_mapped", None) is not None:
+        return is_ip_blocked(ip.ipv4_mapped)
+
     if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
         return True
     for net in BLOCKED_IP_NETWORKS:
@@ -48,13 +52,33 @@ def is_ip_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return False
 
 
+def validate_proxy_url(proxy_url: str, resolve_dns: bool = True) -> Tuple[bool, str | None]:
+    """Validate that a proxy URL does not target a loopback, private, or metadata endpoint."""
+    if not proxy_url or not isinstance(proxy_url, str):
+        return False, "EMPTY_OR_INVALID_PROXY_URL"
+    return validate_url_ssrf(proxy_url, resolve_dns=resolve_dns)
+
+
+def validate_proxies_dict(proxies: dict[str, str] | None, resolve_dns: bool = True) -> Tuple[bool, str | None]:
+    """Validate all configured proxy endpoints against SSRF rules."""
+    if not proxies:
+        return True, None
+    for proto, p_url in proxies.items():
+        if not p_url:
+            continue
+        safe, reason = validate_proxy_url(p_url, resolve_dns=resolve_dns)
+        if not safe:
+            return False, f"Unsafe proxy for {proto} ({p_url}): {reason}"
+    return True, None
+
+
 class SafeHTTPConnection(http.client.HTTPConnection):
     """HTTPConnection that inspects the connected socket peer IP to defeat DNS rebinding."""
 
     def connect(self) -> None:
         super().connect()
         if self.sock:
-            peer_ip_str = self.sock.getpeername()[0]
+            peer_ip_str = self.sock.getpeername()[0].strip("[]")
             try:
                 peer_ip = ipaddress.ip_address(peer_ip_str)
             except ValueError:
@@ -74,7 +98,7 @@ class SafeHTTPSConnection(http.client.HTTPSConnection):
     def connect(self) -> None:
         super().connect()
         if self.sock:
-            peer_ip_str = self.sock.getpeername()[0]
+            peer_ip_str = self.sock.getpeername()[0].strip("[]")
             try:
                 peer_ip = ipaddress.ip_address(peer_ip_str)
             except ValueError:
@@ -125,22 +149,25 @@ def validate_url_ssrf(url: str, resolve_dns: bool = True) -> Tuple[bool, str | N
     if not hostname:
         return False, "MISSING_HOST"
 
-    if hostname in {"localhost", "loopback"} or hostname in CLOUD_METADATA_HOSTS:
-        return False, f"BLOCKED_HOST: {hostname}"
+    # Strip bracket notation for IPv6 literals (e.g. [::1] -> ::1)
+    clean_host = hostname.strip("[]")
 
-    # Check if hostname is directly an IP literal
+    if clean_host in {"localhost", "loopback"} or clean_host in CLOUD_METADATA_HOSTS:
+        return False, f"BLOCKED_HOST: {clean_host}"
+
+    # Check if clean_host is directly an IP literal
     try:
-        ip = ipaddress.ip_address(hostname)
+        ip = ipaddress.ip_address(clean_host)
         if is_ip_blocked(ip):
             return False, f"BLOCKED_IP_LITERAL: {ip}"
     except ValueError:
         # Hostname is a domain name, proceed to DNS resolution if requested
         if resolve_dns:
             try:
-                addr_info = socket.getaddrinfo(hostname, None)
+                addr_info = socket.getaddrinfo(clean_host, None)
                 for entry in addr_info:
                     sockaddr = entry[4]
-                    ip_str = sockaddr[0]
+                    ip_str = sockaddr[0].strip("[]")
                     resolved_ip = ipaddress.ip_address(ip_str)
                     if is_ip_blocked(resolved_ip):
                         return False, f"BLOCKED_RESOLVED_IP: {resolved_ip}"
@@ -159,16 +186,28 @@ def safe_http_fetch(
     timeout_seconds: float = 10.0,
     max_bytes: int = 1048576,  # 1 MiB limit
     max_redirects: int = 5,
+    proxies: dict[str, str] | None = None,
+    resolve_dns: bool = True,
 ) -> tuple[int, dict[str, str], bytes]:
-    """Perform an SSRF-safe HTTP request with redirect inspection and byte caps."""
+    """Perform an SSRF-safe HTTP request with redirect inspection, byte caps, and proxy safety audit."""
     current_url = url
     redirect_count = 0
     req_headers = {"User-Agent": "AutoSub-Discovery/2.0 (Headless Video Probe)"}
     if headers:
         req_headers.update(headers)
 
+    # Audit and lock down proxy handlers
+    if proxies is not None:
+        p_safe, p_reason = validate_proxies_dict(proxies, resolve_dns=resolve_dns)
+        if not p_safe:
+            raise SsrfProtectionError(f"Blocked unsafe proxy configuration: {p_reason}")
+        proxy_handler = urllib.request.ProxyHandler(proxies)
+    else:
+        # Lock network mode: isolate from uninspected ambient environment proxies
+        proxy_handler = urllib.request.ProxyHandler({})
+
     while True:
-        safe, reason = validate_url_ssrf(current_url, resolve_dns=True)
+        safe, reason = validate_url_ssrf(current_url, resolve_dns=resolve_dns)
         if not safe:
             raise SsrfProtectionError(f"SSRF violation targeting {current_url}: {reason}")
 
@@ -178,7 +217,7 @@ def safe_http_fetch(
             def redirect_request(self, req, fp, code, msg, hdrs, newurl):
                 return None
 
-        handlers: list[Any] = [NoRedirectHandler]
+        handlers: list[Any] = [NoRedirectHandler, proxy_handler]
         if current_url.lower().startswith("https:"):
             try:
                 import certifi

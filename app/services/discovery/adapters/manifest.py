@@ -24,6 +24,9 @@ FAIRPLAY_UUID = "94ce86fb-07ff-4f43-adb8-93d2fa968ca2"
 class ManifestDiscoveryAdapter:
     adapter_name = "manifest"
 
+    def __init__(self, enforce_dns_validation: bool = False) -> None:
+        self.enforce_dns_validation = enforce_dns_validation
+
     def can_handle(self, url: str, platform: str | None = None) -> bool:
         if platform in {"manifest_hls", "manifest_dash", "hls", "dash", "m3u8", "mpd"}:
             return True
@@ -42,6 +45,7 @@ class ManifestDiscoveryAdapter:
                 method="GET",
                 timeout_seconds=request.timeout_seconds,
                 max_bytes=524288,  # 512 KiB max for manifest
+                resolve_dns=self.enforce_dns_validation,
             )
             duration_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -102,6 +106,8 @@ class ManifestDiscoveryAdapter:
 
         drm_suspected = False
         drm_method = None
+        verified_urls: list[str] = []
+
         # Check for EXT-X-KEY encryption and SSRF in key URI
         key_matches = re.findall(r"#EXT-X-KEY:METHOD=([A-Za-z0-9_\-]+)(?:,([^,\r\n]+))?", content)
         for method, attrs in key_matches:
@@ -122,8 +128,7 @@ class ManifestDiscoveryAdapter:
                     key_url = urllib.parse.urljoin(request.video_url, raw_key_uri)
                     parsed_key = urllib.parse.urlsplit(key_url)
                     if parsed_key.scheme.lower() in {"http", "https"}:
-                        same_host = (parsed_key.hostname or "").lower() == (urllib.parse.urlsplit(request.video_url).hostname or "").lower()
-                        k_safe, k_reason = validate_url_ssrf(key_url, resolve_dns=not same_host)
+                        k_safe, k_reason = validate_url_ssrf(key_url, resolve_dns=self.enforce_dns_validation)
                         if not k_safe:
                             return DiscoveryResult(
                                 source_url_redacted=redacted_url,
@@ -137,8 +142,9 @@ class ManifestDiscoveryAdapter:
                                 error_code="SSRF_MANIFEST_POISONING",
                                 error_message=f"HLS key URI targets blocked address: {k_reason}",
                             )
+                        verified_urls.append(key_url)
 
-        # Parse variants and validate variant URLs against SSRF
+        # Parse variants and validate variant URLs against SSRF (with strict DNS resolution)
         formats: list[dict[str, Any]] = []
         stream_matches = re.finditer(
             r"#EXT-X-STREAM-INF:([^\r\n]+)\r?\n([^\r\n]+)", content
@@ -148,10 +154,7 @@ class ManifestDiscoveryAdapter:
             uri = match.group(2).strip()
 
             variant_full_url = urllib.parse.urljoin(request.video_url, uri)
-            parsed_var = urllib.parse.urlsplit(variant_full_url)
-            parsed_req = urllib.parse.urlsplit(request.video_url)
-            same_host = (parsed_var.hostname or "").lower() == (parsed_req.hostname or "").lower()
-            v_safe, v_reason = validate_url_ssrf(variant_full_url, resolve_dns=not same_host)
+            v_safe, v_reason = validate_url_ssrf(variant_full_url, resolve_dns=self.enforce_dns_validation)
             if not v_safe:
                 return DiscoveryResult(
                     source_url_redacted=redacted_url,
@@ -165,6 +168,7 @@ class ManifestDiscoveryAdapter:
                     error_code="SSRF_MANIFEST_POISONING",
                     error_message=f"HLS variant URI targets blocked address: {v_reason}",
                 )
+            verified_urls.append(variant_full_url)
             
             bandwidth = None
             bw_m = re.search(r"BANDWIDTH=(\d+)", attrs_str)
@@ -191,15 +195,77 @@ class ManifestDiscoveryAdapter:
             )
             formats.append(fmt.to_dict())
 
-        # Subtitle track detection
+        # Subtitle track detection & SSRF check
         subtitle_languages: list[str] = []
         for line in content.splitlines():
-            if line.startswith("#EXT-X-MEDIA:") and "TYPE=SUBTITLES" in line:
-                lang_m = re.search(r'LANGUAGE="([^"]+)"', line)
+            line_str = line.strip()
+            if line_str.startswith("#EXT-X-MEDIA:") and "TYPE=SUBTITLES" in line_str:
+                lang_m = re.search(r'LANGUAGE="([^"]+)"', line_str)
                 if lang_m:
                     lang = lang_m.group(1)
                     if lang not in subtitle_languages:
                         subtitle_languages.append(lang)
+                uri_m = re.search(r'URI="([^"]+)"', line_str)
+                if uri_m:
+                    sub_url = urllib.parse.urljoin(request.video_url, uri_m.group(1).strip())
+                    s_safe, s_reason = validate_url_ssrf(sub_url, resolve_dns=self.enforce_dns_validation)
+                    if not s_safe:
+                        return DiscoveryResult(
+                            source_url_redacted=redacted_url,
+                            platform="manifest_hls",
+                            status=DiscoveryStatus.PROBE_ERROR.value,
+                            recommended_engine="n_m3u8dl_re",
+                            title=None,
+                            duration_seconds=None,
+                            probe_duration_ms=duration_ms,
+                            download_tested=False,
+                            error_code="SSRF_MANIFEST_POISONING",
+                            error_message=f"HLS subtitle URI targets blocked address: {s_reason}",
+                        )
+                    verified_urls.append(sub_url)
+
+        # Media playlist segment & init map references check (Metadata-only: never download segments)
+        for line in content.splitlines():
+            line_str = line.strip()
+            if not line_str:
+                continue
+            if line_str.startswith("#EXT-X-MAP:"):
+                map_m = re.search(r'URI="([^"]+)"', line_str)
+                if map_m:
+                    map_url = urllib.parse.urljoin(request.video_url, map_m.group(1).strip())
+                    m_safe, m_reason = validate_url_ssrf(map_url, resolve_dns=self.enforce_dns_validation)
+                    if not m_safe:
+                        return DiscoveryResult(
+                            source_url_redacted=redacted_url,
+                            platform="manifest_hls",
+                            status=DiscoveryStatus.PROBE_ERROR.value,
+                            recommended_engine="n_m3u8dl_re",
+                            title=None,
+                            duration_seconds=None,
+                            probe_duration_ms=duration_ms,
+                            download_tested=False,
+                            error_code="SSRF_MANIFEST_POISONING",
+                            error_message=f"HLS init map URI targets blocked address: {m_reason}",
+                        )
+                    verified_urls.append(map_url)
+            elif not line_str.startswith("#"):
+                # Non-comment line in a media playlist is a segment reference
+                seg_url = urllib.parse.urljoin(request.video_url, line_str)
+                seg_safe, seg_reason = validate_url_ssrf(seg_url, resolve_dns=self.enforce_dns_validation)
+                if not seg_safe:
+                    return DiscoveryResult(
+                        source_url_redacted=redacted_url,
+                        platform="manifest_hls",
+                        status=DiscoveryStatus.PROBE_ERROR.value,
+                        recommended_engine="n_m3u8dl_re",
+                        title=None,
+                        duration_seconds=None,
+                        probe_duration_ms=duration_ms,
+                        download_tested=False,
+                        error_code="SSRF_MANIFEST_POISONING",
+                        error_message=f"HLS segment reference targets blocked address: {seg_reason}",
+                    )
+                verified_urls.append(seg_url)
 
         status = DiscoveryStatus.DRM_SUSPECTED.value if drm_suspected else DiscoveryStatus.DISCOVERABLE.value
         drm_status = DrmStatus.DRM_SUSPECTED.value if drm_suspected else (
@@ -220,7 +286,11 @@ class ManifestDiscoveryAdapter:
             probe_duration_ms=duration_ms,
             download_tested=False,
             error_code=None,
-            details={"encryption_method": drm_method, "variant_count": len(formats)},
+            details={
+                "encryption_method": drm_method,
+                "variant_count": len(formats),
+                "verified_url_count": len(verified_urls),
+            },
         )
 
     def _parse_dash(
@@ -250,13 +320,15 @@ class ManifestDiscoveryAdapter:
         ns_match = re.match(r"\{([^}]+)\}", root.tag)
         ns_prefix = f"{{{ns_match.group(1)}}}" if ns_match else ""
 
+        verified_urls: list[str] = []
+
         # Validate BaseURL tags against SSRF
         base_urls = root.findall(f".//{ns_prefix}BaseURL")
         for b in base_urls:
             b_text = (b.text or "").strip()
             if b_text and (b_text.startswith("http://") or b_text.startswith("https://") or "://" in b_text):
                 full_b_url = urllib.parse.urljoin(request.video_url, b_text)
-                b_safe, b_reason = validate_url_ssrf(full_b_url, resolve_dns=True)
+                b_safe, b_reason = validate_url_ssrf(full_b_url, resolve_dns=self.enforce_dns_validation)
                 if not b_safe:
                     return DiscoveryResult(
                         source_url_redacted=redacted_url,
@@ -270,6 +342,53 @@ class ManifestDiscoveryAdapter:
                         error_code="SSRF_MANIFEST_POISONING",
                         error_message=f"DASH BaseURL targets blocked address: {b_reason}",
                     )
+                verified_urls.append(full_b_url)
+
+        # Validate SegmentTemplate tags against SSRF
+        seg_templates = root.findall(f".//{ns_prefix}SegmentTemplate")
+        for st in seg_templates:
+            for attr in ("media", "initialization"):
+                val = st.get(attr)
+                if val and ("http://" in val or "https://" in val or "://" in val):
+                    full_st_url = urllib.parse.urljoin(request.video_url, val)
+                    st_safe, st_reason = validate_url_ssrf(full_st_url, resolve_dns=self.enforce_dns_validation)
+                    if not st_safe:
+                        return DiscoveryResult(
+                            source_url_redacted=redacted_url,
+                            platform="manifest_dash",
+                            status=DiscoveryStatus.PROBE_ERROR.value,
+                            recommended_engine="n_m3u8dl_re",
+                            title=None,
+                            duration_seconds=None,
+                            probe_duration_ms=duration_ms,
+                            download_tested=False,
+                            error_code="SSRF_MANIFEST_POISONING",
+                            error_message=f"DASH SegmentTemplate {attr} targets blocked address: {st_reason}",
+                        )
+                    verified_urls.append(full_st_url)
+
+        # Validate SegmentURL and Initialization tags against SSRF
+        seg_nodes = root.findall(f".//{ns_prefix}SegmentURL") + root.findall(f".//{ns_prefix}Initialization")
+        for sn in seg_nodes:
+            for attr in ("media", "initialization", "sourceURL"):
+                val = sn.get(attr)
+                if val and ("http://" in val or "https://" in val or "://" in val):
+                    full_sn_url = urllib.parse.urljoin(request.video_url, val)
+                    sn_safe, sn_reason = validate_url_ssrf(full_sn_url, resolve_dns=self.enforce_dns_validation)
+                    if not sn_safe:
+                        return DiscoveryResult(
+                            source_url_redacted=redacted_url,
+                            platform="manifest_dash",
+                            status=DiscoveryStatus.PROBE_ERROR.value,
+                            recommended_engine="n_m3u8dl_re",
+                            title=None,
+                            duration_seconds=None,
+                            probe_duration_ms=duration_ms,
+                            download_tested=False,
+                            error_code="SSRF_MANIFEST_POISONING",
+                            error_message=f"DASH segment element {attr} targets blocked address: {sn_reason}",
+                        )
+                    verified_urls.append(full_sn_url)
 
         # Check for ContentProtection tags (Widevine, PlayReady, FairPlay)
         content_protections = root.findall(f".//{ns_prefix}ContentProtection")
@@ -330,5 +449,9 @@ class ManifestDiscoveryAdapter:
             probe_duration_ms=duration_ms,
             download_tested=False,
             error_code=None,
-            details={"drm_scheme": drm_scheme, "representation_count": len(formats)},
+            details={
+                "drm_scheme": drm_scheme,
+                "representation_count": len(formats),
+                "verified_url_count": len(verified_urls),
+            },
         )
