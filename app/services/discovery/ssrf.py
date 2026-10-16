@@ -6,7 +6,7 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Tuple
+from typing import Any, Tuple
 
 CLOUD_METADATA_HOSTS = {
     "metadata.google.internal",
@@ -46,6 +46,61 @@ def is_ip_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     if str(ip) == "100.100.100.200":
         return True
     return False
+
+
+class SafeHTTPConnection(http.client.HTTPConnection):
+    """HTTPConnection that inspects the connected socket peer IP to defeat DNS rebinding."""
+
+    def connect(self) -> None:
+        super().connect()
+        if self.sock:
+            peer_ip_str = self.sock.getpeername()[0]
+            try:
+                peer_ip = ipaddress.ip_address(peer_ip_str)
+            except ValueError:
+                self.sock.close()
+                raise SsrfProtectionError(f"SSRF violation: invalid peer IP {peer_ip_str}")
+
+            if is_ip_blocked(peer_ip):
+                self.sock.close()
+                raise SsrfProtectionError(
+                    f"SSRF violation: socket connected to blocked peer IP {peer_ip_str} (DNS rebinding detected)"
+                )
+
+
+class SafeHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPSConnection that inspects the connected socket peer IP to defeat DNS rebinding."""
+
+    def connect(self) -> None:
+        super().connect()
+        if self.sock:
+            peer_ip_str = self.sock.getpeername()[0]
+            try:
+                peer_ip = ipaddress.ip_address(peer_ip_str)
+            except ValueError:
+                self.sock.close()
+                raise SsrfProtectionError(f"SSRF violation: invalid peer IP {peer_ip_str}")
+
+            if is_ip_blocked(peer_ip):
+                self.sock.close()
+                raise SsrfProtectionError(
+                    f"SSRF violation: socket connected to blocked peer IP {peer_ip_str} (DNS rebinding detected)"
+                )
+
+
+class SafeHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        return self.do_open(SafeHTTPConnection, req)
+
+
+class SafeHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        return self.do_open(
+            SafeHTTPSConnection,
+            req,
+            context=getattr(self, "_context", None),
+            check_hostname=getattr(self, "_check_hostname", None),
+        )
 
 
 def validate_url_ssrf(url: str, resolve_dns: bool = True) -> Tuple[bool, str | None]:
@@ -123,15 +178,17 @@ def safe_http_fetch(
             def redirect_request(self, req, fp, code, msg, hdrs, newurl):
                 return None
 
-        handlers = [NoRedirectHandler]
+        handlers: list[Any] = [NoRedirectHandler]
         if current_url.lower().startswith("https:"):
             try:
                 import certifi
                 import ssl
                 ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-                handlers.append(urllib.request.HTTPSHandler(context=ssl_ctx))
+                handlers.append(SafeHTTPSHandler(context=ssl_ctx))
             except Exception:
-                pass
+                handlers.append(SafeHTTPSHandler())
+        else:
+            handlers.append(SafeHTTPHandler())
 
         opener = urllib.request.build_opener(*handlers)
         try:

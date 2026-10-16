@@ -14,7 +14,7 @@ from app.services.discovery.models import (
     VideoFormatInfo,
 )
 from app.services.discovery.redaction import redact_url
-from app.services.discovery.ssrf import safe_http_fetch
+from app.services.discovery.ssrf import safe_http_fetch, validate_url_ssrf
 
 WIDEVINE_UUID = "edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"
 PLAYREADY_UUID = "9a04f079-9840-4286-ab92-e65be0885f95"
@@ -102,7 +102,7 @@ class ManifestDiscoveryAdapter:
 
         drm_suspected = False
         drm_method = None
-        # Check for EXT-X-KEY encryption
+        # Check for EXT-X-KEY encryption and SSRF in key URI
         key_matches = re.findall(r"#EXT-X-KEY:METHOD=([A-Za-z0-9_\-]+)(?:,([^,\r\n]+))?", content)
         for method, attrs in key_matches:
             method_upper = method.upper()
@@ -115,7 +115,30 @@ class ManifestDiscoveryAdapter:
             elif method_upper == "AES-128":
                 drm_method = "AES-128"
 
-        # Parse variants
+            if attrs and 'URI="' in attrs:
+                key_uri_m = re.search(r'URI="([^"]+)"', attrs)
+                if key_uri_m:
+                    raw_key_uri = key_uri_m.group(1).strip()
+                    key_url = urllib.parse.urljoin(request.video_url, raw_key_uri)
+                    parsed_key = urllib.parse.urlsplit(key_url)
+                    if parsed_key.scheme.lower() in {"http", "https"}:
+                        same_host = (parsed_key.hostname or "").lower() == (urllib.parse.urlsplit(request.video_url).hostname or "").lower()
+                        k_safe, k_reason = validate_url_ssrf(key_url, resolve_dns=not same_host)
+                        if not k_safe:
+                            return DiscoveryResult(
+                                source_url_redacted=redacted_url,
+                                platform="manifest_hls",
+                                status=DiscoveryStatus.PROBE_ERROR.value,
+                                recommended_engine="n_m3u8dl_re",
+                                title=None,
+                                duration_seconds=None,
+                                probe_duration_ms=duration_ms,
+                                download_tested=False,
+                                error_code="SSRF_MANIFEST_POISONING",
+                                error_message=f"HLS key URI targets blocked address: {k_reason}",
+                            )
+
+        # Parse variants and validate variant URLs against SSRF
         formats: list[dict[str, Any]] = []
         stream_matches = re.finditer(
             r"#EXT-X-STREAM-INF:([^\r\n]+)\r?\n([^\r\n]+)", content
@@ -123,6 +146,25 @@ class ManifestDiscoveryAdapter:
         for i, match in enumerate(stream_matches):
             attrs_str = match.group(1)
             uri = match.group(2).strip()
+
+            variant_full_url = urllib.parse.urljoin(request.video_url, uri)
+            parsed_var = urllib.parse.urlsplit(variant_full_url)
+            parsed_req = urllib.parse.urlsplit(request.video_url)
+            same_host = (parsed_var.hostname or "").lower() == (parsed_req.hostname or "").lower()
+            v_safe, v_reason = validate_url_ssrf(variant_full_url, resolve_dns=not same_host)
+            if not v_safe:
+                return DiscoveryResult(
+                    source_url_redacted=redacted_url,
+                    platform="manifest_hls",
+                    status=DiscoveryStatus.PROBE_ERROR.value,
+                    recommended_engine="n_m3u8dl_re",
+                    title=None,
+                    duration_seconds=None,
+                    probe_duration_ms=duration_ms,
+                    download_tested=False,
+                    error_code="SSRF_MANIFEST_POISONING",
+                    error_message=f"HLS variant URI targets blocked address: {v_reason}",
+                )
             
             bandwidth = None
             bw_m = re.search(r"BANDWIDTH=(\d+)", attrs_str)
@@ -207,6 +249,27 @@ class ManifestDiscoveryAdapter:
         # Find namespaces
         ns_match = re.match(r"\{([^}]+)\}", root.tag)
         ns_prefix = f"{{{ns_match.group(1)}}}" if ns_match else ""
+
+        # Validate BaseURL tags against SSRF
+        base_urls = root.findall(f".//{ns_prefix}BaseURL")
+        for b in base_urls:
+            b_text = (b.text or "").strip()
+            if b_text and (b_text.startswith("http://") or b_text.startswith("https://") or "://" in b_text):
+                full_b_url = urllib.parse.urljoin(request.video_url, b_text)
+                b_safe, b_reason = validate_url_ssrf(full_b_url, resolve_dns=True)
+                if not b_safe:
+                    return DiscoveryResult(
+                        source_url_redacted=redacted_url,
+                        platform="manifest_dash",
+                        status=DiscoveryStatus.PROBE_ERROR.value,
+                        recommended_engine="n_m3u8dl_re",
+                        title=None,
+                        duration_seconds=None,
+                        probe_duration_ms=duration_ms,
+                        download_tested=False,
+                        error_code="SSRF_MANIFEST_POISONING",
+                        error_message=f"DASH BaseURL targets blocked address: {b_reason}",
+                    )
 
         # Check for ContentProtection tags (Widevine, PlayReady, FairPlay)
         content_protections = root.findall(f".//{ns_prefix}ContentProtection")

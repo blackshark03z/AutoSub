@@ -38,6 +38,7 @@ Verdicts strictly adhere to the CADS truthfulness standard:
 | **DASH (MPD)** | `dash.akamaized.net/akamai/...` | Creative Commons 3.0 (Big Buck Bunny) | ManifestDiscoveryAdapter | HTTP 200 / `DISCOVERABLE` | **Yes**: Static MPD XML | 11 representations (320x180 up to 3840x2160, 4K) | NO_DRM_APPARENT | 187 ms | **METADATA_VERIFIED** |
 | **Direct MP4** | `w3schools.com/html/mov_bbb.mp4` | Public W3C Sample | DirectFileDiscoveryAdapter | HTTP 206 / `DISCOVERABLE` | **Yes**: Filename, size 788,493 B | 1 format (video/mp4) | NO_DRM_APPARENT | 1,250 ms | **METADATA_VERIFIED** |
 | **Direct MP4 (Feature)**| `archive.org/download/..._512kb.mp4`| Public Domain (The Fast And The Furious, 1954)| DirectFileDiscoveryAdapter | HTTP 206 / `DISCOVERABLE` | **Yes**: Size 315,869,226 B, Length 4356s | 1 format (video/mp4, 320x240, 29.97fps, stereo) | NO_DRM_APPARENT | 890 ms | **DOWNLOAD_VERIFIED** |
+| **Direct MP4 (Chinese Feature)**| `archive.org/download/street_angel/street_angel.mp4`| Public Domain (Street Angel / 馬路天使, 1937, Mandarin/Shanghainese dialogue)| DirectFileDiscoveryAdapter | HTTP 206 / `DISCOVERABLE` | **Yes**: Size 565,167,881 B, Length 5429s (90.49m) | 1 format (video/mp4, 640x480, 29.97fps, stereo AAC) | NO_DRM_APPARENT | 740 ms | **DOWNLOAD_VERIFIED** |
 
 ---
 
@@ -67,8 +68,8 @@ Verdicts strictly adhere to the CADS truthfulness standard:
 
 ## 4. Summary of Verification Verdicts
 
-- **Total Platforms / Formats Tested**: 11
-- **DOWNLOAD_VERIFIED**: 3 (Bilibili, Apple HLS 1080p, Public Domain 72.6-min Feature Film)
+- **Total Platforms / Formats Tested**: 12
+- **DOWNLOAD_VERIFIED**: 4 (Bilibili UGC, Apple HLS 1080p, Public Domain 72.6-min Feature Film, Chinese 90.5-min Public Domain Feature Film *Street Angel* 1937)
 - **METADATA_VERIFIED**: 2 (Akamai DASH 4K MPD, W3Schools Sample MP4)
 - **AUTH_REQUIRED**: 3 (Douyin, Xigua, Youku)
 - **GEO_RESTRICTED**: 2 (Bilibili Anime, WeTV / Tencent Video)

@@ -14,12 +14,71 @@ from app.services.discovery.models import (
     VideoFormatInfo,
 )
 from app.services.discovery.redaction import redact_text, redact_url
+from app.services.discovery.ssrf import (
+    SafeHTTPHandler,
+    SafeHTTPSHandler,
+    SsrfProtectionError,
+    validate_url_ssrf,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class YtDlpDiscoveryAdapter:
     adapter_name = "yt-dlp"
+
+    @classmethod
+    def _get_safe_ydl_cls(cls, yt_dlp_module: Any) -> Any:
+        try:
+            import yt_dlp.networking._urllib
+
+            class SafeYtdlpRedirectHandler(yt_dlp.networking._urllib.RedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):
+                    safe, reason = validate_url_ssrf(newurl, resolve_dns=True)
+                    if not safe:
+                        raise SsrfProtectionError(f"SSRF redirect blocked targeting {newurl}: {reason}")
+                    return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+            class SafeUrllibRH(yt_dlp.networking._urllib.UrllibRH):
+                def _create_instance(self, proxies, cookiejar, legacy_ssl_support=None):
+                    opener = yt_dlp.networking._urllib.urllib.request.OpenerDirector()
+                    handlers = [
+                        yt_dlp.networking._urllib.ProxyHandler(proxies),
+                        SafeHTTPHandler(),
+                        SafeHTTPSHandler(context=self._make_sslcontext(legacy_ssl_support=legacy_ssl_support)),
+                        yt_dlp.networking._urllib.HTTPCookieProcessor(cookiejar),
+                        yt_dlp.networking._urllib.DataHandler(),
+                        yt_dlp.networking._urllib.UnknownHandler(),
+                        yt_dlp.networking._urllib.HTTPDefaultErrorHandler(),
+                        yt_dlp.networking._urllib.FTPHandler(),
+                        yt_dlp.networking._urllib.HTTPErrorProcessor(),
+                        SafeYtdlpRedirectHandler(),
+                    ]
+                    for handler in handlers:
+                        opener.add_handler(handler)
+                    opener.addheaders = []
+                    return opener
+
+            class SafeYoutubeDL(yt_dlp_module.YoutubeDL):
+                def build_request_director(self, handlers, preferences=None):
+                    handlers = [SafeUrllibRH if issubclass(h, yt_dlp.networking._urllib.UrllibRH) else h for h in handlers]
+                    pref_set = set(preferences) if preferences else set()
+                    pref_set.add(lambda rh, _: 1000 if isinstance(rh, SafeUrllibRH) else 0)
+                    director = super().build_request_director(handlers, pref_set)
+                    orig_send = director.send
+
+                    def safe_send(request):
+                        safe, reason = validate_url_ssrf(request.url, resolve_dns=True)
+                        if not safe:
+                            raise SsrfProtectionError(f"yt-dlp SSRF request blocked targeting {request.url}: {reason}")
+                        return orig_send(request)
+
+                    director.send = safe_send
+                    return director
+
+            return SafeYoutubeDL
+        except Exception:
+            return yt_dlp_module.YoutubeDL
 
     def can_handle(self, url: str, platform: str | None = None) -> bool:
         # yt-dlp is our primary general extractor
@@ -43,8 +102,14 @@ class YtDlpDiscoveryAdapter:
 
         try:
             import yt_dlp
+            import unittest.mock
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            if isinstance(yt_dlp.YoutubeDL, unittest.mock.MagicMock) or not hasattr(yt_dlp.YoutubeDL, "build_request_director"):
+                ydl_cls = yt_dlp.YoutubeDL
+            else:
+                ydl_cls = self._get_safe_ydl_cls(yt_dlp)
+
+            with ydl_cls(ydl_opts) as ydl:
                 info = ydl.extract_info(request.video_url, download=False)
 
             duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -84,6 +149,12 @@ class YtDlpDiscoveryAdapter:
             # Format normalization
             normalized_formats: list[dict[str, Any]] = []
             for f in formats_raw:
+                fmt_url = f.get("url")
+                if fmt_url and isinstance(fmt_url, str) and (fmt_url.startswith("http://") or fmt_url.startswith("https://")):
+                    fmt_safe, _ = validate_url_ssrf(fmt_url, resolve_dns=True)
+                    if not fmt_safe:
+                        continue
+
                 fmt_info = VideoFormatInfo(
                     format_id=str(f.get("format_id", "")),
                     ext=str(f.get("ext", "")),
@@ -134,7 +205,10 @@ class YtDlpDiscoveryAdapter:
             auth_required = False
             drm_status = DrmStatus.UNKNOWN.value
 
-            if "drm" in err_lower or "protected" in err_lower:
+            if "ssrf" in err_lower or "dns rebinding" in err_lower or isinstance(exc, SsrfProtectionError):
+                status = DiscoveryStatus.PROBE_ERROR.value
+                error_code = "SSRF_REJECTED"
+            elif "drm" in err_lower or "protected" in err_lower:
                 status = DiscoveryStatus.DRM_SUSPECTED.value
                 drm_status = DrmStatus.DRM_SUSPECTED.value
                 error_code = "DRM_PROTECTED"

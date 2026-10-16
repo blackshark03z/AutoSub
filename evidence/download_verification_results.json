@@ -252,6 +252,56 @@
         "verdict": "MULTI_OFFSET_DECODE_PASS"
       },
       "verdict": "DOWNLOAD_VERIFIED"
+    },
+    {
+      "test_id": "TEST_C_CHINESE_LONG_VIDEO_90MIN",
+      "title": "Street Angel (馬路天使, 1937)",
+      "source_url": "https://archive.org/download/street_angel/street_angel.mp4",
+      "rights_basis": "Public Domain Feature Film (authentic Chinese Mandarin/Shanghainese audio dialogue, directed by Yuan Muzhi, starring Zhou Xuan & Zhao Dan)",
+      "language": "zh",
+      "engine_used": "Direct Python HTTP Streamer",
+      "command": "Native Python 3.11 streaming buffer with Range/Content-Length tracking and SHA-256",
+      "exit_code": 0,
+      "elapsed_seconds": 69.89,
+      "average_throughput_mb_s": 7.71,
+      "file_path": "temp/chinese_long_video/street_angel_1937.mp4",
+      "file_size_bytes": 565167881,
+      "sha256": "b5434cf6910f3dac5219d1df161af83135c52f84c6e623b1214fca888c97db35",
+      "peak_memory_mb": 2.16,
+      "ffprobe_summary": {
+        "duration_seconds": 5429.46,
+        "duration_minutes": 90.49,
+        "format_name": "QuickTime / MOV",
+        "bitrate_kbps": 832.7,
+        "video_stream": {
+          "codec": "h264",
+          "resolution": "640x480",
+          "fps": 29.97,
+          "nb_frames": 162721
+        },
+        "audio_stream": {
+          "codec": "aac",
+          "sample_rate": 44100,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      },
+      "decode_verification": {
+        "multi_offset_samples": [
+          {"offset_seconds": 0, "sample_seconds": 15, "status": "PASS (0 errors)"},
+          {"offset_seconds": 1800, "sample_seconds": 15, "status": "PASS (0 errors)"},
+          {"offset_seconds": 3600, "sample_seconds": 15, "status": "PASS (0 errors)"},
+          {"offset_seconds": 5000, "sample_seconds": 15, "status": "PASS (0 errors)"}
+        ],
+        "full_decode_test": {
+          "command": "ffmpeg -v error -i temp/chinese_long_video/street_angel_1937.mp4 -f null -",
+          "elapsed_seconds": 34.14,
+          "frames_decoded": 162721,
+          "errors_count": 0,
+          "verdict": "FULL_DECODE_PASS"
+        }
+      },
+      "verdict": "DOWNLOAD_VERIFIED"
     }
   ],
   "downloader_comparative_benchmark": {

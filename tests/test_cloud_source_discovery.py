@@ -557,3 +557,102 @@ def test_cli_execution_without_auth_confirmation(capsys):
     payload = json.loads(out)
     assert payload["status"] == "AUTH_REQUIRED"
     assert payload["error_code"] == "OPERATOR_AUTHORIZATION_REQUIRED"
+
+
+# ---------------------------------------------------------------------------
+# 10. SSRF Hardening & DNS Rebinding Tests
+# ---------------------------------------------------------------------------
+
+def test_ssrf_dns_rebinding_socket_peer_blocked():
+    from app.services.discovery.ssrf import SafeHTTPConnection, SsrfProtectionError
+    import socket
+
+    conn = SafeHTTPConnection("example.com", 80)
+    # Simulate socket connected to private loopback IP (as in DNS rebinding)
+    mock_sock = MagicMock()
+    mock_sock.getpeername.return_value = ("127.0.0.1", 80)
+    conn._create_connection = MagicMock(return_value=mock_sock)
+
+    with pytest.raises(SsrfProtectionError) as exc_info:
+        conn.connect()
+    assert "DNS rebinding detected" in str(exc_info.value)
+    mock_sock.close.assert_called_once()
+
+
+def test_manifest_adapter_hls_variant_ssrf_poisoning_rejected():
+    adapter = ManifestDiscoveryAdapter()
+    req = DiscoveryRequest(
+        video_url="https://legit-cdn.com/stream.m3u8",
+        authorized_access_confirmed=True,
+    )
+    poisoned_hls = (
+        "#EXTM3U\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=1000000\n"
+        "http://169.254.169.254/computeMetadata/v1/poisoned.m3u8\n"
+    )
+    with patch("app.services.discovery.adapters.manifest.safe_http_fetch") as mock_fetch:
+        mock_fetch.return_value = (200, {"content-type": "application/x-mpegURL"}, poisoned_hls.encode("utf-8"))
+        result = adapter.probe(req)
+        assert result.status == DiscoveryStatus.PROBE_ERROR.value
+        assert result.error_code == "SSRF_MANIFEST_POISONING"
+        assert len(result.formats) == 0
+
+
+def test_manifest_adapter_hls_key_ssrf_poisoning_rejected():
+    adapter = ManifestDiscoveryAdapter()
+    req = DiscoveryRequest(
+        video_url="https://legit-cdn.com/stream.m3u8",
+        authorized_access_confirmed=True,
+    )
+    poisoned_hls = (
+        "#EXTM3U\n"
+        '#EXT-X-KEY:METHOD=AES-128,URI="http://127.0.0.1:8000/internal_secrets"\n'
+        "#EXT-X-STREAM-INF:BANDWIDTH=1000000\n"
+        "video.m3u8\n"
+    )
+    with patch("app.services.discovery.adapters.manifest.safe_http_fetch") as mock_fetch:
+        mock_fetch.return_value = (200, {"content-type": "application/x-mpegURL"}, poisoned_hls.encode("utf-8"))
+        result = adapter.probe(req)
+        assert result.status == DiscoveryStatus.PROBE_ERROR.value
+        assert result.error_code == "SSRF_MANIFEST_POISONING"
+
+
+def test_manifest_adapter_dash_baseurl_ssrf_poisoning_rejected():
+    adapter = ManifestDiscoveryAdapter()
+    req = DiscoveryRequest(
+        video_url="https://legit-cdn.com/stream.mpd",
+        authorized_access_confirmed=True,
+    )
+    poisoned_dash = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">\n'
+        '  <BaseURL>http://169.254.169.254/latest/meta-data/</BaseURL>\n'
+        '  <Period>\n'
+        '    <AdaptationSet mimeType="video/mp4">\n'
+        '      <Representation id="1" bandwidth="1000000"/>\n'
+        '    </AdaptationSet>\n'
+        '  </Period>\n'
+        '</MPD>'
+    )
+    with patch("app.services.discovery.adapters.manifest.safe_http_fetch") as mock_fetch:
+        mock_fetch.return_value = (200, {"content-type": "application/dash+xml"}, poisoned_dash.encode("utf-8"))
+        result = adapter.probe(req)
+        assert result.status == DiscoveryStatus.PROBE_ERROR.value
+        assert result.error_code == "SSRF_MANIFEST_POISONING"
+
+
+def test_ytdlp_adapter_redirect_ssrf_protection():
+    adapter = YtDlpDiscoveryAdapter()
+    req = DiscoveryRequest(
+        video_url="https://example.com/redirect_test",
+        authorized_access_confirmed=True,
+    )
+    with patch("yt_dlp.YoutubeDL") as mock_ydl_cls:
+        mock_instance = MagicMock()
+        mock_instance.extract_info.side_effect = SsrfProtectionError("SSRF redirect blocked targeting http://169.254.169.254")
+        mock_ydl_cls.return_value.__enter__.return_value = mock_instance
+
+        result = adapter.probe(req)
+        assert result.status == DiscoveryStatus.PROBE_ERROR.value
+        assert result.error_code == "SSRF_REJECTED"
+
