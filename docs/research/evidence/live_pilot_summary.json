@@ -1,0 +1,91 @@
+{
+  "project": "AutoSub Cloud V2",
+  "work_package": "WP-PILOT-002",
+  "status": "PARTIAL_LIVE_PASS",
+  "gate_results": {
+    "C1_Preflight_and_Bounded_Download": {
+      "status": "PASS",
+      "mode": "REAL",
+      "source_url_redacted": "https://b23.tv/gK7gvDO",
+      "canonical_id": "BV1bPeu6cEkG",
+      "part": "Part 1 (cid 41959818910)",
+      "total_part_duration_seconds": 28312.88,
+      "download_section": "00:00:00-00:01:00",
+      "download_time_seconds": 12.16,
+      "bytes_transferred": 10236314,
+      "size_mb": 9.76,
+      "transfer_limit_mb": 50.0,
+      "time_limit_seconds": 120.0,
+      "sha256": "7cbfcb2ddca5348a5b26de108f799968c600d7206428a92c06c8830707d1bef1"
+    },
+    "C2_Media_Intake": {
+      "status": "PASS",
+      "mode": "REAL",
+      "file_path": "scratch/live_pilot_run/source_part1_60s.mp4",
+      "duration_seconds": 60.0,
+      "video_codec": "h264",
+      "resolution": "1280x720",
+      "fps": "15/1",
+      "audio_codec": "aac",
+      "audio_channels": 2,
+      "audio_sample_rate": "44100",
+      "decode_stream_errors": 0,
+      "ingestion_handoff_status": "LIVE_MEDIA_VALIDATED"
+    },
+    "C3_OCR_and_ASR": {
+      "status": "BLOCKED",
+      "mode": "BLOCKED",
+      "ocr_runtime_status": "OCR_RUNTIME_UNAVAILABLE",
+      "ocr_error": "No module named 'paddleocr'; local PaddleOCR engine and weights are not installed on workstation.",
+      "asr_runtime_status": "ASR_RUNTIME_UNAVAILABLE",
+      "asr_error": "No Chinese speech-to-text model available; local Vosk contains only English model (vosk-model-small-en-us-0.15); faster_whisper not installed.",
+      "computer_vision_detector": "REAL_EXECUTED",
+      "detector_finding": "OpenCV geometric contour union on live frames encountered persistent static watermark '视频内容由AI生成' at bottom-right (x>950, y>650), causing runaway 60s bounding box union [0.00s-60.21s] when unguided by character OCR."
+    },
+    "C4_Vietnamese_Translation": {
+      "status": "BLOCKED",
+      "mode": "BLOCKED",
+      "translation_runtime_status": "TRANSLATION_RUNTIME_UNAVAILABLE",
+      "translation_error": "No offline Chinese-to-Vietnamese (zh->vi) translation model installed; Argos Translate not installed in python environment and AutoSub native config only supports zh->en. Owner approval forbids paid Gemini API or mock translations to claim PASS."
+    },
+    "C5_Local_Sub_Mask_Overlay": {
+      "status": "PASS",
+      "mode": "REAL_ON_LIVE_MEDIA",
+      "filter_type": "drawbox+subtitles",
+      "delogo_present": false,
+      "drawbox_present": true,
+      "mask_type": "black@1.0",
+      "padding_px": 3,
+      "target_language": "Vietnamese"
+    },
+    "C6_Render_and_Output_QA": {
+      "status": "PASS",
+      "mode": "REAL_ON_LIVE_MEDIA",
+      "output_path": "scratch/live_pilot_run/final_video_vi.mp4",
+      "output_size_bytes": 10581989,
+      "output_sha256": "b45150c2e4ebce38ce6b21d56c9f61f18f5eee12047380a5467666fba7929747",
+      "render_duration_seconds": 60.0,
+      "render_elapsed_seconds": 7.24,
+      "render_speed_x": 8.29,
+      "audio_preserved": true,
+      "ffmpeg_errors": 0,
+      "evidence_frames": [
+        "docs/research/evidence/live_cue1_before_10_5s.png",
+        "docs/research/evidence/live_cue1_after_overlay_10_5s.png",
+        "docs/research/evidence/live_cue2_before_15_0s.png",
+        "docs/research/evidence/live_cue2_after_overlay_15_0s.png",
+        "docs/research/evidence/live_gap_before_05_0s.png",
+        "docs/research/evidence/live_gap_after_no_mask_05_0s.png",
+        "docs/research/evidence/live_cue3_misaligned_evidence_18_5s.png"
+      ]
+    },
+    "C7_Stability": {
+      "status": "PASS",
+      "mode": "REAL_RETEST",
+      "network_downloads_total": 1,
+      "reused_media_path": "scratch/live_pilot_run/source_part1_60s.mp4",
+      "retest_runs": 1,
+      "notes": "Single bounded download preserved; offline overlay render verified on live sample without re-downloading."
+    }
+  }
+}
