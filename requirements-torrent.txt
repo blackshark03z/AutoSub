@@ -1,0 +1,8 @@
+# Optional dependencies for AutoSub Cloud V2 — Torrent Discovery Adapter (WP-DL-001B)
+# The core adapter is 100% pure-Python standard library with zero external dependencies.
+# Install the following only if deep C++ swarm metadata exchange (BEP 9) is desired:
+#
+# Note: libtorrent binary wheels vary by OS and Python version.
+# On Debian/Ubuntu Linux: apt-get install python3-libtorrent
+# On Windows: pip install libtorrent (if prebuilt wheel is available for target Python)
+libtorrent>=2.0.0; sys_platform == "linux"
