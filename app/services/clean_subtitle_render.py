@@ -28,6 +28,10 @@ LOWER_SAFE_ANCHOR_RATIO = 0.88
 HORIZONTAL_SAFE_MARGIN_RATIO = 0.08
 PLATE_OPACITY = 0.76
 
+# 720p-equivalent bottom-right watermark ROI; coordinates use exclusive bounds.
+# Callers may pass excluded_regions=[] to disable this default for other videos.
+DEFAULT_LANDSCAPE_WATERMARK_TOP_LEFT_720P = (950, 640)
+
 
 def build_source_replacement_plan(
     source_path: Path,
@@ -37,6 +41,7 @@ def build_source_replacement_plan(
     font_size: int | None = None,
     mode: str = "legacy",
     target_language: str = "English",
+    excluded_regions: list[tuple[int, int, int, int]] | None = None,
 ) -> dict[str, Any]:
     media = media_summary(source_path)
     output_width = int(media["video"].get("width") or 0) or DETECTION_WIDTH
@@ -60,6 +65,7 @@ def build_source_replacement_plan(
             output_height=output_height,
             fps=fps,
             duration_seconds=duration_seconds,
+            excluded_regions=excluded_regions,
         )
         for cue in render_cues:
             text = cue["render_text"]
@@ -127,6 +133,7 @@ def detect_source_caption_intervals(
     output_height: int,
     fps: float,
     duration_seconds: float,
+    excluded_regions: list[tuple[int, int, int, int]] | None = None,
 ) -> list[dict[str, Any]]:
     sample_step = 0.25
     gap_tolerance = max(0.45, MERGE_GAP_FRAMES / max(fps, 1.0))
@@ -137,14 +144,21 @@ def detect_source_caption_intervals(
             frame = read_frame(cap, time_s, output_width, output_height)
         except RuntimeError:
             break
-        bbox, metrics = detect_source_subtitle_bbox(frame, output_width=output_width, output_height=output_height)
+        bbox, metrics = detect_source_subtitle_bbox(
+            frame, output_width=output_width, output_height=output_height,
+            excluded_regions=excluded_regions,
+        )
         if bbox:
             detections.append({"time": round(time_s, 3), "bbox": bbox, "metrics": metrics})
         time_s += sample_step
 
     groups: list[list[dict[str, Any]]] = []
     for detection in detections:
-        if not groups or detection["time"] - groups[-1][-1]["time"] > gap_tolerance:
+        if (
+            not groups
+            or detection["time"] - groups[-1][-1]["time"] > gap_tolerance
+            or _subtitle_geometry_changed(groups[-1][-1]["bbox"], detection["bbox"])
+        ):
             groups.append([detection])
         else:
             groups[-1].append(detection)
@@ -189,7 +203,32 @@ def detect_source_caption_intervals(
     return intervals
 
 
-def detect_source_subtitle_bbox(frame_bgr: np.ndarray, *, output_width: int, output_height: int) -> tuple[dict[str, int] | None, dict[str, Any]]:
+def _subtitle_geometry_changed(previous: dict[str, int], current: dict[str, int]) -> bool:
+    """Split consecutive captions with substantially different text geometry.
+
+    Do not union separate Chinese lines into one oversized black mask.
+    Small frame-to-frame contour jitter remains inside the same interval.
+    """
+    prev_w = previous["right_x"] - previous["left_x"] + 1
+    curr_w = current["right_x"] - current["left_x"] + 1
+    prev_h = previous["bottom_y"] - previous["top_y"] + 1
+    curr_h = current["bottom_y"] - current["top_y"] + 1
+    if abs(prev_w - curr_w) >= max(55, round(0.22 * max(prev_w, curr_w))):
+        return True
+    if abs(prev_h - curr_h) >= max(24, round(0.30 * max(prev_h, curr_h))):
+        return True
+    prev_center = (previous["left_x"] + previous["right_x"]) / 2
+    curr_center = (current["left_x"] + current["right_x"]) / 2
+    return abs(prev_center - curr_center) >= max(44, round(0.20 * max(prev_w, curr_w)))
+
+
+def detect_source_subtitle_bbox(
+    frame_bgr: np.ndarray,
+    *,
+    output_width: int,
+    output_height: int,
+    excluded_regions: list[tuple[int, int, int, int]] | None = None,
+) -> tuple[dict[str, int] | None, dict[str, Any]]:
     is_portrait = output_width < output_height
     if is_portrait:
         det_w, det_h = 720, 1280
@@ -210,6 +249,28 @@ def detect_source_subtitle_bbox(frame_bgr: np.ndarray, *, output_width: int, out
     edges = cv2.Canny(gray, 70, 180)
     mask = cv2.bitwise_and(bright, cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 3), np.uint8), iterations=2)
+
+    # Exclude static platform watermarks BEFORE contour extraction. Coordinates
+    # are in output-frame pixels; scale to the detector ROI and clip safely.
+    # Do not apply the landscape-only default to portrait footage.
+    if excluded_regions is None:
+        if is_portrait:
+            excluded_regions = []
+        else:
+            left720, top720 = DEFAULT_LANDSCAPE_WATERMARK_TOP_LEFT_720P
+            excluded_regions = [(
+                round(output_width * left720 / DETECTION_WIDTH),
+                round(output_height * top720 / DETECTION_HEIGHT),
+                output_width, output_height,
+            )]
+    for left, top, right, bottom in excluded_regions:
+        x0 = max(0, min(roi_x1 - roi_x0, math.floor(left * det_w / output_width) - roi_x0))
+        y0 = max(0, min(roi_y1 - roi_y0, math.floor(top * det_h / output_height) - roi_y0))
+        x1 = max(0, min(roi_x1 - roi_x0, math.ceil(right * det_w / output_width) - roi_x0))
+        y1 = max(0, min(roi_y1 - roi_y0, math.ceil(bottom * det_h / output_height) - roi_y0))
+        if x1 > x0 and y1 > y0:
+            mask[y0:y1, x0:x1] = 0
+
     num, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
     components = []
     for label in range(1, num):
