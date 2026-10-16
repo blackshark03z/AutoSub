@@ -31,6 +31,12 @@ from app.services.torrent_discovery.service import (
     TorrentDiscoveryService,
     default_torrent_discovery_service,
 )
+from app.services.torrent_discovery.ssrf import (
+    validate_tracker_url,
+    resolve_and_validate_hostname,
+    SSRFBlockedError,
+    SafeRedirectHandler,
+)
 from app.services.torrent_discovery.torrent_parser import (
     parse_torrent_bytes,
     parse_torrent_file,
@@ -63,4 +69,8 @@ __all__ = [
     "BencodeSizeError",
     "sanitize_tracker_url",
     "sanitize_tracker_urls",
+    "validate_tracker_url",
+    "resolve_and_validate_hostname",
+    "SSRFBlockedError",
+    "SafeRedirectHandler",
 ]

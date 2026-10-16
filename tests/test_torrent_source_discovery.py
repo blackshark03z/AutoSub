@@ -36,6 +36,10 @@ from app.services.torrent_discovery import (
     BencodeSizeError,
     sanitize_tracker_url,
     sanitize_tracker_urls,
+    validate_tracker_url,
+    resolve_and_validate_hostname,
+    SSRFBlockedError,
+    SafeRedirectHandler,
 )
 from app.services.torrent_discovery.episode_detector import (
     analyze_video_inventory,
@@ -390,13 +394,18 @@ class TestServiceAndSafetyInvariants:
         assert res.metadata_complete is False
         assert res.infohash == "da39a3ee5e6b4b0d3255bfef95601890afd80709"
 
-    def test_mocked_verified_tracker_scrape(self):
+    def test_mocked_tracker_scrape_contract_verification(self):
+        """
+        Verifies the BEP 48 bencode scrape response parsing contract using simulated responses.
+        NOTE: This is a contract verification test using simulated fixtures;
+        it does NOT claim live swarm verification against a real external network.
+        """
         service = TorrentDiscoveryService()
         infohash = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
         raw_hash = bytes.fromhex(infohash)
         uri = f"magnet:?xt=urn:btih:{infohash}&tr=http://tracker.example.com/announce"
 
-        # Mock scrape HTTP response body
+        # Simulated scrape HTTP response body
         fake_scrape_response = bencode({
             "files": {
                 raw_hash: {"complete": 42, "incomplete": 5, "downloaded": 100}
@@ -407,14 +416,36 @@ class TestServiceAndSafetyInvariants:
         mock_resp.read.return_value = fake_scrape_response
         mock_resp.__enter__.return_value = mock_resp
 
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = mock_resp
+
+        # Patch both create_safe_tracker_opener and validate_tracker_url to allow simulated host
+        with patch("app.services.torrent_discovery.probe.create_safe_tracker_opener", return_value=mock_opener), \
+             patch("app.services.torrent_discovery.probe.validate_tracker_url"):
             res = service.discover_magnet(
                 uri, mode=DiscoveryMode.NETWORK_PROBE, timeout=2.0, probe_allowed=True
             )
 
             assert res.seeders == 42
+            assert res.seeders_provenance == "live_tracker_scrape"
             assert res.status == DiscoveryStatus.METADATA_PENDING.value
             assert res.download_tested is False
+
+    def test_ssrf_tracker_probe_blocked_safely(self):
+        """Ensure network probe against cloud metadata or private IP fails safe without exception."""
+        service = TorrentDiscoveryService()
+        infohash = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        # 169.254.169.254 is AWS/GCP/Azure cloud metadata endpoint
+        uri = f"magnet:?xt=urn:btih:{infohash}&tr=http://169.254.169.254/announce"
+
+        res = service.discover_magnet(
+            uri, mode=DiscoveryMode.NETWORK_PROBE, timeout=1.0, probe_allowed=True
+        )
+
+        assert res.status == DiscoveryStatus.METADATA_FETCH_FAILED.value
+        assert res.seeders is None
+        assert res.seeders_provenance == "unverified"
+        assert "SSRF blocked" in (res.error_message or "")
 
     def test_cli_execution_smoke(self, tmp_path: Path):
         # Create a real small .torrent file on disk
@@ -471,4 +502,69 @@ class TestServiceAndSafetyInvariants:
         # String header says 50 bytes, but only 5 provided
         with pytest.raises(BencodeDecodeError, match="exceeds available payload size"):
             bdecode(b"50:short")
+
+
+# ============================================================================
+# 7. SSRF Protection Tests (Private IPs, Loopback, Cloud Metadata, Redirects)
+# ============================================================================
+
+class TestTrackerSSRFDefense:
+    """Ensure tracker probe refuses to contact internal or cloud metadata infrastructure."""
+
+    @pytest.mark.parametrize(
+        "prohibited_url,expected_reason",
+        [
+            ("http://127.0.0.1:8080/announce", "Loopback address prohibited"),
+            ("http://127.0.0.2:80/announce", "Loopback address prohibited"),
+            ("http://[::1]:8080/announce", "Loopback address prohibited"),
+            ("http://localhost:6969/announce", "Prohibited hostname: localhost"),
+            ("http://10.0.0.1:80/announce", "Private RFC 1918/4193 address prohibited"),
+            ("http://10.254.254.254/announce", "Private RFC 1918/4193 address prohibited"),
+            ("http://172.16.0.1:80/announce", "Private RFC 1918/4193 address prohibited"),
+            ("http://172.31.255.255/announce", "Private RFC 1918/4193 address prohibited"),
+            ("http://192.168.1.1:80/announce", "Private RFC 1918/4193 address prohibited"),
+            ("http://169.254.169.254/latest/meta-data/", "Prohibited cloud metadata IP: 169.254.169.254"),
+            ("http://100.100.100.200/announce", "Prohibited cloud metadata IP: 100.100.100.200"),
+            ("http://metadata.google.internal/announce", "Prohibited hostname: metadata.google.internal"),
+            ("http://0.0.0.0:80/announce", "Unspecified.*address prohibited"),
+            ("http://[::]:80/announce", "Unspecified.*address prohibited"),
+        ],
+    )
+    def test_direct_ssrf_urls_blocked(self, prohibited_url, expected_reason):
+        with pytest.raises(SSRFBlockedError, match=expected_reason):
+            validate_tracker_url(prohibited_url)
+
+    @pytest.mark.parametrize("dangerous_port", [21, 22, 23, 25, 445, 2375, 6379, 10250, 11211, 27017])
+    def test_dangerous_service_ports_blocked(self, dangerous_port):
+        url = f"http://tracker.example.com:{dangerous_port}/announce"
+        with pytest.raises(SSRFBlockedError, match=f"Port {dangerous_port} in tracker URL is blocked"):
+            validate_tracker_url(url)
+
+    def test_redirect_to_cloud_metadata_blocked(self):
+        """Verify SafeRedirectHandler intercepts 302 redirect to cloud metadata and blocks it."""
+        handler = SafeRedirectHandler(max_redirects=3)
+        req = MagicMock()
+        headers = {}
+        
+        # Simulating HTTP 302 redirect to AWS/GCP metadata IP
+        redirect_target = "http://169.254.169.254/latest/meta-data/"
+        
+        with pytest.raises(SSRFBlockedError, match="Prohibited cloud metadata IP"):
+            handler.redirect_request(req, fp=None, code=302, msg="Found", headers=headers, newurl=redirect_target)
+
+    def test_redirect_to_loopback_blocked(self):
+        """Verify SafeRedirectHandler intercepts 301 redirect to localhost and blocks it."""
+        handler = SafeRedirectHandler(max_redirects=3)
+        req = MagicMock()
+        headers = {}
+        
+        redirect_target = "http://127.0.0.1:8080/scrape"
+        with pytest.raises(SSRFBlockedError, match="Loopback address prohibited"):
+            handler.redirect_request(req, fp=None, code=301, msg="Moved", headers=headers, newurl=redirect_target)
+
+    def test_safe_public_ip_passes_validation(self):
+        """Legitimate public IP address passes SSRF validation."""
+        # 93.184.216.34 is example.com public IP
+        validate_tracker_url("http://93.184.216.34:6969/announce")
+
 

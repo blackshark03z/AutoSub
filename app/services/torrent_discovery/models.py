@@ -109,6 +109,7 @@ class TorrentDiscoveryResult:
     recommended_engine: str = RecommendedEngine.LIBTORRENT.value
 
     # Extended telemetry fields
+    seeders_provenance: Optional[str] = "unverified"  # "unverified" | "live_tracker_scrape" | "simulated_contract_test"
     infohash_v1: Optional[str] = None
     infohash_v2: Optional[str] = None
     is_multi_file: bool = False
@@ -134,6 +135,7 @@ class TorrentDiscoveryResult:
             "download_tested": self.download_tested,
             "recommended_engine": self.recommended_engine,
             # Extended metadata
+            "seeders_provenance": self.seeders_provenance,
             "is_multi_file": self.is_multi_file,
             "is_multi_episode": self.is_multi_episode,
             "trackers": self.trackers,

@@ -164,16 +164,26 @@ All discovery adapters normalize their output into the canonical schema below:
 
 ---
 
-## 5. Security & Isolation Contracts
+## 5. Security, SSRF & Isolation Contracts
 
 1. **Credential Sanitization:**
-   - Both adapters must sanitize authentication headers, basic auth passwords, and tracker passkeys (`?passkey=[REDACTED]`) before serializing `protocol_telemetry` or logging.
-2. **Operator Authorization Gate:**
+   - Both adapters must sanitize authentication headers, basic auth passwords, and tracker passkeys (`?passkey=[REDACTED]`, `/announce/[REDACTED]/`) before serializing `protocol_telemetry` or logging.
+2. **SSRF Defense on Tracker URLs & HTTP Redirects:**
+   - Tracker scrape requests strictly enforce SSRF validation against loopback (`127.0.0.0/8`, `::1`), private networks (RFC 1918: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`; RFC 4193: `fc00::/7`), link-local (`169.254.0.0/16`), carrier-grade NAT (`100.64.0.0/10`), unspecified (`0.0.0.0`, `::`), and cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`, `100.100.100.200`, `fd00:ec2::254`).
+   - Blocks dangerous service ports (SSH 22, Redis 6379, Docker 2375, Kubelet 10250, SMB 445, etc.).
+   - Utilizes `SafeRedirectHandler` to intercept every 301/302/303/307/308 redirect and validate the target `Location` header before following.
+3. **Truthful Seeders Provenance Tracking:**
+   - Telemetry tracks `seeders_provenance`:
+     - `"unverified"`: default state when offline or unprobed.
+     - `"live_tracker_scrape"`: verified against a live, reachable network tracker.
+     - `"simulated_contract_test"`: simulated test fixture during unit/integration tests.
+   - Prohibits claiming mock/simulated results as live swarm observations.
+4. **Operator Authorization Gate:**
    - Neither adapter may perform active swarm probes or unauthenticated outbound scans unless `probe_allowed=True` is explicitly passed by the caller.
-3. **Payload Download Prohibition:**
-   - In Discovery Mode, neither adapter may download actual video content, segment files, or participate in BitTorrent seeding.
-4. **Denial of Service (DoS) Defense:**
-   - Torrent: 10 MB payload cap, 32-level bencode recursion limit.
+5. **Payload Download Prohibition:**
+   - In Discovery Mode, neither adapter may download actual video content, segment files, or participate in BitTorrent seeding (`download_tested` is invariant `false`).
+6. **Denial of Service (DoS) Defense:**
+   - Torrent: 10 MB payload cap, 32-level bencode recursion limit, 50 MB string safety cap.
    - HTTP: 1 MB response cap on manifest headers, SSRF private IP rejection.
 
 ---

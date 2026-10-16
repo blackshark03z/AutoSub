@@ -1,7 +1,7 @@
 """
 AutoSub Cloud V2 — Network Metadata Probe & Swarm Health Verifier
 Implements BEP 48 Tracker Scrape and safe swarm metadata exchange interfaces.
-Enforces strict operator authorization, timeout guards, and zero-payload invariants.
+Enforces strict operator authorization, timeout guards, SSRF defenses, and zero-payload invariants.
 """
 
 import binascii
@@ -13,6 +13,11 @@ from typing import Optional, Tuple
 
 from app.services.torrent_discovery.bencode import bdecode, BencodeError
 from app.services.torrent_discovery.models import DiscoveryStatus
+from app.services.torrent_discovery.ssrf import (
+    validate_tracker_url,
+    create_safe_tracker_opener,
+    SSRFBlockedError,
+)
 
 
 class TrackerScrapeError(Exception):
@@ -36,7 +41,7 @@ def tracker_announce_to_scrape_url(announce_url: str) -> Optional[str]:
     except Exception:
         return None
 
-    if parsed.scheme not in ("http", "https"):
+    if parsed.scheme.lower() not in ("http", "https"):
         # UDP tracker scraping requires binary UDP protocol (handled separately if supported)
         return None
 
@@ -54,21 +59,28 @@ def tracker_announce_to_scrape_url(announce_url: str) -> Optional[str]:
 
 def scrape_http_tracker(
     tracker_url: str, infohash_hex: str, timeout_seconds: float = 5.0
-) -> Optional[int]:
+) -> Tuple[Optional[int], str, Optional[str]]:
     """
-    Perform a BEP 48 HTTP tracker scrape to obtain verified seed count.
+    Perform a BEP 48 HTTP tracker scrape to obtain verified seed count with SSRF defense.
     
     Returns:
-        Verified seeders count (int), or None if scrape unsupported / failed.
+        (seeders_count, provenance, error_message)
+        provenance is 'live_tracker_scrape' when successful, 'unverified' otherwise.
     """
     scrape_url = tracker_announce_to_scrape_url(tracker_url)
     if not scrape_url:
-        return None
+        return None, "unverified", "Unsupported tracker URL scheme or format"
+
+    # SSRF defense check: blocks private IPs, loopback, cloud metadata endpoints
+    try:
+        validate_tracker_url(scrape_url)
+    except SSRFBlockedError as ssrf_err:
+        return None, "unverified", f"SSRF blocked: {ssrf_err}"
 
     try:
         raw_hash = infohash_to_raw_bytes(infohash_hex)
     except (ValueError, binascii.Error):
-        return None
+        return None, "unverified", "Invalid infohash format"
 
     # Encode raw 20-byte infohash for HTTP GET query
     quoted_hash = urllib.parse.quote(raw_hash)
@@ -83,7 +95,9 @@ def scrape_http_tracker(
                 "Accept": "*/*",
             },
         )
-        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+
+        opener = create_safe_tracker_opener(timeout_seconds=timeout_seconds)
+        with opener.open(req, timeout=timeout_seconds) as resp:
             body = resp.read(65536)  # Cap scrape response size
             decoded = bdecode(body)
             if isinstance(decoded, dict):
@@ -94,12 +108,14 @@ def scrape_http_tracker(
                     if isinstance(stats, dict):
                         complete = stats.get(b"complete")
                         if isinstance(complete, int) and complete >= 0:
-                            return complete
-    except (urllib.error.URLError, socket.timeout, TimeoutError, BencodeError, Exception):
+                            return complete, "live_tracker_scrape", None
+    except SSRFBlockedError as ssrf_err:
+        return None, "unverified", f"SSRF blocked during redirect: {ssrf_err}"
+    except (urllib.error.URLError, socket.timeout, TimeoutError, BencodeError, Exception) as exc:
         # Tracker scrape is best-effort; failure should never crash discovery
-        return None
+        return None, "unverified", str(exc)
 
-    return None
+    return None, "unverified", "No seed stats found in tracker scrape response"
 
 
 def probe_swarm_metadata(
@@ -107,17 +123,24 @@ def probe_swarm_metadata(
     trackers: list,
     timeout_seconds: float = 5.0,
     probe_allowed: bool = False,
-) -> Tuple[str, Optional[int], Optional[str]]:
+) -> Tuple[str, Optional[int], str, Optional[str]]:
     """
     Probe tracker endpoints for swarm health and seeders without downloading payload data.
     
     Returns:
-        (status, verified_seeders, error_message)
+        (status, verified_seeders, seeders_provenance, error_message)
     """
     if not probe_allowed:
-        return DiscoveryStatus.INFOHASH_ONLY.value, None, "Probe not allowed by operator configuration"
+        return (
+            DiscoveryStatus.INFOHASH_ONLY.value,
+            None,
+            "unverified",
+            "Probe not allowed by operator configuration",
+        )
 
     verified_seeders = None
+    seeders_provenance = "unverified"
+    last_err: Optional[str] = None
     start_time = time.monotonic()
 
     # Query authorized HTTP trackers for seed verification
@@ -125,10 +148,15 @@ def probe_swarm_metadata(
         if time.monotonic() - start_time > timeout_seconds:
             break
         remaining_timeout = max(1.0, timeout_seconds - (time.monotonic() - start_time))
-        seeds = scrape_http_tracker(tracker, infohash_hex, timeout_seconds=remaining_timeout)
+        seeds, prov, err = scrape_http_tracker(tracker, infohash_hex, timeout_seconds=remaining_timeout)
         if seeds is not None:
             verified_seeders = seeds
+            seeders_provenance = prov
+            last_err = None
             break
+        else:
+            if err:
+                last_err = err
 
     # Since we probed without local .torrent metadata, metadata is still pending
     # unless an engine like libtorrent actually exchanges ut_metadata
@@ -137,6 +165,10 @@ def probe_swarm_metadata(
         if verified_seeders is not None
         else DiscoveryStatus.METADATA_FETCH_FAILED.value
     )
-    error_msg = None if verified_seeders is not None else "Could not resolve metadata or tracker scrape in time"
+    error_msg = (
+        None
+        if verified_seeders is not None
+        else (last_err or "Could not resolve metadata or tracker scrape in time")
+    )
 
-    return status, verified_seeders, error_msg
+    return status, verified_seeders, seeders_provenance, error_msg

@@ -89,7 +89,7 @@ class BuiltinTorrentDiscoveryAdapter(BaseTorrentDiscoveryAdapter):
                     )
 
                 # Network probe authorized by operator
-                status, verified_seeders, err = probe_swarm_metadata(
+                status, verified_seeders, seeders_prov, err = probe_swarm_metadata(
                     infohash_hex=parsed.infohash,
                     trackers=parsed.trackers,
                     timeout_seconds=request.timeout_seconds,
@@ -108,6 +108,7 @@ class BuiltinTorrentDiscoveryAdapter(BaseTorrentDiscoveryAdapter):
                     total_size_bytes=parsed.exact_length or 0,
                     video_candidates=[],
                     seeders=verified_seeders,
+                    seeders_provenance=seeders_prov,
                     metadata_complete=False,
                     download_tested=False,
                     recommended_engine=RecommendedEngine.LIBTORRENT.value,

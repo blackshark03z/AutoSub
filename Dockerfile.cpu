@@ -1,0 +1,24 @@
+# AutoSub Cloud V2 — Torrent Discovery Linux CPU Container Environment
+FROM python:3.11-slim
+
+WORKDIR /workspace
+
+# Install system certificates and tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install test dependencies (pure-Python core requires only pytest)
+RUN pip install --no-cache-dir pytest
+
+# Copy application code and tests
+COPY app/ /workspace/app/
+COPY tests/test_torrent_source_discovery.py /workspace/tests/
+COPY pyproject.toml /workspace/
+
+ENV PYTHONPATH=/workspace
+ENV PYTHONUNBUFFERED=1
+
+# Execute test suite
+CMD ["pytest", "-v", "tests/test_torrent_source_discovery.py"]
