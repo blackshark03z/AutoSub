@@ -2,7 +2,7 @@
 
 ## Operating standard
 
-AutoSub follows current Convergent AI Development System (CADS) as an engineering reasoning standard, not as a second lifecycle runtime. Normal development is native:
+Owner selected Kit v1.2.2 for new engineering work. Its authoritative package/path has not yet been verified; do not invent framework requirements. Normal development uses actual Git, tests and runtime:
 
 `understand -> inspect -> edit -> focused test -> ordinary commit -> continue`
 
