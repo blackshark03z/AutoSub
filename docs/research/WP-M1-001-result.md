@@ -92,3 +92,34 @@ C:\Users\ADMIN\AppData\Local\Programs\Python\Python311\python.exe tools/run_m1_l
 
 - M1_PRODUCT: PROPOSED_PASS — A1–A7 each evidenced on one actual URL-originated local job with mask/font rules passing; requires independent Tech Lead verification (worker suggestion ≠ authorization).
 - TECHNICAL: PASS. EDITORIAL: PARTIAL. SECURITY: SUPERVISED_PASS (bounded public anonymous download, URL redaction, host allowlist, no secret/cookie extraction). PUBLICATION: BLOCKED pending Owner.
+
+## 7. Acceptance-closure update (2026-10-18) — supersedes §3 A3/A6 verdicts
+
+Tech Lead review (`docs/research/WP-M1-001-techlead-review.md`, verdict `M1=PARTIAL_DELIVERY`) found the earlier `M1_STATUS=DONE` rested on a **false-PASS layout bug** and an unbound input pipeline. This section records the fix and the honest re-run.
+
+### 7.1 Root cause fixed (P0)
+- A3's "137 PASS / max_text_width=1152" was not a real fit. `fit_overlay_text` accepted a target font down to `0.72*target`, and `apply_protected_roi_clamp` promoted `NEEDS_REVIEW`→`PASS` when `text_width == 0` (no measured fit). `refit_needs_review_layouts` then shrank fonts to 16px, while text was fit against the full 0.90*frame (1152px) budget, not the narrow mask. Measured: 129/137 cues had `text_width > mask width`; 15 cues had font/height ratio < 0.90 (min 0.329); cue_034/035/037 had `text_width=0`.
+- Fix (`app/services/e2_dynamic_sub_mask.py`, `app/services/clean_subtitle_render.py`): translations are now fitted against the **confirmed source-mask width** at an **equivalent glyph size** (`SOURCE_FONT_TARGET_RATIO=0.96`, `SOURCE_FONT_MIN_RATIO=0.88`). A cue that cannot fit becomes `NEEDS_REVIEW` (reason `translation_exceeds_source_mask_at_equivalent_size`); no silent downscale, no promotion from a zero-width fit. Any mask grazing a protected ROI fails closed. `refit_needs_review_layouts` removed. The clamp re-fits against the clamped width and can therefore also yield `NEEDS_REVIEW` (`translation_exceeds_clamped_source_mask`).
+
+### 7.2 Input identity + redaction + commit binding (P0/P1)
+- `tools/run_m1_local_url_to_mp4.py`: the requested URL/part/section is bound to the on-disk media in `input_identity.json` (`canonical_id`, `part_index`, `end_seconds`, `requested_host`, `source_sha256`). Existing media without a recorded identity is refused; any changed request or tampered hash raises `IMMUTABLE_JOB_INPUT_MISMATCH` (fail closed). `--skip-download` no longer adopts stale media.
+- Resolved share URLs are stripped to `scheme://host/path` (`app/core/redaction.canonical_url`), and argv/yt-dlp stderr are scrubbed (`redact_text`), removing `mid`/`buvid`/`share_session_id`/`timestamp`/tokens. The manifest records `implementation_head` + `implementation_dirty` so acceptance binds to the exact executed commit.
+- New tests: `tests/test_m1_input_identity.py` (identity write/verify, mismatch/parametrized, tampered hash, missing identity refused, unreadable record, canonical-id fallback, embedded-URL redaction) — all pass.
+
+### 7.3 Re-run on the fixed code (one URL, bounded 6 min)
+- Command (clean tree, HEAD `d7ac802d159d82951332ece3926a5badd7f47d42`, `implementation_dirty=false`):
+  `python tools/run_m1_local_url_to_mp4.py --url https://www.bilibili.com/video/BV1bPeu6cEkG --job-dir data/m1_job --part 1 --end-seconds 360`
+- Source unchanged: sha256 `a9e638243bd648e7e87addb7aba2a33b23d4141b96e7af7be23a88a26b1630b5` (63,962,107 B), bound in `data/m1_job/input_identity.json`.
+- Render (`data/m1_job/render_report_en-US.json`): pre-clamp 62 NEEDS_REVIEW / 69 PASS / 6 PROTECTED_ROI_INTERSECTION → post-clamp **67 NEEDS_REVIEW, 70 PASS**, `clamped=[cue_027,033,034,035,037,132]`, `unrecoverable=[]`, `fit_budget=confirmed_source_mask_width`, `safe_text_width=1152`, `max_mask_width_px=793`.
+- Output: `data/m1_job/longpilot_en-US.mp4`, 54,356,559 B, sha256 `63e26843a46704c1eafc8e582e2fabf36df4219b1ca35bad94c1f83ebf935f8c`; audio packet MD5 `MD5=1dc07eac0ffaa2ac8ebedc25c181b5f2` (identical to source — audio preserved).
+- `M1_STATUS=NEEDS_REVIEW`, `blocking_layouts={NEEDS_REVIEW: 67}`.
+- Evidence frames: `data/m1_job/evidence/frame_{10.5,15,83.1,86.7}s.png`. t=10.5s (cue_002, font 46px, text 201px ≤ mask 229px) = PASS; t=83.1s (cue_034) = NEEDS_REVIEW — overlay visibly wider than the narrow source mask (the exact case that previously false-PASSed). Uploader logo and AI-content badge preserved in both.
+
+### 7.4 Regression
+- Focused: `python -m pytest tests/test_e2_dynamic_sub_mask.py tests/test_longpilot_mask_clamp.py tests/test_m1_input_identity.py -q` → 33 passed, 1 skipped.
+- Full suite still shows only the 3 pre-existing failures reproduced at baseline `d4d55dd` (punctuation detector, narration alignment, adaptive OCR frame selection); none introduced here. Remaining layout tests pin the no-false-PASS invariant.
+
+### 7.5 Honest verdict (revised)
+- **M1_PRODUCT: NOT_PASS.** Under the Owner rule (narrow mask tight to the Chinese bbox; English at an equivalent glyph size) **67/137 (49%)** of cues cannot fit the source mask in English and are correctly `NEEDS_REVIEW`, not silently shrunk. A1/A2/A4/A5/A7 remain evidenced; A3 (visual acceptance) does not meet a product bar.
+- **Material decision needed from Owner (not a worker choice):** Chinese → English text expansion is intrinsic, so "equal glyph size inside the same tight mask" cannot be satisfied for roughly half the lines. The options are: (a) accept English that overflows the narrow mask horizontally within the safe frame (mask stays tight to the Chinese; keeps ~all PASS); (b) allow a small, bounded font downscale with a floor and mark sub-floor cues NEEDS_REVIEW; or (c) keep strict and ship as a review-gated artifact. No option is implemented speculatively; current code implements (c) and reports (a)/(b) with measured counts.
+- TECHNICAL: PASS for the fixed behaviours. EDITORIAL: PARTIAL. SECURITY: SUPERVISED_PASS (bounded public anonymous download, host allowlist, URL/argv redaction, input-identity fail-closed, no cookie/secret access). PUBLICATION: BLOCKED pending Owner.
