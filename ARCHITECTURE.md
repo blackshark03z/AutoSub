@@ -33,7 +33,7 @@ Project/run artifacts are isolated under `data/projects/<project_id>/runs/<run_i
 - Run manifests/results are evidence only for the run/source/configuration they identify.
 - Tests are verification evidence; they do not supersede live product behavior.
 - `TASK.md` is temporary current-Goal context, not runtime authority.
-- CADS is an engineering standard/control model only; AutoSub has no second development lifecycle runtime.
+- Owner selected Kit v1.2.2 for new engineering work; verify the exact Kit package before applying detailed rules.
 
 # Stable Invariants
 
@@ -66,4 +66,4 @@ Project/run artifacts are isolated under `data/projects/<project_id>/runs/<run_i
 
 The former AutoSub Build OS v1.16/v1.22 lifecycle/control-plane adoption is retired. Historical evidence remains recoverable from Git history; Build OS authority records, lifecycle instructions, and archived control-plane source are not current architecture and must not be treated as active development authority.
 
-The older `docs/ARCHITECTURE.md` may remain as a compatibility/detail document while references are migrated, but this root file is the CADS durable architecture authority going forward.
+This document describes the historical local architecture. The new AutoSub Cloud ship target is recorded in `docs/DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md`; this local architecture does not prove Cloud deployment.
