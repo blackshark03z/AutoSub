@@ -151,13 +151,14 @@ def load_input_identity(job_dir: Path) -> dict | None:
         return None
 
 
-def bind_input_identity(job_dir: Path, identity: dict, media: Path) -> dict:
+def bind_input_identity(job_dir: Path, identity: dict, media: Path, *, allow_create: bool) -> dict:
     """Bind the requested URL/part/section to the on-disk media, or fail closed.
 
     A job directory is immutable input: if it already holds media, the requested
     canonical id, part index, bounded section and requested host must match the
-    recorded identity AND the media hash must still match. Anything else raises so a
-    changed URL/part/section can never silently attach old media to new provenance.
+    recorded identity AND the media hash must still match. Media with no recorded
+    identity can never be adopted (``allow_create`` is only true right after a fresh
+    download), so a changed URL/part/section cannot silently attach stale media.
     """
     path = job_dir / INPUT_IDENTITY_FILE
     source_sha = sha256_file(media)
@@ -179,6 +180,10 @@ def bind_input_identity(job_dir: Path, identity: dict, media: Path) -> dict:
         print(f"input identity verified {recorded.get('canonical_id')} p{recorded.get('part_index')} "
               f"section<= {recorded.get('end_seconds')}s")
         return recorded
+    if not allow_create:
+        raise SystemExit(
+            "IMMUTABLE_JOB_INPUT_MISMATCH: existing media has no recorded input identity"
+        )
     record = {**identity, "source_sha256": source_sha, "size_bytes": size_bytes}
     path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"input identity bound {record['canonical_id']} p{record['part_index']} "
@@ -307,15 +312,17 @@ def main() -> int:
     existing = _find_existing_media(source_dir)
     if existing is not None:
         media = existing
+        downloaded_now = False
     elif args.skip_download:
         raise SystemExit("SKIP_DOWNLOAD_NO_MEDIA: no existing source media to reuse")
     else:
         media = download_bounded(args.url, args.part, args.end_seconds, job_dir,
                                  args.max_transfer_mib, args.download_timeout_s)
+        downloaded_now = True
     print(f"media={media}")
 
     probe = probe_and_validate(media)
-    recorded_identity = bind_input_identity(job_dir, identity, media)
+    recorded_identity = bind_input_identity(job_dir, identity, media, allow_create=downloaded_now)
     manifest["input_identity"] = recorded_identity
     manifest["media"] = {
         "path": str(media),

@@ -76,13 +76,21 @@ def test_canonical_id_falls_back_to_bv_in_url_when_flat_entry_has_none():
 
 def test_bind_input_identity_writes_then_verifies(tmp_path: Path):
     media = _media(tmp_path / "source.mp4")
-    record = bind_input_identity(tmp_path, _identity(), media)
+    record = bind_input_identity(tmp_path, _identity(), media, allow_create=True)
     assert record["canonical_id"] == "BV1bPeu6cEkG"
     assert record["source_sha256"]
     assert (tmp_path / INPUT_IDENTITY_FILE).exists()
     # Re-binding the same request verifies and reuses the recorded identity.
-    again = bind_input_identity(tmp_path, _identity(), media)
+    again = bind_input_identity(tmp_path, _identity(), media, allow_create=False)
     assert again["source_sha256"] == record["source_sha256"]
+
+
+def test_bind_input_identity_refuses_to_adopt_media_without_identity(tmp_path: Path):
+    # Existing media with no recorded identity must never be silently adopted.
+    media = _media(tmp_path / "source.mp4")
+    with pytest.raises(SystemExit, match="existing media has no recorded input identity"):
+        bind_input_identity(tmp_path, _identity(), media, allow_create=False)
+    assert not (tmp_path / INPUT_IDENTITY_FILE).exists()
 
 
 @pytest.mark.parametrize("field,value", [
@@ -93,17 +101,17 @@ def test_bind_input_identity_writes_then_verifies(tmp_path: Path):
 ])
 def test_bind_input_identity_fails_closed_on_changed_request(tmp_path: Path, field: str, value):
     media = _media(tmp_path / "source.mp4")
-    bind_input_identity(tmp_path, _identity(), media)
+    bind_input_identity(tmp_path, _identity(), media, allow_create=True)
     with pytest.raises(SystemExit, match="IMMUTABLE_JOB_INPUT_MISMATCH"):
-        bind_input_identity(tmp_path, _identity(**{field: value}), media)
+        bind_input_identity(tmp_path, _identity(**{field: value}), media, allow_create=False)
 
 
 def test_bind_input_identity_fails_closed_on_tampered_media(tmp_path: Path):
     media = _media(tmp_path / "source.mp4")
-    bind_input_identity(tmp_path, _identity(), media)
+    bind_input_identity(tmp_path, _identity(), media, allow_create=True)
     media.write_bytes(b"different-bytes")
     with pytest.raises(SystemExit, match="IMMUTABLE_JOB_INPUT_MISMATCH"):
-        bind_input_identity(tmp_path, _identity(), media)
+        bind_input_identity(tmp_path, _identity(), media, allow_create=False)
 
 
 def test_bind_input_identity_fails_closed_on_unreadable_record(tmp_path: Path):
@@ -111,4 +119,4 @@ def test_bind_input_identity_fails_closed_on_unreadable_record(tmp_path: Path):
     (tmp_path / INPUT_IDENTITY_FILE).write_text("{not json", encoding="utf-8")
     assert load_input_identity(tmp_path) is None
     with pytest.raises(SystemExit, match="unreadable input identity"):
-        bind_input_identity(tmp_path, _identity(), media)
+        bind_input_identity(tmp_path, _identity(), media, allow_create=False)
