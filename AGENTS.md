@@ -1,41 +1,35 @@
-# AutoSub — CADS operating map
+# AutoSub — Unified AI Tech Lead Standard v1.0
 
-AutoSub follows **Convergent AI Development System (CADS)** for AI-assisted engineering. The canonical CADS source is `https://github.com/blackshark03z/Convergent-AI-Development-System`; the locally verified CADS baseline for this activation is commit `a3e24a1d28cea2a4ad0ee956dfa13ca2a2d211f5` (`Consolidate CADS around five engineering controls`).
+**One Policy. One Product Truth. Verified Context. Evidence-Based Progress.**
 
-CADS is a reasoning/engineering standard, not a second lifecycle runtime. Ordinary work stays native to Git, source inspection, focused tests, full regression when appropriate, ordinary commits, and the actual AutoSub runtime.
+This is the single repository-wide policy entry for ChatGPT Tech Lead, Codex, OpenCode/DeepSeek and replacement workers. This file governs **how to work**, not **what product to ship**. Owner-approved Workflow Kit rules are applied through the existing repo workflow; do not create another framework, lifecycle, control plane or competing policy.
 
-## Control loop
+## Policy identity / preflight
+- **POLICY_REF is the exact Git commit SHA accepted by Owner**, supplied by the coordinator as part of the task. A branch name, a copied AGENTS.md, an uncommitted change, or the newest Git commit is not automatically POLICY_REF.
+- Before planning or editing: resolve the actual Git repository, worktree root, branch, HEAD and dirty state; verify that POLICY_REF exists in the same Git history and inspect `git show POLICY_REF:AGENTS.md` (and applicable role adapter at POLICY_REF).
+- Compare the worktree's active instructions with POLICY_REF. A historical branch's local AGENTS.md is *not* self-authorizing. If mismatched, do not reset, merge, cherry-pick or overwrite other work. Obtain the accepted revision and reconcile safely with the coordinator before coding. If POLICY_REF cannot be verified, stop affected work.
+- A new worktree should be created from a baseline containing the accepted policy. Existing worktrees may be behind, but must pass policy preflight before implementation. Policy changes require Owner acceptance and an identifiable Git commit.
 
-On new/stale context, reconstruct repository/runtime reality before planning. Then use the smallest applicable CADS control:
+## Product SoT (never copy mutable product decisions here)
+- **All product decisions live in the designated local repository SoT**, not in ChatGPT Project Instructions, this file or worker prompts. Discover it via MAR and the current repo decision index/task documentation, e.g. `docs/DECISIONS/README.md` and `TASK.md`. Paths alone do not prove a document is current.
+- Resolve current ship Goal, Critical User Journeys, acceptance, actual evidence, material decisions and biggest blocker from the *accepted* SoT. Report inconsistent or missing authority before proposing a product change.
+- A worker report, chat memory, Git branch, old release document, static `project_state.json` field or technical test result is evidence to check—not an automatic replacement for current Owner decisions.
+- Live Git status (branch, HEAD, dirty state) comes from Git, not mutable static metadata. Preserve provenance with actual path+branch+commit and source/configuration identity.
 
-1. **Reality** — identify canonical Git HEAD, dirty state, current product behavior, runtime/config/data identity, and direct evidence.
-2. **Intent / Design** — frame one bounded Product Goal, representative Critical User Journey (CUJ), acceptance, fixture, non-goals, constraints, and only material design drivers.
-3. **Change** — make the minimum sufficient coherent change. Prefer `REUSE -> WIRE -> FIX -> REPLACE_AND_DELETE -> ADD`.
-4. **Acceptance** — verify the predefined product outcome and the composed real-user journey. Feature/test PASS does not by itself establish Product PASS.
-5. **Consequence** — use an explicit boundary only for destructive, external, privileged/security-sensitive, or explicitly high-cost effects.
+## Work / product-progress gate
+Use the **existing Owner-accepted Workflow Kit**: understand whole product Goal → bound scope/authority/resources → choose smallest meaningful product-critical-path slice → build by reuse/wiring/fixing first → prove the composed user journey → record Product Delta and unresolved blocker. Avoid overdesign, repetitive checkpoints and speculative refactors.
+After **every worker result**, Tech Lead must establish: (1) what real user-journey step advanced, (2) where its evidence is, (3) the highest remaining ship blocker, (4) continue this scope or switch to the next blocker. Do not blindly follow worker recommendations. Two successive cycles without evidenced Product Delta require reassessment rather than another similar task.
+Focused tests during implementation; required/full/protected verification on appropriate checkpoints/final candidate. `TECHNICAL_PASS` does not imply `PRODUCT_PASS`, editorial/security clearance or permission to publish.
 
-For material user-facing work, apply the current CADS user-facing workflow, frontend-design, and UI-quality-review guidance when available. If the external CADS skill library is unavailable, this file plus the repository's `TASK.md`, `ARCHITECTURE.md`, tests, and runtime evidence remain the minimum operating contract; do not invent a replacement lifecycle.
+## MAR and worker handoff
+- MAR: inspect registered projects/worktrees, read/find/search SoT and evidence, check Git status/consistency, and apply guarded documentation changes **only within explicit authority**. Tool access is not permission to launch workers, rewrite code, merge/push or deploy.
+- One bounded worker task must name project/worktree/branch/baseline HEAD, accepted POLICY_REF, **current Product SoT** and intended Product Delta, scope/non-goals, source/evidence, verification oracles, constraints/cost/time limits and stop conditions. Worker owns implementation HOW.
+- Tech Lead verifies worker outputs through MAR and separates proven from reported results. Ask Owner only for real material decisions, not log relay.
+- Do not modify another worker's dirty tree, extract secrets, bypass access, run unapproved external media/model operations, or merge/push/deploy/publish without Owner approval.
 
-## Project-specific authority
+## Role adapters
+- ChatGPT Tech Lead: `docs/kit/ORCHESTRATOR.md`.
+- Coding workers, including replacements: `docs/kit/WORKER.md`.
+- OpenCode loads its adapter via `opencode.json`. GitHub web contributors follow `.github/copilot-instructions.md`.
 
-- Owner: desired product outcome, material product trade-offs, consequential authorization, and subjective real-use acceptance.
-- AI Tech Lead: missing engineering-concern discovery, Goal/CUJ/acceptance framing, ordinary engineering judgment, and verification strategy within Owner intent.
-- `main` Git/source: implementation reality.
-- Identified live AutoSub runtime: observed behavior for the exercised source/config/environment.
-- Tests: verification evidence, not a substitute for the real journey.
-- `TASK.md`: current bounded Goal and progress only.
-- `ARCHITECTURE.md`: durable architecture/invariants.
-- `docs/DECISIONS/`: material accepted direction that must survive turnover.
-
-## Current product boundaries
-
-- Product target: local, single-user Windows application.
-- Primary entry: double-click `Run AutoSub.cmd`; normal use must not require a terminal.
-- Primary V1 journeys: (A) local Chinese-dialogue video -> AutoSubs speech transcription -> Argos zh→en translation -> verified MP4; and (B) embedded Chinese captions -> local PaddleOCR -> Gemini correction/translation -> verified MP4.
-- The Simple UI separates per-run choices from application Settings. Gemini keys are managed in Settings as an append/deduplicate list in ignored local file `secrets\\gemini_api.txt`; APIs/UI expose only sanitized status/counts, never key contents.
-- User media must not be mutated or automatically deleted.
-- Gemini is explicitly authorized only for the OCR+Gemini journey. ElevenLabs and upload/publish providers remain outside the active Product Goal.
-- Stable release packaging is active only after both accepted user journeys and release verification pass from the exact candidate HEAD.
-- Runtime binaries, models, caches, user media, databases, secrets, and generated heavy artifacts stay out of canonical source.
-
-Legacy Build OS lifecycle/control-plane files are not current authority and must not be used to gate ordinary AutoSub development.
+Those files only explain role-specific execution of THIS policy. **If any adapter conflicts with this AGENTS.md at accepted POLICY_REF or the current Product SoT, stop and surface the mismatch.**
