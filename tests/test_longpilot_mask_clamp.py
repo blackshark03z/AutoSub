@@ -153,6 +153,25 @@ def test_review_evidence_never_covers_badge_and_flags_review():
     # A partial plate is still preferred over leaving the caption fully visible.
     assert mask is not None
     assert protected_roi_hits({"mask": mask}, ROIS) == []
+    # Review text must never be drawn over the badge either.
+    assert placement["review_overlay_suppressed"] is True
+    assert placement["render_text"] == ""
+
+
+@pytest.mark.skipif(not FONT.exists(), reason="arial font unavailable")
+def test_review_evidence_keeps_text_when_it_clears_protected_regions():
+    # A caption on the far left whose overlay stays left of the badge: the review
+    # text is kept (not suppressed) and the plate clears both protected regions.
+    src = _bbox(40, 600, 500, 649)
+    placement = layout_review_evidence(
+        "Overlap with the left logo region only, far from the badge",
+        src_bbox=src, base_font=_font(27), target_size=49, rois=ROIS,
+        output_width=1280, output_height=720, pad_px=3, safe_text_width=1152,
+    )
+    assert placement["review_evidence_overlay"] is True
+    assert placement["review_overlay_suppressed"] is False
+    assert placement["render_text"]
+    assert placement["mask"] is None or protected_roi_hits({"mask": placement["mask"]}, ROIS) == []
 
 
 def test_uploader_logo_still_protected():

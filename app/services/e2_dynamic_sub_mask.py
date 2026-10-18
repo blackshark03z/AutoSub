@@ -451,27 +451,41 @@ def layout_review_evidence(
 ) -> dict[str, Any]:
     """Best-effort measured placement for a NEEDS_REVIEW cue.
 
-    Renders the source-equivalent overlay at the widest safe frame width and masks the
-    Chinese source plus as much of the English as can be covered WITHOUT intruding on a
-    protected region or leaving the frame.  Never used to award PASS.
+    Renders a readable review overlay (the largest 1-2 line fit within the safe frame
+    width, never above the equivalent size) on a plate that covers the Chinese source
+    plus as much of the English block as can be covered WITHOUT intruding on a
+    protected region or leaving the frame.  This shrink-for-review is never used to
+    award PASS; the cue stays NEEDS_REVIEW and its equivalent-size geometry stays in
+    the report.
     """
     src = _rect_from_bbox(src_bbox)
-    font = _font(base_font, target_size)
     center_x = (src["left_x"] + src["right_x"]) // 2
-    candidates = _candidate_overlays(text, font, max_lines=max_lines, wrap_width=safe_text_width)
-    rtext = candidates[-1] if candidates else clean_text(text)
-    tb = multiline_text_box(rtext, font)
-    tw, th = int(tb["width"]), int(tb["height"])
-    line_count = rtext.count("\n") + 1
+    fit = fit_overlay_text(
+        clean_text(text), base_font, target_size=target_size, min_size=12,
+        max_width=safe_text_width, max_lines=max_lines,
+    )
+    if fit is not None:
+        rtext = fit["render_text"]
+        font = _font(base_font, fit["font_size"])
+        tw, th = int(fit["text_width"]), int(fit["text_height"])
+        line_count = int(fit["line_count"])
+    else:
+        font = _font(base_font, target_size)
+        candidates = _candidate_overlays(text, font, max_lines=max_lines, wrap_width=safe_text_width)
+        rtext = candidates[-1] if candidates else clean_text(text)
+        tb = multiline_text_box(rtext, font)
+        tw, th = int(tb["width"]), int(tb["height"])
+        line_count = rtext.count("\n") + 1
     v_extra = MULTILINE_MASK_SAFETY_PX if line_count > 1 else 0
 
     src_mask = build_tight_mask(src_bbox, output_width=output_width, output_height=output_height, pad_px=pad_px)
+    bottom = src["bottom_y"]
+    top = bottom - th + 1
+    left = center_x - tw // 2
+    trect = {"left_x": left, "top_y": top, "right_x": left + tw - 1, "bottom_y": bottom}
+
     mask: dict[str, int] | None = None
     if tw > 0 and th > 0:
-        bottom = src["bottom_y"]
-        top = bottom - th + 1
-        left = center_x - tw // 2
-        trect = {"left_x": left, "top_y": top, "right_x": left + tw - 1, "bottom_y": bottom}
         union = _mask_dict(_union_rect(src, trect), pad_px, v_extra=v_extra)
         clipped = _clip_mask_to_frame(union, output_width, output_height)
         if clipped is not None:
@@ -489,8 +503,12 @@ def layout_review_evidence(
             mask = {**clamped, "padding_px": pad_px} if clamped is not None else None
         else:
             mask = src_mask
+
+    # Never draw review text over a protected region either: if the overlay glyph box
+    # would intrude on the logo/badge, suppress the text and keep only the plate.
+    text_on_roi = tw > 0 and th > 0 and any(rects_intersect(trect, roi) for roi in rois.values())
     placement: dict[str, Any] = {
-        "render_text": rtext,
+        "render_text": "" if text_on_roi else rtext,
         "font_size": font.size,
         "line_count": line_count,
         "text_width": tw,
@@ -498,8 +516,9 @@ def layout_review_evidence(
         "mask": mask,
         "plate": mask,
         "center_x": center_x,
-        "anchor_y": (src["bottom_y"] - th + 1) + th // 2,
+        "anchor_y": top + th // 2,
         "review_evidence_overlay": True,
+        "review_overlay_suppressed": bool(text_on_roi),
     }
     return placement
 

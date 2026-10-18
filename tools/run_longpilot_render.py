@@ -75,6 +75,7 @@ def main() -> int:
             ),
             "mask": mask, "review_reason": l.get("review_reason"),
             "review_evidence_overlay": l.get("review_evidence_overlay"),
+            "review_overlay_suppressed": l.get("review_overlay_suppressed"),
             "clamp_ops": l.get("clamp_ops"),
             "text": l.get("render_text"), "raw_text": l.get("raw_text"),
         }
