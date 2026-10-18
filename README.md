@@ -35,7 +35,7 @@ The source release bundle is generated after commit closure from the exact `v1.1
 
 ## Engineering authority
 
-AutoSub uses CADS as an engineering control model with native Git/tests/runtime evidence. The former Build OS lifecycle/control-plane is retired and is not an authority for normal work.
+Kit v1.2.2 is Owner-selected for new engineering work; its canonical package/path remains to be verified. The former lifecycle/control plane is retired. This README documents the historical local 1.10.0 release; the new ship target is AutoSub Cloud. See `docs/DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md`.
 
 Living documents:
 
