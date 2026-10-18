@@ -150,8 +150,9 @@ def test_review_evidence_never_covers_badge_and_flags_review():
     )
     assert placement["review_evidence_overlay"] is True
     mask = placement["mask"]
-    if mask is not None:
-        assert protected_roi_hits({"mask": mask}, ROIS) == []
+    # A partial plate is still preferred over leaving the caption fully visible.
+    assert mask is not None
+    assert protected_roi_hits({"mask": mask}, ROIS) == []
 
 
 def test_uploader_logo_still_protected():

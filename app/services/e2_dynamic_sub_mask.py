@@ -480,6 +480,15 @@ def layout_review_evidence(
     if mask is None:
         cleared, _ = _clear_of_rois(src_mask, rois, must_cover=[src])
         mask = cleared
+    if mask is None:
+        # Partial plate: the source box itself overlaps a protected region, so a full
+        # cover is impossible.  Mask as much as can be drawn without intruding (e.g.
+        # clamp the plate just above the AI badge) rather than leaving it uncovered.
+        if protected_roi_hits({"mask": src_mask}, rois):
+            clamped, _ = clamp_mask_clear_of_rois(src_mask, rois)
+            mask = {**clamped, "padding_px": pad_px} if clamped is not None else None
+        else:
+            mask = src_mask
     placement: dict[str, Any] = {
         "render_text": rtext,
         "font_size": font.size,
