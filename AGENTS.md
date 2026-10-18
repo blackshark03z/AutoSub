@@ -1,41 +1,21 @@
-# AutoSub — CADS operating map
+# AutoSub — Kit v1.2.2 (all agents / workers)
 
-AutoSub follows **Convergent AI Development System (CADS)** for AI-assisted engineering. The canonical CADS source is `https://github.com/blackshark03z/Convergent-AI-Development-System`; the locally verified CADS baseline for this activation is commit `a3e24a1d28cea2a4ad0ee956dfa13ca2a2d211f5` (`Consolidate CADS around five engineering controls`).
+**First-read contract for ChatGPT web, Codex and every OpenCode/DeepSeek or replacement worker.** The owner-supplied Codex Native Workflow Kit has **manifest.version=1.2.2**, SHA-256 for source ZIP **716e2c83f052cd82c3d9a9120f2aa2076a5e7b61dca66a4be873b4b46f6a3b42**. The repo contains a verified role adaptation; presence of this text does **not** imply that the native Codex skill or optional third-party packages are installed.
 
-CADS is a reasoning/engineering standard, not a second lifecycle runtime. Ordinary work stays native to Git, source inspection, focused tests, full regression when appropriate, ordinary commits, and the actual AutoSub runtime.
+## One current ship goal
+**AutoSub Cloud**: paste authorized video URL → auto-ingest full source → recover burned-in Chinese subtitles once → US-first context-rich local translation → mask only source-caption strip with solid black, overlay en-US captions with matching readability, preserve source audio/logo/uploader/AI badge → validated downloadable MP4. Preserve chunk checkpoint/resume for long media. vi-VN is secondary. This is the Owner's current ship target; the Windows local 1.10.0 product is an accepted historical baseline, not the current cloud release.
 
-## Control loop
+**Product SoT:** docs/DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md. **Audit/next milestone:** docs/research/autosub_cloud_ship_gap_audit_2026-10-18.md (evidence, not a separate SoT). **Role guidance:** docs/kit/ORCHESTRATOR.md for ChatGPT; docs/kit/WORKER.md for all coding workers; docs/kit/README.md for KIT provenance. **GitHub/web:** .github/copilot-instructions.md. The Kit's original Codex skill is in the Owner-supplied ZIP; native skill activation requires actual installation/discovery, not a label in this file.
 
-On new/stale context, reconstruct repository/runtime reality before planning. Then use the smallest applicable CADS control:
+## Required approach — lightweight Kit v1.2.2
+SHAPE (whole Goal/CUJ) → BOUND (scope, hard resources, authority, exit) → SLICE (proven next product blocker) → BUILD (reuse, wire, fix before adding; focused tests at useful checkpoints) → PROVE (real end-to-end; full/protected tests at final candidate) → LEARN (observed product delta and honest unfinished work). No substitute framework, endless WP/reports, invented blockers or regression loops.
 
-1. **Reality** — identify canonical Git HEAD, dirty state, current product behavior, runtime/config/data identity, and direct evidence.
-2. **Intent / Design** — frame one bounded Product Goal, representative Critical User Journey (CUJ), acceptance, fixture, non-goals, constraints, and only material design drivers.
-3. **Change** — make the minimum sufficient coherent change. Prefer `REUSE -> WIRE -> FIX -> REPLACE_AND_DELETE -> ADD`.
-4. **Acceptance** — verify the predefined product outcome and the composed real-user journey. Feature/test PASS does not by itself establish Product PASS.
-5. **Consequence** — use an explicit boundary only for destructive, external, privileged/security-sensitive, or explicitly high-cost effects.
+At every fresh context resolve **path, branch, HEAD and dirty state**, read correct SoT and the actual accepted reports. GitHub main, D:\AutoSub, review worktrees and live runtime may differ. The 6-minute Bilibili longpilot at review/us-longpilot-20261017 commit f5f8e25 is a genuine **technical** PASS, but EDITORIAL_QA=PARTIAL, SECURITY_GATE=SUPERVISED_PASS, PUBLICATION_AUTHORIZATION=BLOCKED; **not** Cloud Product PASS.
 
-For material user-facing work, apply the current CADS user-facing workflow, frontend-design, and UI-quality-review guidance when available. If the external CADS skill library is unavailable, this file plus the repository's `TASK.md`, `ARCHITECTURE.md`, tests, and runtime evidence remain the minimum operating contract; do not invent a replacement lifecycle.
+## Mandatory boundaries
+Owner controls goal, exceptional external writes/cost and publication/deployment. Do not merge, push, deploy, upload private media/credentials, extract cookies, bypass protected access, reset another worker's tree or publish without separate authority. Do not modify another worker's active/dirty files. Keep media/secrets/model/cache artifacts outside Git. Source hash + model + locale identify resumable runs; preserve audio/attribution/AI badge. Do not auto-install BMAD Method, Ponytail, UI UX Pro Max or third-party hooks.
 
-## Project-specific authority
+Tech Lead uses MAR for reading/search/Git identity and **guarded documentation updates only**, not MAR runner/worker/task execution without explicit new authorization. Minimize Owner copy-paste relay: gather known facts through MAR, then issue at most one properly bounded implementation task with acceptance oracle and honest result. Workers read their own branch's AGENTS.md and docs/kit/WORKER.md before work; Codex-only native skills must not be pretended in OpenCode.
 
-- Owner: desired product outcome, material product trade-offs, consequential authorization, and subjective real-use acceptance.
-- AI Tech Lead: missing engineering-concern discovery, Goal/CUJ/acceptance framing, ordinary engineering judgment, and verification strategy within Owner intent.
-- `main` Git/source: implementation reality.
-- Identified live AutoSub runtime: observed behavior for the exercised source/config/environment.
-- Tests: verification evidence, not a substitute for the real journey.
-- `TASK.md`: current bounded Goal and progress only.
-- `ARCHITECTURE.md`: durable architecture/invariants.
-- `docs/DECISIONS/`: material accepted direction that must survive turnover.
-
-## Current product boundaries
-
-- Product target: local, single-user Windows application.
-- Primary entry: double-click `Run AutoSub.cmd`; normal use must not require a terminal.
-- Primary V1 journeys: (A) local Chinese-dialogue video -> AutoSubs speech transcription -> Argos zh→en translation -> verified MP4; and (B) embedded Chinese captions -> local PaddleOCR -> Gemini correction/translation -> verified MP4.
-- The Simple UI separates per-run choices from application Settings. Gemini keys are managed in Settings as an append/deduplicate list in ignored local file `secrets\\gemini_api.txt`; APIs/UI expose only sanitized status/counts, never key contents.
-- User media must not be mutated or automatically deleted.
-- Gemini is explicitly authorized only for the OCR+Gemini journey. ElevenLabs and upload/publish providers remain outside the active Product Goal.
-- Stable release packaging is active only after both accepted user journeys and release verification pass from the exact candidate HEAD.
-- Runtime binaries, models, caches, user media, databases, secrets, and generated heavy artifacts stay out of canonical source.
-
-Legacy Build OS lifecycle/control-plane files are not current authority and must not be used to gate ordinary AutoSub development.
+## Historical local product
+The existing FastAPI/SQLite Simple UI, `Run AutoSub.cmd`, PaddleOCR/Gemini and AutoSubs/Argos baseline remain usable engineering assets. Older local workflow requirements in TASK.md, project_state.json and ARCHITECTURE.md may describe historical implementation reality only; they do not override the Cloud ship decision. Tests, technical pilots and worker reports are evidence, not independent ship authorization.
