@@ -324,7 +324,12 @@ def write_clean_subtitles_ass(
         end_ms = int(cue.get("end_ms") or 0)
         if end_ms <= start_ms:
             continue
-        override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad1\\pos({layout['center_x']},{layout['anchor_y']})}}"
+        if layout.get("overlay_mode") == "LOCAL_SUB_MASK_OVERLAY":
+            if layout.get("status") in {"SUBTITLE_REGION_UNCONFIRMED", "NEEDS_REVIEW"}:
+                continue
+            override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad0\\pos({layout['center_x']},{layout['anchor_y']})}}"
+        else:
+            override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad1\\pos({layout['center_x']},{layout['anchor_y']})}}"
         events.append(
             "Dialogue: 2,"
             f"{format_ass_timestamp(start_ms)},{format_ass_timestamp(end_ms)},"
@@ -416,6 +421,35 @@ def build_source_replacement_filter(
             "drawbox="
             f"x={plate['x']}:y={plate['y']}:w={plate['width']}:h={plate['height']}:"
             f"color=black@{PLATE_OPACITY:.3f}:t=fill:enable='{enable}'"
+        )
+    filters.append(f"subtitles='{ass}'")
+    return ",".join(filters)
+
+
+def build_local_sub_mask_overlay_filter(
+    intervals: list[dict[str, Any]],
+    layouts: list[dict[str, Any]],
+    ass_path: Path,
+) -> str:
+    """Build filter string for LOCAL_SUB_MASK_OVERLAY.
+
+    Uses only a solid-black ``black@1.0`` drawbox over the exact detected Chinese
+    source subtitle bbox (per cue, per interval), then draws the localized overlay
+    from the ASS file. No delogo, no full-width/lower-third plate, no inpainting.
+    """
+    ass = _ffmpeg_filter_path(ass_path)
+    filters = []
+    for layout in layouts:
+        if layout.get("status") in {"SUBTITLE_REGION_UNCONFIRMED", "NEEDS_REVIEW"}:
+            continue
+        mask = layout.get("mask") or layout.get("plate")
+        if not mask:
+            continue
+        enable = f"between(t\\,{layout['start_time']:.3f}\\,{layout['end_time']:.3f})"
+        filters.append(
+            "drawbox="
+            f"x={mask['x']}:y={mask['y']}:w={mask['width']}:h={mask['height']}:"
+            f"color=black@1.0:t=fill:enable='{enable}'"
         )
     filters.append(f"subtitles='{ass}'")
     return ",".join(filters)
