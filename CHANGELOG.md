@@ -18,7 +18,7 @@
 - Added mode-aware readiness and fail-fast OCR/Gemini preflight before expensive frame analysis.
 - Added professional Simple UI redesign with a dedicated Settings view, Windows/Fluent-oriented hierarchy and WCAG-oriented interaction behavior.
 - Added 1-n Gemini key management: append/deduplicate local ignored file storage, sanitized counts, and bounded sticky failover across keys on auth/quota failures.
-- Completed canonical migration to `D:\\AutoSub` and retired active Build OS authority in favor of CADS + native Git/test/runtime evidence.
+- Completed canonical migration to `D:\\AutoSub` and retired active Build OS authority in favor of native Git/test/runtime evidence.
 - Fixed OCR render-plan contract mismatch (`render_cues`) found by real E2E acceptance.
 - Fixed adjacent OCR interval overlap so valid captions are boundary-trimmed rather than silently dropped during ASS normalization.
 - Real speech CUJ PASS: `run_20260909112831523056_b7d74d66`, 7 ASS Dialogue events.
