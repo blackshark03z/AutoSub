@@ -3,7 +3,7 @@
   "repository": {
     "canonical_root": "D:\\AutoSub",
     "branch": "main",
-    "engineering_standard": "CADS",
+    "engineering_standard": "Kit v1.2.2",
     "legacy_build_os": "retired"
   },
   "canonical_release": {
@@ -42,7 +42,11 @@
   },
   "subtitle_tracks": {
     "canonical_timing_owner": "translation_cue_timing",
-    "track_types": ["translation", "creative", "imported"],
+    "track_types": [
+      "translation",
+      "creative",
+      "imported"
+    ],
     "default_active_track": "translation",
     "default_missing_cue_policy": "fallback_to_translation",
     "creative_import_controls_timing": false
@@ -85,15 +89,24 @@
       "package": 4294967296
     },
     "operation_status": {
-      "run": {"status": "allowed", "margin_bytes": 11222474752},
-      "media": {"status": "allowed", "margin_bytes": 10148732928},
-      "package": {"status": "allowed", "margin_bytes": 8001249280}
+      "run": {
+        "status": "allowed",
+        "margin_bytes": 11222474752
+      },
+      "media": {
+        "status": "allowed",
+        "margin_bytes": 10148732928
+      },
+      "package": {
+        "status": "allowed",
+        "margin_bytes": 8001249280
+      }
     }
   },
   "process": {
-    "bug_fix": "Reality -> Intent/Design -> Change -> Acceptance -> Consequence",
-    "feature": "Reality -> Intent/Design -> Change -> Acceptance -> Consequence",
-    "release": "real CUJs -> full regression -> docs/storage gates -> commit -> push -> tag -> exact-commit source bundle/checksum",
+    "bug_fix": "Kit v1.2.2: SHAPE -> BOUND -> SLICE -> BUILD -> PROVE -> LEARN; evidence-first focused checks",
+    "feature": "Kit v1.2.2: bounded Product Goal and composed user journey, reusable minimum critical-path change",
+    "release": "exact candidate -> required/protected/full checks -> Product acceptance -> owner-authorized merge/push/deploy/publication only",
     "numbered_checkpoint_required_for_routine_changes": false
   },
   "living_documents": [
@@ -105,5 +118,16 @@
     "docs\\OPERATIONS.md",
     "docs\\DECISIONS\\",
     "CHANGELOG.md"
-  ]
+  ],
+  "next_ship": {
+    "goal": "AutoSub Cloud: URL -> auto-ingest -> Chinese OCR -> offline en-US localization -> narrow black source-caption mask and overlay -> validated downloadable MP4",
+    "product_status": "NOT_YET_PROVEN",
+    "source_url_e2e": "NOT_YET_VERIFIED",
+    "longpilot": "INTEGRATED_LONGPILOT_TECHNICAL_PASS",
+    "longpilot_head": "f5f8e25",
+    "editorial_qa": "PARTIAL",
+    "publication_authorization": "BLOCKED",
+    "security_gate": "SUPERVISED_PASS",
+    "decision": "docs/DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md"
+  }
 }
