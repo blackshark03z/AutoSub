@@ -2,6 +2,12 @@
 
 # Roadmap
 
+## Active Owner-approved ship milestones
+
+M1 through M5 are defined **only** in [the active Owner Decision](DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md#owner-approved-ship-milestones). Current execution status and blocker: [TASK.md](../TASK.md). All preexisting roadmap content below is historical and must not be interpreted as an alternative active ship plan.
+
+## Historical roadmap (retained for provenance)
+
 Roadmap is planned direction, never the authority for shipped behavior. A DONE item must be contained by the accepted baseline and reconcilable with accepted history.
 
 ## CURRENT ACCEPTED PRODUCT
