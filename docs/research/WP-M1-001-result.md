@@ -123,3 +123,40 @@ Tech Lead review (`docs/research/WP-M1-001-techlead-review.md`, verdict `M1=PART
 - **M1_PRODUCT: NOT_PASS.** Under the Owner rule (narrow mask tight to the Chinese bbox; English at an equivalent glyph size) **67/137 (49%)** of cues cannot fit the source mask in English and are correctly `NEEDS_REVIEW`, not silently shrunk. A1/A2/A4/A5/A7 remain evidenced; A3 (visual acceptance) does not meet a product bar.
 - **Material decision needed from Owner (not a worker choice):** Chinese → English text expansion is intrinsic, so "equal glyph size inside the same tight mask" cannot be satisfied for roughly half the lines. The options are: (a) accept English that overflows the narrow mask horizontally within the safe frame (mask stays tight to the Chinese; keeps ~all PASS); (b) allow a small, bounded font downscale with a floor and mark sub-floor cues NEEDS_REVIEW; or (c) keep strict and ship as a review-gated artifact. No option is implemented speculatively; current code implements (c) and reports (a)/(b) with measured counts.
 - TECHNICAL: PASS for the fixed behaviours. EDITORIAL: PARTIAL. SECURITY: SUPERVISED_PASS (bounded public anonymous download, host allowlist, URL/argv redaction, input-identity fail-closed, no cookie/secret access). PUBLICATION: BLOCKED pending Owner.
+
+## 8. Adaptive-union mask closure (2026-10-18) — Owner decision implemented
+
+Owner decided (§7.5 option (a), refined): the black plate is the tight **union** of the
+source Chinese glyph box and the measured rendered English glyph box at an equivalent
+glyph height; English wraps to at most two balanced lines; the plate is minimal, placed
+in time with the cue, never a full-width band, and never covers the logo/AI badge. Only a
+cue that genuinely cannot be placed within the safe frame while clearing every protected
+region is `NEEDS_REVIEW` (reported with measured geometry).
+
+### 8.1 Implementation (HEAD `db87c9cabb5145cc784999806cde08a56a99f5c3`, `implementation_dirty=false`)
+- `app/services/e2_dynamic_sub_mask.py`: `layout_union_overlay` builds `plate = union(src_box, english_glyph_box) + 2-4px pad`, bottom-anchored to the source caption and nudged up only to clear a protected ROI; the font is fixed at the source-equivalent size (`round(char_h * 0.96)`) and is never shrunk or truncated. `layout_review_evidence` renders a readable review overlay for flagged cues and suppresses the review text entirely if its glyph box would intrude on a protected region. The obsolete `fit_layout_text` / `apply_protected_roi_clamp` narrowing path is removed.
+- AI-badge ROI re-measured to its true glyph extent: `(960,653)-(1279,719)` (white badge text spans x 962..1278, y 655..696). The old `top_y=649` wrongly rejected captions that sit just above the badge.
+- `tools/run_longpilot_render.py` / `tools/run_m1_local_url_to_mp4.py`: report fields updated to the union model (`mask_model`, plate width/height, `line_count`, `placement_nudge_px`, `review_overlay_suppressed`).
+
+### 8.2 Acceptance re-run (one URL, bounded 6 min, committed HEAD)
+- Command (clean tree): `python tools/run_m1_local_url_to_mp4.py --url https://www.bilibili.com/video/BV1bPeu6cEkG --job-dir data/m1_job --part 1 --end-seconds 360 --skip-ocr --skip-translate` (reuses the unchanged OCR/translation artifacts; verifies source identity + hash).
+- Source unchanged: sha256 `a9e638243bd648e7e87addb7aba2a33b23d4141b96e7af7be23a88a26b1630b5` (63,962,107 B).
+- Render (`data/m1_job/render_report_en-US.json`): **133 PASS, 4 NEEDS_REVIEW**, `max_mask_width_px=1141` (safe 1152), 20 two-line plates, `[mask_model=adaptive_union_source_and_english]`.
+- Output: `data/m1_job/longpilot_en-US.mp4`, 53,509,522 B, sha256 `a7df5a91adaa56c86040fed5d196f4f918ffe30e083c12316463c6987a519858`; audio packet MD5 `MD5=1dc07eac0ffaa2ac8ebedc25c181b5f2` (identical to source — audio preserved).
+- `M1_STATUS=NEEDS_REVIEW`, `blocking_layouts={NEEDS_REVIEW: 4}`.
+- Evidence frames (`data/m1_job/evidence/`, before `src_*` / after `out_*`): `cue_002`, `cue_014`, `cue_027` (2-line), `cue_038` (2-line near safe width), and the four flagged cues. The rendered plates are tight, correctly placed and time-gated; the uploader logo and the AI-content badge are intact in every frame.
+- Provenance check: pixel diff of the logo ROI `(0,0,272,110)` and badge ROI `(960,653,1279,719)` between source and output over 14 sampled frames → ≤1.1% of ROI pixels changed (H.264 re-encode noise only); no plate or overlay text covers provenance.
+
+### 8.3 Remaining NEEDS_REVIEW cues (reported, not auto-accepted)
+- `cue_034` / `cue_035` / `cue_037` — English translation is far longer than the source (100+ chars at a 69-79px equivalent size ≈ 1600-2800px wide): it cannot fit two lines within the 1152px safe frame.
+- `cue_044` — the OCR box is a merge/inflation artifact (`大圣、雅蒂、大帝`, box height 107px → 103px font), and the resulting English reaches into the badge x-range.
+- For these cues the plate is drawn as far as it can go without touching provenance (`cue_034/035/037` clamped just above the badge; `cue_044` a source-only plate) and the overlay text is suppressed rather than drawn over the badge. All four stay `NEEDS_REVIEW`.
+
+### 8.4 Regression
+- Focused: `python -m pytest tests/test_e2_dynamic_sub_mask.py tests/test_longpilot_mask_clamp.py tests/test_m1_input_identity.py -q` → pass; new tests pin the union coverage, two-line wrap, no-shrink, no-badge-intrusion, review-suppression and unconfirmed-cue invariants.
+- Full suite: only the same 3 pre-existing failures reproduced at baseline `de387742` (punctuation detector, narration alignment, adaptive OCR frame selection); none introduced here.
+
+### 8.5 Honest verdict (union model)
+- **M1_PRODUCT: NOT_PASS (near).** 133/137 cues (97%) now PASS with a correct adaptive-union plate at equivalent size; the 4 remaining are genuine data defects (over-long translation / OCR-merged box), correctly fail-closed as `NEEDS_REVIEW`. A1/A2/A4/A5/A7 evidenced; A3 is met for all PASS cues but not for the whole job because 4 cues cannot be placed at the required equivalent size without covering provenance.
+- **Material decision still Owner's:** whether such long captions may take a small bounded font downscale (with a floor) or must remain review-gated. No speculative shrink is applied to a PASS cue.
+- TECHNICAL: PASS. EDITORIAL: PARTIAL. SECURITY: SUPERVISED_PASS. PUBLICATION: BLOCKED pending Owner.
