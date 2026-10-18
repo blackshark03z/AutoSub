@@ -49,3 +49,7 @@ M1_PRODUCT_PASS only if A1–A7 pass **on one actual URL-originated local job** 
 ## 4. Worker delivery and Tech Lead review
 
 Provide one concise evidence report at docs/research/WP-M1-001-result.md and job-local manifest under ignored output. Commit only scoped successful work if permitted and tests are reviewed. Report exact **worktree, base/current HEAD, diff/files, reused ref/modules, run command, URL ID/part/window, source and final MP4 hash, cue counts, artifact paths, frame comparisons, actual tests, resource consumption, failures and next blocker**. Include verdicts M1_PRODUCT / TECHNICAL / EDITORIAL / SECURITY / PUBLICATION and PRODUCT_DELTA from the pre-WP baseline. Do not claim Product PASS from test-only or an old 6min predownloaded fixture. Tech Lead verifies via MAR; worker suggestion is not automatic authorization for another task.
+
+## M1 four-cue final-data repair (Tech Lead continuation)
+
+See the follow-up in docs/research/WP-M1-001-techlead-review.md. Only cue_034/035/037/044 plus necessary adjacent boundaries and reusable tests. Repair source text/segment/box and faithful concise en-US; preserve 133 existing PASS cues. Keep Owner font size and adaptive union mask rules. No rebuilding pipeline. The worker preflight baseline is its clean M1 branch HEAD after this documentation commit.
