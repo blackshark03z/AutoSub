@@ -74,7 +74,7 @@ The UI follows Windows/Fluent-oriented settings hierarchy and WCAG-oriented focu
 
 ## Architecture / process authority
 
-Current engineering control is CADS: `Reality -> Intent/Design -> Change -> Acceptance -> Consequence`, using native Git, tests and runtime evidence. Legacy Build OS lifecycle/control-plane files are retired from authority.
+New engineering guidance is Owner-selected Kit v1.2.2 (authoritative package/path not yet verified), with actual Git/test/runtime evidence. This file preserves historical local 1.10.0 state; the new Cloud ship goal is recorded in `docs/DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md`. The old lifecycle/control plane is retired.
 
 ## Historical distribution provenance
 
