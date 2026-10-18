@@ -4,7 +4,7 @@ Read this index during Project Cold-Start and open only records relevant to the 
 
 ## Active
 
-- [0007 — CADS-native development control](0007-cads-native-development.md) — retires AutoSub's Build OS lifecycle/control plane and makes CADS + native Git/test/runtime evidence the engineering control model.
+- [2026-10-18 — Kit v1.2.2 and Cloud ship](2026-10-18-kit-v1.2.2-and-cloud-ship.md) — records the Owner-selected Kit (verified source archive), Cloud ship target and role-guidance entry.
 - [0006 — Generated artifacts disposable](0006-generated-artifacts-disposable.md)
 - [0005 — Release retention](0005-release-retention.md)
 - [0004 — Creative import text only](0004-creative-import-text-only.md)
