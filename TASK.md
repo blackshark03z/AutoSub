@@ -1,4 +1,10 @@
-# Goal
+# Current Cloud ship target and historical local goal
+
+**Owner target (2026-10-18): AutoSub Cloud**, from one source URL to automated ingest, Chinese-dialogue OCR, US-English localization, narrow black subtitle replacement, preserved audio/logo/AI notice and complete validated video; long media must resume correctly. Kit v1.2.2 is the engineering kit selected by Owner, but its normative package has not yet been verified. See `docs/DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md`.
+
+The following v1.9→1.10 Windows/Production Monitor release goal is retained as **historical**, not Cloud ship acceptance.
+
+# Historical Local Goal
 
 Release the next stable AutoSub version from baseline `v1.9.0` / `ac271c1144ac1c0bd8e033e0cdf628f2f2bc49f8` with a truthful **Production Monitor** for long-running subtitle work.
 
@@ -46,7 +52,7 @@ The product remains one-click automation: **Setup -> Production Monitor -> Resul
 - Add only the minimal persisted render/monitor evidence needed to make the current run observable.
 - Secrets never enter progress files, UI payloads, logs, Git or release archives.
 - Prefer `REUSE -> WIRE -> FIX -> ADD`; no speculative metrics or fake percentage.
-- CADS core remains unchanged unless the same failure class is independently observed in another project.
+- Do not invent or silently change Kit v1.2.2 rules; verify the owner-selected normative package/version first.
 
 # Baseline / Findings
 
