@@ -6,13 +6,17 @@ solid-black ``black@1.0`` mask per *real* OCR dialogue cue, plus an independent
 English/Vietnamese overlay.
 
 Design invariants enforced here:
-- One mask per actual source dialogue cue, using that cue's own ``bbox`` and its
-  own start/end timestamps.  Adjacent cues are never unioned.
-- Mask padding is 2-4 px; mask colour is exactly ``black@1.0`` (validated finite).
+- One adaptive plate per actual source dialogue cue, using that cue's own ``bbox``
+  and start/end timestamps.  Adjacent cues are never unioned.
+- Each plate is the tight union of the source Chinese glyph box and the measured
+  rendered English glyph box at source-equivalent size, plus 2-4 px padding.  The
+  font is never silently shrunk and the meaning is never truncated; a long
+  translation wraps to at most two balanced lines.
 - No mask is emitted during truly empty intervals (gaps between cues).
 - Uploader logo (top-left) and the AI-content badge (bottom-right) are protected
-  regions; if any mask OR translated-text rectangle intersects a protected region
-  the layout becomes ``PROTECTED_ROI_INTERSECTION`` and rendering fails closed.
+  regions.  A plate is placed to clear them; a cue whose caption/layout cannot be
+  placed safely becomes ``NEEDS_REVIEW`` with measured evidence (never a false
+  PASS and never a plate drawn over provenance).
 """
 from __future__ import annotations
 
@@ -39,17 +43,22 @@ MASK_PADDING_MIN = 2
 MASK_PADDING_MAX = 4
 MASK_COLOR = "black@1.0"
 
-# Owner-confirmed sizing rule (see Product SoT / WP-M1-001 §A3): the en-US
-# overlay must keep the *apparent* glyph height of the source Chinese caption.
-# Target is ~96% of the source character height; an unfit line may reduce to at
-# most ~88% of that target and no further. Cues whose text cannot fit the
-# confirmed source mask within that band must fail into evidence-bearing review
-# instead of silently shrinking or widening the mask.
+# Owner-confirmed sizing rule (see Product SoT "M1 subtitle replacement
+# presentation", 2026-10-18): the en-US overlay keeps the *apparent* glyph height
+# of the source Chinese caption (``SOURCE_FONT_TARGET_RATIO`` of the measured
+# source character height). The solid-black plate is the tight UNION of the source
+# Chinese glyph rectangle and the measured rendered English glyph/outline
+# rectangle, plus small padding. English may wrap to a balanced 1-2 lines; the
+# font is never silently shrunk and the meaning is never truncated. A cue whose
+# English layout or union plate cannot fit the safe frame while clearing every
+# protected region is reported NEEDS_REVIEW with measured geometry.
 SOURCE_FONT_TARGET_RATIO = 0.96
-SOURCE_FONT_MIN_RATIO = 0.88
-# Widest text budget only used to render an *evidence* overlay for cues that are
-# already flagged NEEDS_REVIEW (never to award PASS).
+# Widest text budget for the union plate; the plate must never become a full-width
+# or lower-third band, so a union wider than this fails into NEEDS_REVIEW.
 SAFE_TEXT_WIDTH_RATIO = 0.90
+# Safety margin added to the union plate of a multi-line overlay so the rendered
+# libass line spacing can never poke outside the measured PIL text box.
+MULTILINE_MASK_SAFETY_PX = 4
 
 STATUS_PASS = "PASS"
 STATUS_NEEDS_REVIEW = "NEEDS_REVIEW"
@@ -58,9 +67,13 @@ STATUS_UNCONFIRMED = "SUBTITLE_REGION_UNCONFIRMED"
 
 # Protected platform provenance regions, measured from decoded 1280x720 source
 # frames (see acceptance report evidence).  A small guard is added outward.
+# The AI badge glyphs were re-measured on subtitle-free frames: white text spans
+# x 962..1278, y 655..696; the ROI keeps a 2px guard above/left of that glyph box
+# so a caption whose glyph bottom sits just above the badge (e.g. y=649..652) is
+# not wrongly rejected while the badge itself is still fully protected.
 PROTECTED_ROIS_REFERENCE: dict[str, dict[str, int]] = {
     "uploader_logo": {"left_x": 0, "top_y": 0, "right_x": 272, "bottom_y": 110},
-    "ai_content_badge": {"left_x": 956, "top_y": 649, "right_x": 1279, "bottom_y": 719},
+    "ai_content_badge": {"left_x": 960, "top_y": 653, "right_x": 1279, "bottom_y": 719},
 }
 
 
@@ -264,159 +277,222 @@ def clamp_mask_clear_of_rois(
     return current, ops
 
 
-def _clamp_covers_bbox(mask: dict[str, int], bbox: dict[str, int] | None) -> bool:
-    """A clamped mask must still cover the detected source text (not a degenerate sliver)."""
-    if mask["width"] < 10 or mask["height"] < 10:
-        return False
-    if not bbox:
-        return True
-    ix = max(0, min(mask["right_x"], int(bbox["right_x"])) - max(mask["x"], int(bbox["left_x"])) + 1)
-    iy = max(0, min(mask["bottom_y"], int(bbox["bottom_y"])) - max(mask["y"], int(bbox["top_y"])) + 1)
-    inter = ix * iy
-    bbox_area = (int(bbox["right_x"]) - int(bbox["left_x"]) + 1) * (
-        int(bbox["bottom_y"]) - int(bbox["top_y"]) + 1
+def _rect_from_bbox(bbox: dict[str, Any]) -> dict[str, int]:
+    return {
+        "left_x": int(bbox["left_x"]),
+        "top_y": int(bbox["top_y"]),
+        "right_x": int(bbox["right_x"]),
+        "bottom_y": int(bbox["bottom_y"]),
+    }
+
+
+def _union_rect(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
+    return {
+        "left_x": min(a["left_x"], b["left_x"]),
+        "top_y": min(a["top_y"], b["top_y"]),
+        "right_x": max(a["right_x"], b["right_x"]),
+        "bottom_y": max(a["bottom_y"], b["bottom_y"]),
+    }
+
+
+def _rect_contains(outer: dict[str, int], inner: dict[str, int]) -> bool:
+    return (
+        outer["left_x"] <= inner["left_x"]
+        and outer["top_y"] <= inner["top_y"]
+        and outer["right_x"] >= inner["right_x"]
+        and outer["bottom_y"] >= inner["bottom_y"]
     )
-    return bbox_area > 0 and inter / bbox_area >= 0.6
 
 
-def _text_roi_validator(
-    center_x: int,
-    center_y: int,
+def _mask_dict(rect: dict[str, int], pad_px: int, *, v_extra: int = 0) -> dict[str, int]:
+    left = rect["left_x"] - pad_px
+    top = rect["top_y"] - pad_px - v_extra
+    right = rect["right_x"] + pad_px
+    bottom = rect["bottom_y"] + pad_px + v_extra
+    return {
+        "x": left,
+        "y": top,
+        "left_x": left,
+        "top_y": top,
+        "width": right - left + 1,
+        "height": bottom - top + 1,
+        "right_x": right,
+        "bottom_y": bottom,
+        "padding_px": pad_px,
+    }
+
+
+def _clip_mask_to_frame(mask: dict[str, int], output_width: int, output_height: int) -> dict[str, int] | None:
+    left = max(0, mask["x"])
+    top = max(0, mask["y"])
+    right = min(output_width - 1, mask["right_x"])
+    bottom = min(output_height - 1, mask["bottom_y"])
+    if right < left or bottom < top:
+        return None
+    return {"x": left, "y": top, "left_x": left, "top_y": top,
+            "width": right - left + 1, "height": bottom - top + 1,
+            "right_x": right, "bottom_y": bottom, "padding_px": mask.get("padding_px", 0)}
+
+
+def _candidate_overlays(text: str, font: ImageFont.FreeTypeFont, *, max_lines: int,
+                        wrap_width: int) -> list[str]:
+    single = clean_text(text)
+    if not single:
+        return []
+    candidates = [single]
+    if max_lines >= 2 and " " in single:
+        wrapped = wrap_subtitle_text(single, font, wrap_width)
+        if wrapped and wrapped not in candidates and wrapped.count("\n") + 1 <= max_lines:
+            candidates.append(wrapped)
+    return candidates
+
+
+def _clear_of_rois(
+    mask: dict[str, int],
     rois: dict[str, dict[str, int]],
-) -> Any:
-    def _ok(_render_text: str, _size: int, tw: int, th: int) -> bool:
-        rect = {
-            "left_x": center_x - tw // 2,
-            "top_y": center_y - th // 2,
-            "right_x": center_x - tw // 2 + tw - 1,
-            "bottom_y": center_y - th // 2 + th - 1,
-        }
-        return not any(rects_intersect(rect, roi) for roi in rois.values())
+    must_cover: list[dict[str, int]],
+) -> tuple[dict[str, int] | None, list[str]]:
+    """Return a mask cleared of every protected ROI that still covers ``must_cover``.
 
-    return _ok
+    Tries the exact union mask first, then a clamped variant.  Returns ``(mask, ops)``
+    or ``(None, [])`` when no ROI-clear mask can cover the required glyph rectangles
+    (the cue is then reported NEEDS_REVIEW rather than covering a protected region).
+    """
+    if not protected_roi_hits({"mask": mask}, rois):
+        return mask, []
+    clamped, ops = clamp_mask_clear_of_rois(mask, rois)
+    if clamped is None:
+        return None, []
+    clamped = {"x": clamped["x"], "y": clamped["y"], "left_x": clamped["x"], "top_y": clamped["y"],
+               "width": clamped["width"], "height": clamped["height"],
+               "right_x": clamped["right_x"], "bottom_y": clamped["bottom_y"],
+               "padding_px": mask.get("padding_px", 0)}
+    if protected_roi_hits({"mask": clamped}, rois):
+        return None, []
+    if not all(_rect_contains(clamped, rect) for rect in must_cover):
+        return None, []
+    return clamped, ops
 
 
-def fit_layout_text(
+def layout_union_overlay(
     text: str,
+    *,
+    src_bbox: dict[str, Any],
     base_font: ImageFont.FreeTypeFont,
-    *,
     target_size: int,
-    min_size: int,
-    max_width: int,
-    max_lines: int,
     rois: dict[str, dict[str, int]],
-    center_x: int,
-    center_y: int,
-) -> dict[str, Any] | None:
-    """Fit ``text`` at an equivalent source glyph size inside ``max_width``.
-
-    The font is never reduced below ``min_size`` (the ~88% equivalent-size floor),
-    so an over-long translation returns ``None`` instead of a silently downscaled
-    PASS.  A validator rejects any candidate that would intrude on a protected ROI.
-    """
-    return fit_overlay_text(
-        text,
-        base_font,
-        target_size=target_size,
-        min_size=min_size,
-        max_width=max_width,
-        max_lines=max_lines,
-        validator=_text_roi_validator(center_x, center_y, rois),
-    )
-
-
-def apply_protected_roi_clamp(
-    plan: dict[str, Any],
-    *,
-    font_path: Path | None = None,
+    output_width: int,
+    output_height: int,
+    pad_px: int,
+    safe_text_width: int,
     max_lines: int = 2,
-) -> tuple[dict[str, Any], dict[str, list[str]]]:
-    """Clamp padded masks that graze a protected ROI, then re-validate each layout.
+    max_nudge_px: int = 6,
+) -> dict[str, Any] | None:
+    """Adaptive black plate tightly covering the Chinese ∪ English glyph union.
 
-    A clamped mask is *narrower* than the confirmed source mask and is recentered, so
-    the overlay is re-fit against the clamped width. A layout only returns to ``PASS``
-    when it still has a valid, measured text fit at equivalent size inside the clamped
-    mask AND clears every protected ROI (including its text rectangle). A layout whose
-    text no longer fits becomes ``NEEDS_REVIEW`` (never a false PASS); a mask that
-    cannot be cleared stays ``PROTECTED_ROI_INTERSECTION`` (fail closed).
+    The English overlay keeps the source-equivalent glyph height (``target_size``);
+    it is never shrunk.  The plate is the union of the measured source glyph box and
+    the measured rendered English glyph box plus small padding, bottom-anchored to
+    the source caption and nudged up by at most ``max_nudge_px`` to clear a protected
+    ROI.  Returns ``None`` when no 1-2 line layout keeps the plate inside the safe
+    frame while clearing every protected region (the cue then becomes NEEDS_REVIEW).
     """
-    rois = plan["protected_rois"]
-    base_font: ImageFont.FreeTypeFont | None = None
-    if font_path is not None:
-        base_font = ImageFont.truetype(str(font_path), max(18, int(plan["font_size"])))
-    safe_width = int(plan.get("safe_text_width") or 0)
-
-    clamped: list[str] = []
-    unrecoverable: list[str] = []
-    for layout in plan["layouts"]:
-        if not layout.get("mask") or layout["status"] == STATUS_UNCONFIRMED:
+    src = _rect_from_bbox(src_bbox)
+    font = _font(base_font, target_size)
+    center_x = (src["left_x"] + src["right_x"]) // 2
+    for rtext in _candidate_overlays(text, font, max_lines=max_lines, wrap_width=safe_text_width):
+        tb = multiline_text_box(rtext, font)
+        tw, th = int(tb["width"]), int(tb["height"])
+        if tw <= 0 or th <= 0:
             continue
-        hits = protected_roi_hits(layout, rois)
-        if not hits:
-            continue
-        was_protected = layout["status"] == STATUS_PROTECTED_ROI_INTERSECTION
-        new_mask, ops = clamp_mask_clear_of_rois(layout["mask"], rois)
-        if new_mask is None or not _clamp_covers_bbox(new_mask, layout.get("source_bbox")):
-            unrecoverable.append(layout["segment_id"])
-            continue
-        layout["mask"] = new_mask
-        layout["plate"] = new_mask
-        layout["center_x"] = new_mask["x"] + new_mask["width"] // 2
-        layout["anchor_y"] = new_mask["y"] + new_mask["height"] // 2
-        layout["clamp_ops"] = ops
+        line_count = rtext.count("\n") + 1
+        v_extra = MULTILINE_MASK_SAFETY_PX if line_count > 1 else 0
+        for nudge in range(0, max_nudge_px + 1):
+            bottom = src["bottom_y"] - nudge
+            top = bottom - th + 1
+            left = center_x - tw // 2
+            trect = {"left_x": left, "top_y": top, "right_x": left + tw - 1, "bottom_y": bottom}
+            mask = _mask_dict(_union_rect(src, trect), pad_px, v_extra=v_extra)
+            if mask["x"] < 0 or mask["y"] < 0 or mask["right_x"] >= output_width or mask["bottom_y"] >= output_height:
+                continue
+            if mask["width"] > safe_text_width or mask["height"] > output_height:
+                continue
+            cleared, ops = _clear_of_rois(mask, rois, must_cover=[src, trect])
+            if cleared is None:
+                continue
+            return {
+                "render_text": rtext,
+                "font_size": font.size,
+                "line_count": line_count,
+                "text_width": tw,
+                "text_height": th,
+                "mask": cleared,
+                "plate": cleared,
+                "center_x": center_x,
+                "anchor_y": top + th // 2,
+                "placement_nudge_px": nudge,
+                "clamp_ops": ops,
+            }
+    return None
 
-        target_size = int(layout.get("target_font_size") or plan.get("font_size") or 27)
-        min_size = int(layout.get("min_font_size") or target_size)
-        # PASS-candidate layouts must fit the (clamped) source mask; flagged layouts
-        # keep their evidence-overlay budget so the render stays reviewable.
-        budget = new_mask["width"] if was_protected else (safe_width or new_mask["width"])
-        refit = None
-        if base_font is not None:
-            refit = fit_layout_text(
-                layout.get("raw_text") or layout["render_text"],
-                base_font,
-                target_size=target_size,
-                min_size=min_size,
-                max_width=budget,
-                max_lines=max_lines,
-                rois=rois,
-                center_x=layout["center_x"],
-                center_y=layout["anchor_y"],
-            )
-        if refit is not None:
-            layout.update(refit)
 
-        hits_after = protected_roi_hits(layout, rois)
-        if hits_after:
-            # Fail closed: a mask that still grazes a protected ROI is never drawn,
-            # even for a flagged layout, so the logo/watermark can never be covered.
-            layout["status"] = STATUS_PROTECTED_ROI_INTERSECTION
-            layout["review_reason"] = ("PROTECTED_ROI_INTERSECTION_AFTER_CLAMP"
-                                       if was_protected else "PROTECTED_ROI_INTERSECTION")
-            layout["protected_roi_hits"] = hits_after
-            unrecoverable.append(layout["segment_id"])
-            continue
-        if was_protected:
-            layout["max_text_width"] = new_mask["width"]
-            if refit is not None and int(refit["text_width"]) <= new_mask["width"]:
-                layout["status"] = STATUS_PASS
-                layout["review_reason"] = None
-                layout.pop("protected_roi_hits", None)
-                clamped.append(layout["segment_id"])
-            else:
-                layout["status"] = STATUS_NEEDS_REVIEW
-                layout["review_reason"] = "translation_exceeds_clamped_source_mask"
-                clamped.append(layout["segment_id"])
-        else:
-            clamped.append(layout["segment_id"])
+def layout_review_evidence(
+    text: str,
+    *,
+    src_bbox: dict[str, Any],
+    base_font: ImageFont.FreeTypeFont,
+    target_size: int,
+    rois: dict[str, dict[str, int]],
+    output_width: int,
+    output_height: int,
+    pad_px: int,
+    safe_text_width: int,
+    max_lines: int = 2,
+) -> dict[str, Any]:
+    """Best-effort measured placement for a NEEDS_REVIEW cue.
 
-    statuses: dict[str, int] = {}
-    for layout in plan["layouts"]:
-        statuses[layout["status"]] = statuses.get(layout["status"], 0) + 1
-    plan["statuses"] = statuses
-    mask_widths = [layout["mask"]["width"] for layout in plan["layouts"] if layout.get("mask")]
-    plan["max_mask_width_px"] = max(mask_widths) if mask_widths else None
-    return plan, {"clamped": clamped, "unrecoverable": unrecoverable}
+    Renders the source-equivalent overlay at the widest safe frame width and masks the
+    Chinese source plus as much of the English as can be covered WITHOUT intruding on a
+    protected region or leaving the frame.  Never used to award PASS.
+    """
+    src = _rect_from_bbox(src_bbox)
+    font = _font(base_font, target_size)
+    center_x = (src["left_x"] + src["right_x"]) // 2
+    candidates = _candidate_overlays(text, font, max_lines=max_lines, wrap_width=safe_text_width)
+    rtext = candidates[-1] if candidates else clean_text(text)
+    tb = multiline_text_box(rtext, font)
+    tw, th = int(tb["width"]), int(tb["height"])
+    line_count = rtext.count("\n") + 1
+    v_extra = MULTILINE_MASK_SAFETY_PX if line_count > 1 else 0
+
+    src_mask = build_tight_mask(src_bbox, output_width=output_width, output_height=output_height, pad_px=pad_px)
+    mask: dict[str, int] | None = None
+    if tw > 0 and th > 0:
+        bottom = src["bottom_y"]
+        top = bottom - th + 1
+        left = center_x - tw // 2
+        trect = {"left_x": left, "top_y": top, "right_x": left + tw - 1, "bottom_y": bottom}
+        union = _mask_dict(_union_rect(src, trect), pad_px, v_extra=v_extra)
+        clipped = _clip_mask_to_frame(union, output_width, output_height)
+        if clipped is not None:
+            cleared, _ = _clear_of_rois(clipped, rois, must_cover=[src])
+            mask = cleared
+    if mask is None:
+        cleared, _ = _clear_of_rois(src_mask, rois, must_cover=[src])
+        mask = cleared
+    placement: dict[str, Any] = {
+        "render_text": rtext,
+        "font_size": font.size,
+        "line_count": line_count,
+        "text_width": tw,
+        "text_height": th,
+        "mask": mask,
+        "plate": mask,
+        "center_x": center_x,
+        "anchor_y": (src["bottom_y"] - th + 1) + th // 2,
+        "review_evidence_overlay": True,
+    }
+    return placement
 
 
 def build_dynamic_mask_plan(
@@ -427,8 +503,8 @@ def build_dynamic_mask_plan(
     font_path: Path,
     max_lines: int = 2,
     target_ratio: float = SOURCE_FONT_TARGET_RATIO,
-    min_ratio: float = SOURCE_FONT_MIN_RATIO,
     safe_width_ratio: float = SAFE_TEXT_WIDTH_RATIO,
+    max_nudge_px: int = 6,
 ) -> dict[str, Any]:
     media = media_summary(source_path)
     output_width = int(media["video"].get("width") or 0) or REFERENCE_WIDTH
@@ -463,76 +539,56 @@ def build_dynamic_mask_plan(
             "start_time": start_time,
             "end_time": end_time,
             "target_font_size": None,
-            "min_font_size": None,
             "max_text_width": None,
             "source_char_height": None,
         }
         if bbox:
-            mask = build_tight_mask(bbox, output_width=output_width, output_height=output_height, pad_px=pad_px)
             char_h = int(box.get("text_height") or (bbox["bottom_y"] - bbox["top_y"] + 1))
             target_size = max(18, round(char_h * target_ratio))
-            min_size = max(14, round(target_size * min_ratio))
-            center_x = mask["x"] + mask["width"] // 2
-            center_y = mask["y"] + mask["height"] // 2
-
-            layout["mask"] = mask
-            layout["plate"] = mask
             layout["source_bbox"] = bbox
             layout["confidence"] = float(box.get("confidence", 1.0) or 1.0)
-            layout["center_x"] = center_x
-            layout["anchor_y"] = center_y
             layout["target_font_size"] = target_size
-            layout["min_font_size"] = min_size
-            layout["max_text_width"] = mask["width"]
             layout["source_char_height"] = char_h
 
-            # PASS requires a real, measured fit inside the confirmed source mask at
-            # equivalent glyph size. Fitting against the whole frame width (or a
-            # below-floor font) is what created false PASS layouts before.
-            fit = fit_layout_text(
+            # Adaptive union plate: the black rectangle tightly covers the source
+            # Chinese glyph box UNION the measured rendered English glyph box at the
+            # source-equivalent size. A cue that cannot be placed safely becomes
+            # NEEDS_REVIEW with measured evidence rather than a false PASS.
+            placement = layout_union_overlay(
                 text,
-                base_font,
+                src_bbox=bbox,
+                base_font=base_font,
                 target_size=target_size,
-                min_size=min_size,
-                max_width=mask["width"],
-                max_lines=max_lines,
                 rois=rois,
-                center_x=center_x,
-                center_y=center_y,
+                output_width=output_width,
+                output_height=output_height,
+                pad_px=pad_px,
+                safe_text_width=safe_text_width,
+                max_lines=max_lines,
+                max_nudge_px=max_nudge_px,
             )
-            if fit is not None:
-                layout.update(fit)
+            if placement is not None:
+                layout.update(placement)
+                layout["max_text_width"] = placement["mask"]["width"]
                 layout["status"] = STATUS_PASS
                 layout["review_reason"] = None
             else:
-                layout["status"] = STATUS_NEEDS_REVIEW
-                layout["review_reason"] = "translation_exceeds_source_mask_at_equivalent_size"
-                # Best-effort evidence overlay (safe frame width) so a review artifact
-                # still exists; the cue is never promoted to PASS from this.
-                review_fit = fit_layout_text(
+                evidence = layout_review_evidence(
                     text,
-                    base_font,
+                    src_bbox=bbox,
+                    base_font=base_font,
                     target_size=target_size,
-                    min_size=min_size,
-                    max_width=safe_text_width,
-                    max_lines=max_lines,
                     rois=rois,
-                    center_x=center_x,
-                    center_y=center_y,
+                    output_width=output_width,
+                    output_height=output_height,
+                    pad_px=pad_px,
+                    safe_text_width=safe_text_width,
+                    max_lines=max_lines,
                 )
-                if review_fit is not None:
-                    layout.update(review_fit)
-                    layout["review_fit"] = True
-                else:
-                    layout["review_fit"] = False
+                layout.update(evidence)
+                layout["status"] = STATUS_NEEDS_REVIEW
+                layout["review_reason"] = "translation_exceeds_safe_frame_at_equivalent_size"
 
-        hits = protected_roi_hits(layout, rois) if layout["mask"] else []
-        if hits:
-            # Any mask that grazes a protected ROI fails closed (never drawn), even if
-            # the translation could not fit — this is resolved later by the clamp pass.
-            layout["protected_roi_hits"] = hits
-            layout["status"] = STATUS_PROTECTED_ROI_INTERSECTION
-            layout["review_reason"] = "PROTECTED_ROI_INTERSECTION"
         layouts.append(layout)
 
     statuses: dict[str, int] = {}
@@ -545,8 +601,10 @@ def build_dynamic_mask_plan(
         "fps": media["video"].get("avg_frame_rate"),
         "font_size": base_font.size,
         "mask_padding_px": pad_px,
-        "fit_budget": "confirmed_source_mask_width",
+        "mask_model": "adaptive_union_source_and_english",
+        "fit_budget": "adaptive_union_plate_u_within_safe_frame",
         "safe_text_width": safe_text_width,
+        "max_nudge_px": max_nudge_px,
         "protected_rois": rois,
         "layouts": layouts,
         "statuses": statuses,

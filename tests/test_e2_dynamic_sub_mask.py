@@ -18,7 +18,6 @@ from app.services.e2_dynamic_sub_mask import (
     MASK_COLOR,
     STATUS_NEEDS_REVIEW,
     STATUS_PASS,
-    STATUS_PROTECTED_ROI_INTERSECTION,
     STATUS_UNCONFIRMED,
     build_dynamic_mask_plan,
     build_mask_filter,
@@ -90,7 +89,8 @@ def test_rects_intersect_edge_touching_is_intersection():
 
 def test_scale_protected_rois_identity_at_reference_resolution():
     rois = scale_protected_rois(1280, 720)
-    assert rois["ai_content_badge"]["left_x"] == 956
+    assert rois["ai_content_badge"]["left_x"] == 960
+    assert rois["ai_content_badge"]["top_y"] == 653
     assert rois["uploader_logo"]["right_x"] == 272
 
 
@@ -135,17 +135,19 @@ def _plan_fixture():
     return cues, boxes
 
 
-def test_plan_emits_one_mask_per_cue_not_a_union(tmp_path: Path):
+def test_plan_emits_one_adaptive_plate_per_cue(tmp_path: Path):
     if not SOURCE.exists():
         pytest.skip("source fixture unavailable")
     cues, boxes = _plan_fixture()
     plan = build_dynamic_mask_plan(SOURCE, cues, boxes, font_path=FONT_PATH)
     masks = [l["mask"] for l in plan["layouts"]]
     assert len(masks) == 2
-    assert masks[0]["width"] == 101 + 6
-    assert masks[1]["width"] == 301 + 6
     assert masks[0] != masks[1]
-    assert plan["max_mask_width_px"] < 966
+    # Each plate is the tight union of that cue's source box and its English glyph
+    # box: at least as wide as the source, but never a full-width band.
+    assert masks[0]["width"] >= (600 - 500 + 1)
+    assert masks[1]["width"] >= (700 - 400 + 1)
+    assert plan["max_mask_width_px"] <= plan["safe_text_width"]
 
 
 def test_no_mask_during_gap_between_cues(tmp_path: Path):
@@ -175,15 +177,21 @@ def test_filter_uses_solid_black_exactly_one_opacity(tmp_path: Path):
     assert MASK_COLOR == "black@1.0"
 
 
-def test_render_fails_closed_on_protected_roi_intersection(tmp_path: Path):
+def test_source_inside_badge_is_flagged_never_covers_badge(tmp_path: Path):
     if not SOURCE.exists():
         pytest.skip("source fixture unavailable")
     cues = _cues(("cue_badge", 0, 2000, "Text that runs into the badge"))
     boxes = {"cue_badge": {"bbox": _bbox(1140, 640, 1275, 700), "confidence": 0.9}}
     plan = build_dynamic_mask_plan(SOURCE, cues, boxes, font_path=FONT_PATH)
-    assert plan["layouts"][0]["status"] == STATUS_PROTECTED_ROI_INTERSECTION
-    with pytest.raises(ValueError, match="PROTECTED_ROI_INTERSECTION"):
-        render_dynamic_mask_window(SOURCE, plan, cues, output_path=tmp_path / "out.mp4")
+    layout = plan["layouts"][0]
+    # A caption whose source box sits inside the protected badge cannot be masked
+    # without covering provenance: it is reported NEEDS_REVIEW, never a false PASS.
+    assert layout["status"] == STATUS_NEEDS_REVIEW
+    assert layout["review_reason"]
+    mask = layout["mask"]
+    if mask is not None:
+        badge = plan["protected_rois"]["ai_content_badge"]
+        assert mask["bottom_y"] < badge["top_y"] or mask["right_x"] < badge["left_x"]
 
 
 def test_render_fails_closed_on_unconfirmed_cue(tmp_path: Path):
@@ -211,17 +219,20 @@ def test_real_ocr_cues_have_no_false_pass_and_stay_tight():
     boxes = load_cue_boxes(OCR_JSON)
     plan = build_dynamic_mask_plan(SOURCE, cues, boxes, font_path=FONT_PATH)
     assert len(plan["layouts"]) == len(cues)
-    assert plan["max_mask_width_px"] <= 700
-    assert all(l["mask"]["padding_px"] in (2, 3, 4) for l in plan["layouts"])
+    assert plan["max_mask_width_px"] <= plan["safe_text_width"]
     badge = plan["protected_rois"]["ai_content_badge"]
     for layout in plan["layouts"]:
         mask = layout["mask"]
-        assert mask["bottom_y"] < badge["top_y"] or mask["right_x"] < badge["left_x"]
-        # A PASS is only valid when a measured translation really fits the mask at an
+        if mask is not None:
+            assert mask["padding_px"] in (2, 3, 4)
+            # No plate may ever intrude on the protected badge.
+            assert mask["bottom_y"] < badge["top_y"] or mask["right_x"] < badge["left_x"]
+        # A PASS is only valid when a measured translation really fits the plate at an
         # equivalent glyph size; otherwise the cue must be flagged, never a false PASS.
         if layout["status"] == STATUS_PASS:
             assert layout["text_width"] > 0
             assert layout["text_width"] <= mask["width"]
-            assert layout["font_size"] >= layout["min_font_size"]
+            # Equivalent size: the overlay is never silently shrunk below the source.
+            assert layout["font_size"] == layout["target_font_size"]
         else:
             assert layout["review_reason"]

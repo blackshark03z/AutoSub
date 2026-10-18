@@ -414,9 +414,8 @@ def main() -> int:
     render_report = json.loads((out_dir / "render_report_en-US.json").read_text(encoding="utf-8"))
     manifest["render"] = {
         "cue_count": render_report.get("cue_count"),
-        "statuses": render_report.get("post_clamp_statuses"),
-        "clamped": render_report.get("clamped"),
-        "unrecoverable": render_report.get("unrecoverable"),
+        "statuses": render_report.get("statuses"),
+        "mask_model": render_report.get("mask_model"),
         "mask_padding_px": render_report.get("mask_padding_px"),
         "fit_budget": render_report.get("fit_budget"),
         "safe_text_width": render_report.get("safe_text_width"),
@@ -437,7 +436,7 @@ def main() -> int:
                    env, 300)
     manifest["finalize_exit"] = rc
 
-    statuses = render_report.get("post_clamp_statuses") or {}
+    statuses = render_report.get("statuses") or {}
     blocking = {k: v for k, v in statuses.items() if k in {"NEEDS_REVIEW", "SUBTITLE_REGION_UNCONFIRMED",
                                                            "PROTECTED_ROI_INTERSECTION"}}
     manifest["status"] = "DONE" if not blocking else "NEEDS_REVIEW"

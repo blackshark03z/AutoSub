@@ -1,13 +1,24 @@
-"""Focused tests for the protected-ROI mask clamp used by the long pilot."""
+"""Focused tests for the adaptive-union mask plate and protected-ROI clamp.
+
+The plate for every cue is the tight union of the source Chinese glyph box and the
+measured rendered English glyph box at source-equivalent size.  It must always cover
+the source caption and the overlay text, stay inside the safe frame (never a
+full-width band), and never intrude on a protected region (uploader logo / AI badge).
+A cue that cannot satisfy all three is reported NEEDS_REVIEW with measured evidence.
+"""
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
+from PIL import ImageFont
+
 from app.services.e2_dynamic_sub_mask import (
     PROTECTED_ROIS_REFERENCE,
-    apply_protected_roi_clamp,
     clamp_mask_clear_of_rois,
+    layout_review_evidence,
+    layout_union_overlay,
+    multiline_text_box,
     protected_roi_hits,
     scale_protected_rois,
 )
@@ -21,8 +32,24 @@ def _mask(x, y, w, h):
     return {"x": x, "y": y, "width": w, "height": h, "right_x": x + w - 1, "bottom_y": y + h - 1, "padding_px": 3}
 
 
+def _bbox(left, top, right, bottom):
+    return {"left_x": left, "top_y": top, "right_x": right, "bottom_y": bottom,
+            "width": right - left + 1, "height": bottom - top + 1}
+
+
+def _font(size: int = 27) -> ImageFont.FreeTypeFont:
+    if FONT.exists():
+        return ImageFont.truetype(str(FONT), size)
+    return ImageFont.load_default()
+
+
+def _contains(outer, inner):
+    return (outer["left_x"] <= inner["left_x"] and outer["top_y"] <= inner["top_y"]
+            and outer["right_x"] >= inner["right_x"] and outer["bottom_y"] >= inner["bottom_y"])
+
+
 def test_clamp_prefers_vertical_and_clears_badge():
-    # wide cue whose padded bottom grazes the AI badge (top_y=649)
+    # wide cue whose padded bottom grazes the AI badge (top_y=653)
     mask = _mask(268, 579, 768, 82)  # bottom 660, right 1035
     assert protected_roi_hits({"mask": mask}, ROIS) == ["mask:ai_content_badge"]
     out, ops = clamp_mask_clear_of_rois(mask, ROIS)
@@ -39,39 +66,92 @@ def test_clamp_leaves_unintersecting_mask_untouched():
     assert out == mask and ops == []
 
 
+def test_badge_roi_matches_measured_glyph_box():
+    badge = PROTECTED_ROIS_REFERENCE["ai_content_badge"]
+    assert badge["left_x"] == 960 and badge["top_y"] == 653
+    assert badge["right_x"] == 1279 and badge["bottom_y"] == 719
+
+
 @pytest.mark.skipif(not FONT.exists(), reason="arial font unavailable")
-def test_apply_clamp_promotes_recoverable_layout_with_valid_fit():
-    good = {"segment_id": "cue_a", "status": "PROTECTED_ROI_INTERSECTION", "render_text": "Short",
-            "raw_text": "Short", "target_font_size": 32, "min_font_size": 28,
-            "mask": _mask(268, 579, 768, 82)}
-    plan = {"font_size": 27, "protected_rois": ROIS, "layouts": [good], "output_width": 1280, "output_height": 720}
-    plan, res = apply_protected_roi_clamp(plan, font_path=FONT)
-    assert res["clamped"] == ["cue_a"] and res["unrecoverable"] == []
-    assert good["status"] == "PASS"
-    assert good["text_width"] <= good["mask"]["width"]
-    assert plan["statuses"] == {"PASS": 1}
+def test_union_plate_covers_source_and_english_at_equivalent_size():
+    src = _bbox(590, 599, 688, 649)  # short Chinese caption, char height 51
+    placement = layout_union_overlay(
+        "Hi", src_bbox=src, base_font=_font(27), target_size=49, rois=ROIS,
+        output_width=1280, output_height=720, pad_px=3, safe_text_width=1152,
+    )
+    assert placement is not None
+    mask, font_size = placement["mask"], placement["font_size"]
+    # Equivalent size: never silently shrunk below the source glyph height.
+    assert font_size == 49
+    assert mask["width"] > 0 and mask["height"] > 0
+    assert mask["width"] <= 1152
+    # Plate is the tight UNION: covers the full source box ...
+    assert _contains(mask, src)
+    # ... and the measured English glyph box.
+    tw, th = placement["text_width"], placement["text_height"]
+    trect = {"left_x": placement["center_x"] - tw // 2, "top_y": placement["anchor_y"] - th // 2,
+             "right_x": placement["center_x"] - tw // 2 + tw - 1, "bottom_y": placement["anchor_y"] - th // 2 + th - 1}
+    assert _contains(mask, trect)
+    # Tight union, not a full-width band.
+    assert mask["width"] < 1280
+    assert protected_roi_hits({"mask": mask}, ROIS) == []
 
 
-def test_apply_clamp_needs_review_when_no_fit_evidence():
-    # No font provided -> no measured fit -> must NOT be promoted to a silent PASS.
-    layout = {"segment_id": "cue_a", "status": "PROTECTED_ROI_INTERSECTION", "render_text": "Short",
-              "mask": _mask(268, 579, 768, 82)}
-    plan = {"font_size": 27, "protected_rois": ROIS, "layouts": [layout], "output_width": 1280,
-            "output_height": 720}
-    plan, res = apply_protected_roi_clamp(plan)
-    assert res["clamped"] == ["cue_a"]
-    assert layout["status"] == "NEEDS_REVIEW"
-    assert plan["statuses"] == {"NEEDS_REVIEW": 1}
+@pytest.mark.skipif(not FONT.exists(), reason="arial font unavailable")
+def test_union_plate_wraps_long_translation_to_two_lines():
+    src = _bbox(409, 587, 609, 638)
+    text = "This is a deliberately long english sentence that must wrap onto two lines eventually"
+    placement = layout_union_overlay(
+        text, src_bbox=src, base_font=_font(27), target_size=49, rois=ROIS,
+        output_width=1280, output_height=720, pad_px=3, safe_text_width=1152,
+    )
+    assert placement is not None
+    assert placement["line_count"] == 2
+    assert placement["font_size"] == 49  # wrapped, never shrunk
+    assert placement["mask"]["width"] <= 1152
+    assert _contains(placement["mask"], src)
 
 
-def test_apply_clamp_fails_closed_when_mask_cannot_clear():
-    # mask fully covers the badge -> no single-edge clamp can clear it
-    bad = {"segment_id": "cue_b", "status": "PROTECTED_ROI_INTERSECTION", "mask": _mask(940, 640, 330, 75)}
-    plan = {"protected_rois": ROIS, "layouts": [bad], "output_width": 1280, "output_height": 720}
-    plan, res = apply_protected_roi_clamp(plan)
-    assert res["unrecoverable"] == ["cue_b"]
-    assert bad["status"] == "PROTECTED_ROI_INTERSECTION"
-    assert plan["statuses"] == {"PROTECTED_ROI_INTERSECTION": 1}
+@pytest.mark.skipif(not FONT.exists(), reason="arial font unavailable")
+def test_union_plate_returns_none_when_overlong_translation_cannot_fit():
+    src = _bbox(409, 587, 1009, 658)
+    text = "x" * 600  # a single unbreakable token cannot wrap
+    placement = layout_union_overlay(
+        text, src_bbox=src, base_font=_font(27), target_size=60, rois=ROIS,
+        output_width=1280, output_height=720, pad_px=3, safe_text_width=1152,
+    )
+    assert placement is None
+
+
+@pytest.mark.skipif(not FONT.exists(), reason="arial font unavailable")
+def test_union_plate_never_draws_over_badge():
+    # Source caption sits on the left but a wide translation would reach the badge;
+    # the plate must be clamped clear of the badge while still covering the source.
+    src = _bbox(400, 600, 900, 649)
+    placement = layout_union_overlay(
+        "A reasonably long caption that reaches toward the platform badge region",
+        src_bbox=src, base_font=_font(27), target_size=49, rois=ROIS,
+        output_width=1280, output_height=720, pad_px=3, safe_text_width=1152,
+    )
+    assert placement is not None
+    mask = placement["mask"]
+    assert protected_roi_hits({"mask": mask}, ROIS) == []
+    assert _contains(mask, src)
+
+
+@pytest.mark.skipif(not FONT.exists(), reason="arial font unavailable")
+def test_review_evidence_never_covers_badge_and_flags_review():
+    # Source caption whose OCR box itself intrudes into the badge: cannot be masked
+    # without covering provenance, so it fails into NEEDS_REVIEW evidence.
+    src = _bbox(1140, 640, 1275, 700)
+    placement = layout_review_evidence(
+        "Overlap", src_bbox=src, base_font=_font(27), target_size=60, rois=ROIS,
+        output_width=1280, output_height=720, pad_px=3, safe_text_width=1152,
+    )
+    assert placement["review_evidence_overlay"] is True
+    mask = placement["mask"]
+    if mask is not None:
+        assert protected_roi_hits({"mask": mask}, ROIS) == []
 
 
 def test_uploader_logo_still_protected():
@@ -82,24 +162,3 @@ def test_uploader_logo_still_protected():
     assert protected_roi_hits({"mask": out}, ROIS) == []
     assert any("uploader_logo" in o for o in ops)
     assert PROTECTED_ROIS_REFERENCE["uploader_logo"]["right_x"] == 272
-
-
-@pytest.mark.skipif(not FONT.exists(), reason="arial font unavailable")
-def test_clamp_never_silently_downscales_below_floor():
-    # A long translation cannot fit the narrow clamped mask at an equivalent glyph
-    # size; the layout must stay NEEDS_REVIEW, never be shrunk below the floor to PASS.
-    layout = {
-        "segment_id": "cue_wide", "status": "NEEDS_REVIEW",
-        "render_text": "A very long English translation that cannot fit the narrow source mask at all",
-        "raw_text": "A very long English translation that cannot fit the narrow source mask at all",
-        "target_font_size": 40, "min_font_size": 35,
-        "mask": _mask(268, 579, 768, 82), "source_bbox": {"left_x": 271, "top_y": 582, "right_x": 1032, "bottom_y": 657},
-    }
-    plan = {"font_size": 27, "safe_text_width": 1152, "protected_rois": ROIS, "layouts": [layout],
-            "output_width": 1280, "output_height": 720}
-    plan, res = apply_protected_roi_clamp(plan, font_path=FONT)
-    assert layout["status"] == "NEEDS_REVIEW"
-    assert res["unrecoverable"] == []
-    if layout.get("font_size"):
-        assert layout["font_size"] >= layout["min_font_size"]
-
