@@ -42,7 +42,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from app.core.media import media_summary  # noqa: E402
-from app.core.redaction import redact_url  # noqa: E402
+from app.core.redaction import canonical_url, redact_text, redact_url  # noqa: E402
 from app.services.ingestion_contract import (  # noqa: E402
     IngestionHandoffRecord,
     attach_and_validate_local_media,
@@ -52,6 +52,9 @@ from app.services.ingestion_contract import (  # noqa: E402
 ALLOWED_HOSTS = {"b23.tv", "www.b23.tv", "bilibili.com", "www.bilibili.com", "m.bilibili.com"}
 DEFAULT_OCR_PYTHON = Path(r"D:\AutoSub\scratch\ocr_env\Scripts\python.exe")
 MAX_DOWNLOAD_ATTEMPTS = 2
+MEDIA_SUFFIXES = {".mp4", ".mkv", ".webm"}
+INPUT_IDENTITY_FILE = "input_identity.json"
+IDENTITY_FIELDS = ("requested_host", "canonical_id", "part_index", "end_seconds")
 
 
 def sha256_file(path: Path) -> str:
@@ -62,8 +65,13 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _redact_cmd(cmd: list[str]) -> str:
+    """Render argv for logging with every URL's sensitive query params masked."""
+    return " ".join(redact_url(str(c)) if "://" in str(c) else str(c) for c in cmd)
+
+
 def _run(cmd: list[str], *, timeout: int | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
-    print(f"$ {' '.join(str(c) for c in cmd)}", flush=True)
+    print(f"$ {_redact_cmd(cmd)}", flush=True)
     return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                           timeout=timeout, env=env)
 
@@ -86,37 +94,102 @@ def ytdlp_bin() -> str:
     raise SystemExit("Y_OUT_DLP_UNAVAILABLE: yt-dlp not found")
 
 
+_BV_ID = re.compile(r"(BV[0-9A-Za-z]+)")
+
+
+def _canonical_id_from(data: dict, entry: dict, url: str) -> str | None:
+    for candidate in (entry.get("id"), data.get("id")):
+        if candidate:
+            return str(candidate)
+    for candidate in (entry.get("webpage_url"), entry.get("url"), data.get("webpage_url"),
+                      data.get("original_url"), url):
+        match = _BV_ID.search(candidate or "")
+        if match:
+            return match.group(1)
+    return None
+
+
 def resolve_source(url: str, part_index: int) -> dict:
     proc = _run([ytdlp_bin(), "--no-warnings", "--dump-single-json",
                  "--flat-playlist", "--playlist-items", str(part_index), url], timeout=180)
     if proc.returncode != 0:
-        raise SystemExit(f"RESOLVE_FAILED: {proc.stderr.strip()[:400]}")
+        raise SystemExit(f"RESOLVE_FAILED: {redact_text(proc.stderr.strip()[:400])}")
     data = json.loads(proc.stdout)
-    if "entries" in data:
+    if data.get("entries") is not None:
         entries = [e for e in (data.get("entries") or []) if e]
         if not entries:
             raise SystemExit("RESOLVE_FAILED: no parts resolved")
         entry = entries[0]
     else:
         entry = data
+    canonical_id = _canonical_id_from(data, entry, url)
+    if not canonical_id:
+        raise SystemExit("RESOLVE_FAILED: no canonical video id resolved")
+    webpage = entry.get("webpage_url") or data.get("webpage_url") or url
     return {
-        "canonical_id": entry.get("id"),
-        "title": entry.get("title"),
-        "duration_seconds": entry.get("duration"),
-        "webpage_url": entry.get("webpage_url") or url,
+        "canonical_id": canonical_id,
+        "title": entry.get("title") or data.get("title"),
+        "duration_seconds": entry.get("duration") or data.get("duration"),
+        "webpage_url_canonical": canonical_url(webpage),
+        "webpage_url_redacted": redact_url(webpage),
         "part_index": part_index,
     }
+
+
+def _find_existing_media(source_dir: Path) -> Path | None:
+    existing = sorted(p for p in source_dir.glob("source.*") if p.suffix.lower() in MEDIA_SUFFIXES)
+    return existing[0] if existing else None
+
+
+def load_input_identity(job_dir: Path) -> dict | None:
+    path = job_dir / INPUT_IDENTITY_FILE
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def bind_input_identity(job_dir: Path, identity: dict, media: Path) -> dict:
+    """Bind the requested URL/part/section to the on-disk media, or fail closed.
+
+    A job directory is immutable input: if it already holds media, the requested
+    canonical id, part index, bounded section and requested host must match the
+    recorded identity AND the media hash must still match. Anything else raises so a
+    changed URL/part/section can never silently attach old media to new provenance.
+    """
+    path = job_dir / INPUT_IDENTITY_FILE
+    source_sha = sha256_file(media)
+    size_bytes = media.stat().st_size
+    if path.exists():
+        recorded = load_input_identity(job_dir)
+        if recorded is None:
+            raise SystemExit("IMMUTABLE_JOB_INPUT_MISMATCH: unreadable input identity")
+        for field in IDENTITY_FIELDS:
+            if recorded.get(field) != identity.get(field):
+                raise SystemExit(
+                    f"IMMUTABLE_JOB_INPUT_MISMATCH: {field} {recorded.get(field)!r} != {identity.get(field)!r}"
+                )
+        if recorded.get("source_sha256") and recorded["source_sha256"] != source_sha:
+            raise SystemExit(
+                "IMMUTABLE_JOB_INPUT_MISMATCH: source_sha256 "
+                f"{recorded.get('source_sha256')} != {source_sha}"
+            )
+        print(f"input identity verified {recorded.get('canonical_id')} p{recorded.get('part_index')} "
+              f"section<= {recorded.get('end_seconds')}s")
+        return recorded
+    record = {**identity, "source_sha256": source_sha, "size_bytes": size_bytes}
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"input identity bound {record['canonical_id']} p{record['part_index']} "
+          f"section<= {record['end_seconds']}s sha={source_sha[:16]}")
+    return record
 
 
 def download_bounded(url: str, part_index: int, end_seconds: int, out_dir: Path,
                      max_transfer_mib: int, timeout_s: int) -> Path:
     source_dir = out_dir / "source"
     source_dir.mkdir(parents=True, exist_ok=True)
-    existing = sorted(source_dir.glob("source.*"))
-    existing = [p for p in existing if p.suffix.lower() in {".mp4", ".mkv", ".webm"}]
-    if existing:
-        print(f"reusing existing download {existing[0]}")
-        return existing[0]
 
     outtmpl = str(source_dir / "source.%(ext)s")
     section = f"*0:00:00-0:{end_seconds // 60:02d}:{end_seconds % 60:02d}"
@@ -134,13 +207,12 @@ def download_bounded(url: str, part_index: int, end_seconds: int, out_dir: Path,
         print(f"download attempt {attempt}/{MAX_DOWNLOAD_ATTEMPTS}")
         proc = _run(cmd, timeout=timeout_s)
         if proc.returncode == 0:
-            media = sorted(p for p in source_dir.glob("source.*")
-                           if p.suffix.lower() in {".mp4", ".mkv", ".webm"})
-            if media:
-                return media[0]
+            media = _find_existing_media(source_dir)
+            if media is not None:
+                return media
             last_err = "no media file produced"
         else:
-            last_err = proc.stderr.strip()[-400:]
+            last_err = redact_text(proc.stderr.strip()[-400:])
     raise SystemExit(f"DOWNLOAD_FAILED: {last_err}")
 
 
@@ -170,12 +242,17 @@ def run_stage(tool: str, args: list[str], env: dict, timeout: int) -> int:
     return proc.returncode
 
 
-def git_head() -> str:
+def git_state() -> dict:
+    """Record the exact executed commit plus dirty state so acceptance is bound to it."""
     try:
-        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(REPO), capture_output=True,
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(REPO), capture_output=True,
                               text=True, encoding="utf-8").stdout.strip()
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=str(REPO), capture_output=True,
+                                text=True, encoding="utf-8").stdout.strip()
+        dirty_files = [line for line in status.splitlines() if line.strip()]
+        return {"head": head or "UNKNOWN", "dirty": bool(dirty_files), "dirty_files": dirty_files}
     except Exception:
-        return "UNKNOWN"
+        return {"head": "UNKNOWN", "dirty": None, "dirty_files": []}
 
 
 def main() -> int:
@@ -197,13 +274,16 @@ def main() -> int:
     args = parser.parse_args()
 
     started = time.time()
-    validate_source_url(args.url)
+    host = validate_source_url(args.url)
     job_dir = Path(args.job_dir).resolve()
     job_dir.mkdir(parents=True, exist_ok=True)
 
+    git = git_state()
     manifest: dict = {
         "wp": "WP-M1-001",
-        "implementation_head": git_head(),
+        "implementation_head": git["head"],
+        "implementation_dirty": git["dirty"],
+        "implementation_dirty_files": git["dirty_files"],
         "input_url_redacted": redact_url(args.url),
         "started_at_iso": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "end_seconds": args.end_seconds,
@@ -215,16 +295,28 @@ def main() -> int:
     print(f"resolved canonical_id={resolution['canonical_id']} title={resolution['title']!r} "
           f"duration={resolution['duration_seconds']}")
 
-    if args.skip_download:
-        source_dir = job_dir / "source"
-        media = sorted(p for p in source_dir.glob("source.*")
-                       if p.suffix.lower() in {".mp4", ".mkv", ".webm"})[0]
+    identity = {
+        "requested_host": host,
+        "canonical_id": resolution["canonical_id"],
+        "part_index": args.part,
+        "end_seconds": args.end_seconds,
+        "url_redacted": redact_url(args.url),
+    }
+    source_dir = job_dir / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    existing = _find_existing_media(source_dir)
+    if existing is not None:
+        media = existing
+    elif args.skip_download:
+        raise SystemExit("SKIP_DOWNLOAD_NO_MEDIA: no existing source media to reuse")
     else:
         media = download_bounded(args.url, args.part, args.end_seconds, job_dir,
                                  args.max_transfer_mib, args.download_timeout_s)
     print(f"media={media}")
 
     probe = probe_and_validate(media)
+    recorded_identity = bind_input_identity(job_dir, identity, media)
+    manifest["input_identity"] = recorded_identity
     manifest["media"] = {
         "path": str(media),
         "sha256": probe["media_sha256"],
@@ -317,10 +409,11 @@ def main() -> int:
         "cue_count": render_report.get("cue_count"),
         "statuses": render_report.get("post_clamp_statuses"),
         "clamped": render_report.get("clamped"),
-        "refit": render_report.get("refit"),
         "unrecoverable": render_report.get("unrecoverable"),
         "mask_padding_px": render_report.get("mask_padding_px"),
-        "max_text_width": render_report.get("max_text_width"),
+        "fit_budget": render_report.get("fit_budget"),
+        "safe_text_width": render_report.get("safe_text_width"),
+        "max_mask_width_px": render_report.get("max_mask_width_px"),
         "ass": render_report.get("ass"),
     }
     manifest["output"] = {

@@ -306,6 +306,7 @@ def write_clean_subtitles_ass(
     font_size: int,
     output_width: int,
     output_height: int,
+    render_review: bool = False,
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     layout_by_segment = {layout["segment_id"]: layout for layout in layouts}
@@ -325,7 +326,10 @@ def write_clean_subtitles_ass(
         if end_ms <= start_ms:
             continue
         if layout.get("overlay_mode") == "LOCAL_SUB_MASK_OVERLAY":
-            if layout.get("status") in {"SUBTITLE_REGION_UNCONFIRMED", "NEEDS_REVIEW"}:
+            status = layout.get("status")
+            if status in {"SUBTITLE_REGION_UNCONFIRMED", "PROTECTED_ROI_INTERSECTION"}:
+                continue
+            if status == "NEEDS_REVIEW" and not render_review:
                 continue
             override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad0\\pos({layout['center_x']},{layout['anchor_y']})}}"
         else:
@@ -430,17 +434,25 @@ def build_local_sub_mask_overlay_filter(
     intervals: list[dict[str, Any]],
     layouts: list[dict[str, Any]],
     ass_path: Path,
+    *,
+    render_review: bool = False,
 ) -> str:
     """Build filter string for LOCAL_SUB_MASK_OVERLAY.
 
     Uses only a solid-black ``black@1.0`` drawbox over the exact detected Chinese
     source subtitle bbox (per cue, per interval), then draws the localized overlay
     from the ASS file. No delogo, no full-width/lower-third plate, no inpainting.
+    ``render_review`` keeps the narrow source mask and evidence overlay for flagged
+    ``NEEDS_REVIEW`` cues; ``SUBTITLE_REGION_UNCONFIRMED``/``PROTECTED_ROI_INTERSECTION``
+    still fail closed and are never drawn.
     """
     ass = _ffmpeg_filter_path(ass_path)
     filters = []
     for layout in layouts:
-        if layout.get("status") in {"SUBTITLE_REGION_UNCONFIRMED", "NEEDS_REVIEW"}:
+        status = layout.get("status")
+        if status in {"SUBTITLE_REGION_UNCONFIRMED", "PROTECTED_ROI_INTERSECTION"}:
+            continue
+        if status == "NEEDS_REVIEW" and not render_review:
             continue
         mask = layout.get("mask") or layout.get("plate")
         if not mask:

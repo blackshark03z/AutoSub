@@ -24,7 +24,6 @@ from app.services.e2_dynamic_sub_mask import (  # noqa: E402
     build_dynamic_mask_plan,
     load_cue_boxes,
     load_render_cues,
-    refit_needs_review_layouts,
     render_dynamic_mask_window,
 )
 
@@ -46,10 +45,9 @@ def main() -> int:
     boxes = load_cue_boxes(ocr_path)
     plan = build_dynamic_mask_plan(source, cues, boxes, font_path=Path(args.font))
     pre = dict(plan["statuses"])
-    plan, clamp_res = apply_protected_roi_clamp(plan)
-    refit = refit_needs_review_layouts(plan, Path(args.font))
+    plan, clamp_res = apply_protected_roi_clamp(plan, font_path=Path(args.font))
     print(f"language={args.language} cues={len(cues)} pre_clamp={pre} post_clamp={plan['statuses']}")
-    print(f"clamped={clamp_res['clamped']} refit={refit} unrecoverable={clamp_res['unrecoverable']}")
+    print(f"clamped={clamp_res['clamped']} unrecoverable={clamp_res['unrecoverable']}")
 
     suffix = f"_{int(args.max_seconds)}s" if args.max_seconds else ""
     output = out_dir / f"longpilot_{args.language}{suffix}.mp4"
@@ -57,18 +55,33 @@ def main() -> int:
     result = render_dynamic_mask_window(source, plan, cues, output_path=output,
                                         start_s=(0.0 if end_s else None), end_s=end_s)
 
+    def _window(l: dict) -> dict:
+        char_h = l.get("source_char_height") or 0
+        font_size = l.get("font_size") or 0
+        return {
+            "cue_id": l["segment_id"], "start": l["start_time"], "end": l["end_time"], "status": l["status"],
+            "font_size": font_size, "target_font_size": l.get("target_font_size"),
+            "min_font_size": l.get("min_font_size"),
+            "source_char_height": char_h,
+            "equivalent_size_ratio": round(font_size / char_h, 3) if char_h else None,
+            "text_width": l["text_width"], "text_height": l.get("text_height"),
+            "source_mask_width": (l.get("mask") or {}).get("width"),
+            "max_text_width": l.get("max_text_width"),
+            "exceeds_source_mask": bool(l.get("mask") and l.get("text_width", 0) > l["mask"]["width"]),
+            "mask": l["mask"], "review_reason": l.get("review_reason"),
+            "review_fit": l.get("review_fit"), "clamp_ops": l.get("clamp_ops"),
+            "text": l.get("render_text"), "raw_text": l.get("raw_text"),
+        }
+
     summary = {
         "language": args.language, "source": str(source), "cue_count": len(cues),
         "pre_clamp_statuses": pre, "post_clamp_statuses": plan["statuses"],
-        "clamped": clamp_res["clamped"], "refit": refit, "unrecoverable": clamp_res["unrecoverable"],
-        "mask_padding_px": plan["mask_padding_px"], "max_text_width": plan["max_text_width"],
+        "clamped": clamp_res["clamped"], "unrecoverable": clamp_res["unrecoverable"],
+        "mask_padding_px": plan["mask_padding_px"], "fit_budget": plan["fit_budget"],
+        "safe_text_width": plan.get("safe_text_width"),
         "max_mask_width_px": plan["max_mask_width_px"], "protected_rois": plan["protected_rois"],
         "output": result["output"], "ass": result["ass"],
-        "cue_windows": [
-            {"cue_id": l["segment_id"], "start": l["start_time"], "end": l["end_time"], "status": l["status"],
-             "font_size": l["font_size"], "text_width": l["text_width"], "mask": l["mask"],
-             "clamp_ops": l.get("clamp_ops"), "text": l.get("render_text")}
-            for l in plan["layouts"]],
+        "cue_windows": [_window(l) for l in plan["layouts"]],
     }
     (out_dir / f"render_report_{args.language}{suffix}.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

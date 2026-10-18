@@ -19,6 +19,7 @@ from app.services.e2_dynamic_sub_mask import (
     STATUS_NEEDS_REVIEW,
     STATUS_PASS,
     STATUS_PROTECTED_ROI_INTERSECTION,
+    STATUS_UNCONFIRMED,
     build_dynamic_mask_plan,
     build_mask_filter,
     build_tight_mask,
@@ -164,7 +165,9 @@ def test_filter_uses_solid_black_exactly_one_opacity(tmp_path: Path):
         pytest.skip("source fixture unavailable")
     cues, boxes = _plan_fixture()
     plan = build_dynamic_mask_plan(SOURCE, cues, boxes, font_path=FONT_PATH)
-    assert all(l["status"] == STATUS_PASS for l in plan["layouts"])
+    # Confirmed cues are always drawn (including flagged NEEDS_REVIEW ones, so the
+    # source caption can never leak); only UNCONFIRMED/PROTECTED layouts fail closed.
+    assert all(l["status"] != STATUS_UNCONFIRMED for l in plan["layouts"])
     filter_value = build_mask_filter(plan, tmp_path / "x.ass")
     values = mask_color_components(filter_value)
     assert values, "expected drawbox masks in filter"
@@ -201,17 +204,24 @@ def test_window_cues_shifts_and_clips_to_window():
     assert win[1]["start_ms"] == 2000 and win[1]["end_ms"] == 3000
 
 
-def test_real_ocr_cues_all_pass_and_are_tight():
+def test_real_ocr_cues_have_no_false_pass_and_stay_tight():
     if not (SOURCE.exists() and OCR_JSON.exists() and EN_JSON.exists() and FONT_PATH.exists()):
         pytest.skip("live fixtures unavailable")
     cues = load_render_cues(EN_JSON)
     boxes = load_cue_boxes(OCR_JSON)
     plan = build_dynamic_mask_plan(SOURCE, cues, boxes, font_path=FONT_PATH)
-    assert plan["statuses"].get(STATUS_PASS, 0) == len(cues) >= 19
+    assert len(plan["layouts"]) == len(cues)
     assert plan["max_mask_width_px"] <= 700
     assert all(l["mask"]["padding_px"] in (2, 3, 4) for l in plan["layouts"])
-    # No cue mask may touch the AI-content badge band.
     badge = plan["protected_rois"]["ai_content_badge"]
     for layout in plan["layouts"]:
         mask = layout["mask"]
         assert mask["bottom_y"] < badge["top_y"] or mask["right_x"] < badge["left_x"]
+        # A PASS is only valid when a measured translation really fits the mask at an
+        # equivalent glyph size; otherwise the cue must be flagged, never a false PASS.
+        if layout["status"] == STATUS_PASS:
+            assert layout["text_width"] > 0
+            assert layout["text_width"] <= mask["width"]
+            assert layout["font_size"] >= layout["min_font_size"]
+        else:
+            assert layout["review_reason"]

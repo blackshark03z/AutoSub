@@ -9,7 +9,6 @@ from app.services.e2_dynamic_sub_mask import (
     apply_protected_roi_clamp,
     clamp_mask_clear_of_rois,
     protected_roi_hits,
-    refit_needs_review_layouts,
     scale_protected_rois,
 )
 
@@ -40,13 +39,29 @@ def test_clamp_leaves_unintersecting_mask_untouched():
     assert out == mask and ops == []
 
 
-def test_apply_clamp_promotes_only_recoverable_layouts():
-    good = {"segment_id": "cue_a", "status": "PROTECTED_ROI_INTERSECTION", "mask": _mask(268, 579, 768, 82)}
-    plan = {"protected_rois": ROIS, "layouts": [good], "output_width": 1280, "output_height": 720}
-    plan, res = apply_protected_roi_clamp(plan)
+@pytest.mark.skipif(not FONT.exists(), reason="arial font unavailable")
+def test_apply_clamp_promotes_recoverable_layout_with_valid_fit():
+    good = {"segment_id": "cue_a", "status": "PROTECTED_ROI_INTERSECTION", "render_text": "Short",
+            "raw_text": "Short", "target_font_size": 32, "min_font_size": 28,
+            "mask": _mask(268, 579, 768, 82)}
+    plan = {"font_size": 27, "protected_rois": ROIS, "layouts": [good], "output_width": 1280, "output_height": 720}
+    plan, res = apply_protected_roi_clamp(plan, font_path=FONT)
     assert res["clamped"] == ["cue_a"] and res["unrecoverable"] == []
     assert good["status"] == "PASS"
+    assert good["text_width"] <= good["mask"]["width"]
     assert plan["statuses"] == {"PASS": 1}
+
+
+def test_apply_clamp_needs_review_when_no_fit_evidence():
+    # No font provided -> no measured fit -> must NOT be promoted to a silent PASS.
+    layout = {"segment_id": "cue_a", "status": "PROTECTED_ROI_INTERSECTION", "render_text": "Short",
+              "mask": _mask(268, 579, 768, 82)}
+    plan = {"font_size": 27, "protected_rois": ROIS, "layouts": [layout], "output_width": 1280,
+            "output_height": 720}
+    plan, res = apply_protected_roi_clamp(plan)
+    assert res["clamped"] == ["cue_a"]
+    assert layout["status"] == "NEEDS_REVIEW"
+    assert plan["statuses"] == {"NEEDS_REVIEW": 1}
 
 
 def test_apply_clamp_fails_closed_when_mask_cannot_clear():
@@ -70,26 +85,21 @@ def test_uploader_logo_still_protected():
 
 
 @pytest.mark.skipif(not FONT.exists(), reason="arial font unavailable")
-def test_refit_recovers_cue_that_would_collide_at_full_font():
-    # Inflated tall source box -> over-large target font; a centered wide translation
-    # would reach the AI badge at font 100 but fits at a capped size.
+def test_clamp_never_silently_downscales_below_floor():
+    # A long translation cannot fit the narrow clamped mask at an equivalent glyph
+    # size; the layout must stay NEEDS_REVIEW, never be shrunk below the floor to PASS.
     layout = {
-        "segment_id": "cue_wide", "status": "NEEDS_REVIEW", "render_text": "Great Sage, Noble Emperor, Great Emperor",
-        "mask": {"x": 443, "y": 556, "width": 392, "height": 110, "right_x": 834, "bottom_y": 665, "padding_px": 3},
-        "center_x": 639, "anchor_y": 611, "source_bbox": {"left_x": 446, "top_y": 559, "right_x": 831, "bottom_y": 662},
+        "segment_id": "cue_wide", "status": "NEEDS_REVIEW",
+        "render_text": "A very long English translation that cannot fit the narrow source mask at all",
+        "raw_text": "A very long English translation that cannot fit the narrow source mask at all",
+        "target_font_size": 40, "min_font_size": 35,
+        "mask": _mask(268, 579, 768, 82), "source_bbox": {"left_x": 271, "top_y": 582, "right_x": 1032, "bottom_y": 657},
     }
-    plan = {"font_size": 27, "max_text_width": 1152, "protected_rois": ROIS, "layouts": [layout]}
-    done = refit_needs_review_layouts(plan, FONT)
-    assert done == ["cue_wide"]
-    assert layout["status"] == "PASS" and layout["refit"] is True
-    assert layout["text_width"] <= 1152
-
-
-@pytest.mark.skipif(not FONT.exists(), reason="arial font unavailable")
-def test_refit_leaves_unfittable_cue_needs_review():
-    layout = {"segment_id": "cue_x", "status": "NEEDS_REVIEW", "render_text": "x" * 400,
-              "mask": _mask(400, 600, 480, 50), "center_x": 640, "anchor_y": 625, "source_bbox": _mask(400, 600, 480, 50)}
-    plan = {"font_size": 27, "max_text_width": 200, "protected_rois": ROIS, "layouts": [layout]}
-    done = refit_needs_review_layouts(plan, FONT)
-    assert done == [] and layout["status"] == "NEEDS_REVIEW"
+    plan = {"font_size": 27, "safe_text_width": 1152, "protected_rois": ROIS, "layouts": [layout],
+            "output_width": 1280, "output_height": 720}
+    plan, res = apply_protected_roi_clamp(plan, font_path=FONT)
+    assert layout["status"] == "NEEDS_REVIEW"
+    assert res["unrecoverable"] == []
+    if layout.get("font_size"):
+        assert layout["font_size"] >= layout["min_font_size"]
 
