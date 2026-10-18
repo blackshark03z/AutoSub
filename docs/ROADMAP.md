@@ -1,3 +1,5 @@
+> CURRENT PRODUCT AUTHORITY: docs/DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md and TASK.md. The content below concerns historical local/V2 implementation or acceptance; it is not a current ship goal.
+
 # Roadmap
 
 Roadmap is planned direction, never the authority for shipped behavior. A DONE item must be contained by the accepted baseline and reconcilable with accepted history.

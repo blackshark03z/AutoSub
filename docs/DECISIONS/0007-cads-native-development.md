@@ -1,3 +1,5 @@
+> SUPERSEDED HISTORICAL DECISION. The current policy is root AGENTS.md at accepted POLICY_REF in the current decision index. Do not execute the following legacy workflow.
+
 # 0007 — CADS-native development control
 
 **Status:** Accepted  

@@ -1,3 +1,5 @@
+> CURRENT PRODUCT AUTHORITY: docs/DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md and TASK.md. The content below concerns historical local/V2 implementation or acceptance; it is not a current ship goal.
+
 # AutoSub
 
 AutoSub is a local, single-user Windows application that turns local video into a validated English-subtitled MP4.

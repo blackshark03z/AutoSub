@@ -2,9 +2,10 @@
   "schema_version": 2,
   "repository": {
     "canonical_root": "D:\\AutoSub",
-    "branch": "main",
-    "engineering_standard": "CADS",
-    "legacy_build_os": "retired"
+    "engineering_standard": "Owner-accepted Workflow Kit, see canonical AGENTS.md",
+    "legacy_build_os": "retired",
+    "product_sot": "docs/DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md",
+    "policy_ref_source": "docs/DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md"
   },
   "canonical_release": {
     "name": "AutoSub 1.10.0 Stable",
@@ -42,7 +43,11 @@
   },
   "subtitle_tracks": {
     "canonical_timing_owner": "translation_cue_timing",
-    "track_types": ["translation", "creative", "imported"],
+    "track_types": [
+      "translation",
+      "creative",
+      "imported"
+    ],
     "default_active_track": "translation",
     "default_missing_cue_policy": "fallback_to_translation",
     "creative_import_controls_timing": false
@@ -85,15 +90,26 @@
       "package": 4294967296
     },
     "operation_status": {
-      "run": {"status": "allowed", "margin_bytes": 11222474752},
-      "media": {"status": "allowed", "margin_bytes": 10148732928},
-      "package": {"status": "allowed", "margin_bytes": 8001249280}
-    }
+      "run": {
+        "status": "allowed",
+        "margin_bytes": 11222474752
+      },
+      "media": {
+        "status": "allowed",
+        "margin_bytes": 10148732928
+      },
+      "package": {
+        "status": "allowed",
+        "margin_bytes": 8001249280
+      }
+    },
+    "snapshot_only": true,
+    "live_preflight_required": true
   },
   "process": {
-    "bug_fix": "Reality -> Intent/Design -> Change -> Acceptance -> Consequence",
-    "feature": "Reality -> Intent/Design -> Change -> Acceptance -> Consequence",
-    "release": "real CUJs -> full regression -> docs/storage gates -> commit -> push -> tag -> exact-commit source bundle/checksum",
+    "bug_fix": "Owner-accepted Workflow Kit: SHAPE -> BOUND -> SLICE -> BUILD -> PROVE -> LEARN",
+    "feature": "Owner-accepted Workflow Kit: bounded Product Goal plus Product Progress Gate",
+    "release": "accepted real product CUJs -> protected/full checks -> Owner-authorized external release only",
     "numbered_checkpoint_required_for_routine_changes": false
   },
   "living_documents": [
@@ -105,5 +121,6 @@
     "docs\\OPERATIONS.md",
     "docs\\DECISIONS\\",
     "CHANGELOG.md"
-  ]
+  ],
+  "historical_product_state_notice": "canonical_release, runtime, scope, acceptance and storage are historical local-release snapshots; use repository.product_sot for the current ship goal."
 }

@@ -1,8 +1,10 @@
+> Current workflow: AGENTS.md at accepted POLICY_REF in the active Decision Index. Historical local engineering rules below apply only if compatible.
+
 # Engineering Contract
 
 ## Operating standard
 
-AutoSub follows current Convergent AI Development System (CADS) as an engineering reasoning standard, not as a second lifecycle runtime. Normal development is native:
+AutoSub follows current Owner-accepted Workflow Kit / root AGENTS.md as an engineering reasoning standard, not as a second lifecycle runtime. Normal development is native:
 
 `understand -> inspect -> edit -> focused test -> ordinary commit -> continue`
 
@@ -54,6 +56,6 @@ When the Goal changes task flow, discoverability, screen interaction, status, or
 
 ## Change and closure discipline
 
-Keep one active workline by default. Experiments should be disposable. Before changing direction or handing off, preserve unique value through a commit or explicit retained path. At Goal closure, converge unique Goal value into one canonical Product HEAD, remove only proven Goal-created disposable residue, run the predefined acceptance journey and regressions, and push the accepted clean HEAD.
+Keep one active workline by default. Experiments should be disposable. Before changing direction or handing off, preserve unique value through a commit or explicit retained path. At Goal closure, converge unique Goal value into one canonical Product HEAD, remove only proven Goal-created disposable residue, run the predefined acceptance journey and regressions, and request separate Owner permission before pushing the accepted clean HEAD.
 
 Do not expand a local defect into unrelated refactoring. Apply: if it directly blocks the current Goal, fix it; if it threatens a must-preserve invariant, fix it; otherwise defer it.
