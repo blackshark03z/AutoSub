@@ -10,6 +10,8 @@
 
 **Biggest unproven product gate:** full source-URL-to-retrievable-artifact journey under one job identity. Tech Lead must inspect actual API/ingest and the acceptance branch, then scope the smallest reusable integration. Not authorized to create parallel queues, run a worker, deploy or publish without relevant permission.
 
+**M1 visual presentation rule:** Owner reconfirmed a tight solid-black mask *only* over the original Chinese subtitle, with en-US text placed at the same location and at equivalent apparent source font size. Do not use a full-width plate, inpainting or silent font shrinking; mismatched/overflowed cues must fail into evidence-bearing review. Normative details are in the linked Owner Decision. Existing ~88% size fallback must be checked before PASS.
+
 **Acceptance direction:** URL-sourced provenance, source/checkpoint integrity, cue/translation correctness, narrow subtitle mask and protected regions, preserved source audio, complete playable MP4, resumability, operator-visible artifact and operational evidence. Distinguish real Product PASS from technical, editorial, security or publication PASS.
 
 **Historical local V2 task:** docs/research/TASK_localization_V2_historical_2026-10-18.md (not active).
