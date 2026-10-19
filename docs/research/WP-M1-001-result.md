@@ -160,3 +160,53 @@ region is `NEEDS_REVIEW` (reported with measured geometry).
 - **M1_PRODUCT: NOT_PASS (near).** 133/137 cues (97%) now PASS with a correct adaptive-union plate at equivalent size; the 4 remaining are genuine data defects (over-long translation / OCR-merged box), correctly fail-closed as `NEEDS_REVIEW`. A1/A2/A4/A5/A7 evidenced; A3 is met for all PASS cues but not for the whole job because 4 cues cannot be placed at the required equivalent size without covering provenance.
 - **Material decision still Owner's:** whether such long captions may take a small bounded font downscale (with a floor) or must remain review-gated. No speculative shrink is applied to a PASS cue.
 - TECHNICAL: PASS. EDITORIAL: PARTIAL. SECURITY: SUPERVISED_PASS. PUBLICATION: BLOCKED pending Owner.
+
+## 9. Four-cue OCR root-cause closure (2026-10-19) — supersedes §8.3/§8.5 verdict
+
+§8.3 reported the 4 remaining `NEEDS_REVIEW` cues (034/035/037/044) as "genuine data defects". They were traced to a single **OCR line-selection** root cause and fixed; the union-plate renderer of §8 is unchanged. All four now close.
+
+### 9.1 Root cause
+- RapidOCR emits **one merged line box** when the burned-in centered caption touches adjacent scene text at the same baseline (character cards `白色人物召唤卡`/`大帝境修为卡`; rank pyramid `圣人`/`入圣`; reward lists `蟠树五十株`). Example frame 84.13s: one box `(271,582)-(1032,658)` mixes card labels + the caption.
+- `ExperimentalCueOCRTracker.aggregate_temporal_cues` then took `primary = items[0]`, unioned boxes across frames, and picked the **longest** text, so a single merged frame poisoned the whole cue (inflated bbox → oversized font → §8.3 "cannot fit"). The same loose band also produced **False cues** where only scene text was present (`炼气` at 91.1–95.8s; `蟠树五十株` at 315.1s; `炼电` at 100.7s).
+
+### 9.2 Fix (reuse → fix, no new subsystem)
+- `app/services/experimental_cue_ocr_tracking.py`: per frame, select the true caption line from the dialogue candidates — a **single-line** box (`h ≤ 1.5×` median line height), **horizontally centered** (`|cx − W/2| ≤ 0.07·W`), nearest the run's **dominant baseline** (median center-y of centered single-line detections, `± 0.035·H`). Merged/tall or off-center boxes are treated as *unreliable*. Unreliable-but-nonempty frames are **bridged** (extend the open cue, bounded by `SUBTITLE_MAX_BRIDGE_MS=1500`) so one continuous caption is not fragmented; genuinely empty frames still close the cue. Text/bbox derive **only** from reliable frames. Constants: `SUBTITLE_CENTER_TOL_RATIO`, `SUBTITLE_MAX_LINE_HEIGHT_MULT`, `SUBTITLE_BASELINE_BAND_RATIO`, `SUBTITLE_MAX_BRIDGE_MS`. `track_video_cues` and the OCR driver now pass real frame dimensions.
+- `tools/run_longpilot_ocr.py`: `ROI_FILTER_VERSION` `roi_dialogue_band_v1.2 → v1.3`. Because L1→L2→L3 keys chain, this correctly invalidates extraction and both locale translations, and the checkpoint fails closed on mismatch.
+- `tools/run_longpilot_translate.py`: **context-echo guard** — when the model returns the previous line's translation verbatim for a *different* source (consecutive lines sharing a prefix), re-infer without story context. Fired once (en-US `cue_034`).
+- `tools/run_longpilot_finalize.py`: bind `MasterVersion` to `master_cues.json` identity instead of hardcoded version ids (prevents drift).
+
+### 9.3 Re-run (one URL, bounded 6 min; committed stages)
+- Entrypoint: `python tools/run_m1_local_url_to_mp4.py --url https://www.bilibili.com/video/BV1bPeu6cEkG --job-dir data/m1_job_rev2 --part 1 --end-seconds 360 --skip-download --resume` (fresh job dir reusing the verified source; `--skip-download` avoids a redundant transfer).
+- Source unchanged: sha256 `a9e638243bd648e7e87addb7aba2a33b23d4141b96e7af7be23a88a26b1630b5` (63,962,107 B), bound in `data/m1_job_rev2/input_identity.json`.
+- HEAD `d3596528f233bbd05945d4376449f3bbd4d8d655`, `implementation_dirty=true` (the 5 files below; no commit — awaiting authority).
+- OCR: **`cue_count=132`** (was 137), `duplicates_removed=6`, `boundary_merges=6`, `master_extraction_hash=cb65044c8f7e338297d3e3a5c8bb4ae804b8faaaf51ba2c6e911aee568249fd3`, `master_version_id=6ec3bb65…`.
+- Translation: en-US + vi-VN **132/132** `TRANSLATED`, `context_echo_retries={en-US:1, vi-VN:0}`, locale-isolation invariant still holds (`en_us_rekeyed=true`, `vi_still_hit=true`, `l1_still_hit=true`).
+- Render (`render_report_en-US.json`): **132 PASS, 0 NEEDS_REVIEW, `blocking_layouts={}`**; `mask_model=adaptive_union_source_and_english`, `mask_padding_px=3`, `max_mask_width_px=1142` (safe 1152).
+- `M1_STATUS=DONE`, `elapsed_seconds=34.8` (cached chunk reuse; render+finalize only).
+- Output: `data/m1_job_rev2/longpilot_en-US.mp4`, 53,433,275 B, sha256 `e535b521ce286cf85dfb35ac2ed18d869f75212b964245adac1557efd4d0586b`; 360.0s h264 1280×720 + aac 44100 stereo; **audio packet MD5 `MD5=1dc07eac0ffaa2ac8ebedc25c181b5f2`** (identical to source → audio preserved). Manifest: `data/m1_job_rev2/m1_manifest.json`.
+- Output audit (132/132): no empty English; no mask outside the frame; **no mask intersects a protected ROI** (logo `0,0,272,110`; AI badge `960,653,1279,719`); every mask covers its source bbox. Frame spot-checks (source vs output): cue_034/035 (82.5–86.2s), cue_039/040/041 (91–96s), cue_042 (97.5s), cue_044 (99–101s), cue_046 (104.5s), cue_119 (315s) all show a tight solid-black plate over the caption line with readable en-US at source-equivalent size; logo + AI badge intact.
+
+### 9.4 Cue-level delta (old → new)
+| old | new | note |
+|-----|-----|------|
+| cue_034/035 merged `大帝修为卡可无副作用大帝境修为卡` / `白色人物召唤帝修为卡…` | `cue_034 大帝修为卡可无副作用` (82.53–84.63) | one clean caption; translation de-duplicated |
+| cue_036 `提升至大帝境初期` / cue_037 merged | `cue_035 提升至大帝境初期` (84.67–86.23) | merged frame bridged |
+| cue_041 false `炼气` | `cue_039 淬体、炼气` + `cue_040 筑基、金丹、紫府、洞虚、真人` + `cue_041 天王、入圣、圣人、圣王` | 3 real cues recovered from the rank list |
+| cue_043/044 `大圣、准帝、大帝` / `大圣、雅蒂、大帝` (h107) | `cue_042 大圣、准帝、大帝` (96.40–97.97) | union-inflated box removed |
+| cue_046/047/048 `…` / `这么说我一旦便用大` / `炼电` | `cue_044 这么说我一旦使用大帝修为卡` (99.07–101.17) | false scene cue removed |
+| cue_124 false `蟠树五十株` | `cue_119 恭喜宿主获得先天神魔体` (314.53–316.63) | real caption recovered |
+| — | 137 → **132** cues | 6 duplicate/boundary merges; 0 legitimate cues lost (verified per-cue) |
+
+### 9.5 Regression
+- New focused tests in `tests/test_experimental_cue_ocr_tracking.py`: `test_aggregate_selects_centered_caption_over_lower_card_label`, `test_aggregate_bridges_unreliable_merged_frame`, `test_aggregate_emits_no_cue_for_off_center_scene_text_only` — pass.
+- Focused run `python -m pytest tests/test_experimental_cue_ocr_tracking.py -q` → 11 passed.
+- Full suite `python -m pytest tests/ -q` → only the **same 3 pre-existing failures** (§ A6: punctuation detector, narration alignment, adaptive OCR frame selection), reproduced identically on the stashed baseline → not introduced here.
+
+### 9.6 Honest residual / not claimed
+- At two frames where a **non-caption card label** shares the caption baseline (84.2s `cue_034`; 104.5s `cue_046`), that scene text remains partially visible around the plate — by design, since the plate is bound to the caption's own box and must not over-mask scene content. The burned-in **caption itself is fully covered**; this is not a caption leak.
+- EDITORIAL remains PARTIAL (not improved here). vi-VN translations produced but not rendered.
+- `cue_132` plate end 360.36s slightly exceeds the 360.0s clip end (clipped by duration; harmless).
+
+### 9.7 Verdict (this candidate)
+- **M1_PRODUCT: PROPOSED_PASS (worker suggestion — requires independent Tech Lead verification, not self-authorizing).** A1/A2/A4/A5/A7 remain evidenced and are re-confirmed on `data/m1_job_rev2`; A3 now holds for **all 132 cues** (0 NEEDS_REVIEW); A6 unchanged (3 pre-existing failures only).
+- TECHNICAL: PASS. EDITORIAL: PARTIAL. SECURITY: SUPERVISED_PASS (bounded public-anonymous reuse of the already-verified source; host allowlist; URL/argv redaction; input-identity fail-closed; no cookie/secret access). PUBLICATION: BLOCKED pending Owner.

@@ -172,3 +172,56 @@ def test_real_source_clip_tracking_if_available():
         assert "外星动漫" not in c.zh_text
         assert c.plate_box["width"] > 0
         assert c.confidence >= 0.70
+
+
+def _dlg(text: str, left: int, top: int, right: int, bottom: int, conf: float = 0.98) -> dict:
+    return {"text": text, "confidence": conf,
+            "bbox": {"left_x": left, "top_y": top, "right_x": right, "bottom_y": bottom}}
+
+
+# Real source geometry: a single centered caption line sits at ~y602..645 (center_y ~624),
+# while scene text (card labels / rank pyramids) touches or sits below it.
+_CAPTION = _dlg("大帝修为卡可无副作用", 379, 604, 903, 643)
+_LOWER_CARD_LABEL = _dlg("大帝境修为卡", 488, 642, 786, 677)
+_OFF_CENTER_MERGED = _dlg("白色人物召唤+提升至大帝境初期", 268, 595, 822, 650)
+
+
+def test_aggregate_selects_centered_caption_over_lower_card_label():
+    tracker = ExperimentalCueOCRTracker()
+    frames = []
+    # Establish the dominant caption baseline with caption-only frames.
+    for i in range(4):
+        frames.append({"timestamp_s": i * 0.5, "dialogue_items": [dict(_CAPTION)]})
+    # A frame where a card label sits just below the (still present) centered caption.
+    frames.append({"timestamp_s": 2.0, "dialogue_items": [dict(_CAPTION), dict(_LOWER_CARD_LABEL)]})
+
+    cues = tracker.aggregate_temporal_cues(frames, frame_interval_s=0.5, frame_width=1280, frame_height=720)
+    assert len(cues) == 1
+    assert cues[0].zh_text == "大帝修为卡可无副作用"
+    # The lower card label (bottom_y 677) must not inflate the caption box.
+    assert cues[0].bbox["bottom_y"] <= 645
+
+
+def test_aggregate_bridges_unreliable_merged_frame():
+    tracker = ExperimentalCueOCRTracker()
+    frames = [
+        {"timestamp_s": 1.0, "dialogue_items": [dict(_CAPTION)]},
+        # Scene text merges into one tall, off-center box -> no reliable caption line.
+        {"timestamp_s": 1.5, "dialogue_items": [dict(_OFF_CENTER_MERGED)]},
+        {"timestamp_s": 2.0, "dialogue_items": [dict(_CAPTION)]},
+    ]
+    cues = tracker.aggregate_temporal_cues(frames, frame_interval_s=0.5, frame_width=1280, frame_height=720)
+    assert len(cues) == 1
+    assert cues[0].zh_text == "大帝修为卡可无副作用"
+    assert cues[0].start_s == 1.0
+    assert cues[0].end_s == 2.5
+
+
+def test_aggregate_emits_no_cue_for_off_center_scene_text_only():
+    tracker = ExperimentalCueOCRTracker()
+    frames = [
+        {"timestamp_s": 0.0, "dialogue_items": [dict(_OFF_CENTER_MERGED)]},
+        {"timestamp_s": 0.5, "dialogue_items": [dict(_OFF_CENTER_MERGED)]},
+    ]
+    cues = tracker.aggregate_temporal_cues(frames, frame_interval_s=0.5, frame_width=1280, frame_height=720)
+    assert cues == []

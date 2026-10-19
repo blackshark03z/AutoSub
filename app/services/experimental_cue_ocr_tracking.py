@@ -56,6 +56,18 @@ DEFAULT_DIALOGUE_Y_MAX = 690
 DEFAULT_DIALOGUE_X_MIN = 180
 DEFAULT_DIALOGUE_X_MAX = 1100
 
+# Subtitle-line selection (WP-M1-001 final-cue closure).
+# Source captions are a single horizontally centered line at a stable baseline.
+# Scene text (character cards, rank pyramids, reward lists) can touch that line at
+# the same baseline, so RapidOCR sometimes emits one merged/tall box. To recover the
+# true caption we select, per frame, the single-line detection nearest the run's
+# dominant baseline, and bridge short unreliable frames so a continuous caption is
+# not fragmented.
+SUBTITLE_CENTER_TOL_RATIO = 0.07      # |center_x - frame_width/2| <= ratio * frame_width
+SUBTITLE_MAX_LINE_HEIGHT_MULT = 1.5   # reject boxes taller than mult * median line height
+SUBTITLE_BASELINE_BAND_RATIO = 0.035  # accept lines within ratio * frame_height of baseline
+SUBTITLE_MAX_BRIDGE_MS = 1500         # max unreliable-frame gap an open cue may bridge
+
 # Known platform disclaimer / branding keywords to exclude from subtitle cues:
 STATIC_WATERMARK_KEYWORDS = (
     "AI生成",
@@ -356,52 +368,178 @@ print(json.dumps(results, ensure_ascii=False))
             batch = sampled_frames[i : i + batch_size]
             ocr_outputs.extend(self.run_ocr_on_frames(batch))
 
-        return self.aggregate_temporal_cues(ocr_outputs, frame_interval_s=1.0 / sample_fps)
+        frame_height, frame_width = sampled_frames[0][1].shape[:2]
+        return self.aggregate_temporal_cues(
+            ocr_outputs,
+            frame_interval_s=1.0 / sample_fps,
+            frame_width=frame_width,
+            frame_height=frame_height,
+        )
+
+    @staticmethod
+    def _bbox_ltrb(bbox: dict[str, Any]) -> tuple[int, int, int, int]:
+        return (
+            int(bbox["left_x"]),
+            int(bbox["top_y"]),
+            int(bbox["right_x"]),
+            int(bbox["bottom_y"]),
+        )
+
+    def _dialogue_line_reference(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        frame_width: int,
+        frame_height: int,
+    ) -> tuple[float, float]:
+        """Estimate the caption line height and its dominant vertical baseline.
+
+        Returns ``(reference_line_height, reference_center_y)`` derived from the
+        horizontally centered, single-line detections of the current run.
+        """
+        if not items:
+            return max(1.0, frame_height * 0.06), frame_height * 0.87
+
+        heights = []
+        for item in items:
+            _l, top_y, _r, bottom_y = self._bbox_ltrb(item["bbox"])
+            heights.append(bottom_y - top_y + 1)
+        heights.sort()
+        reference_line_height = float(heights[len(heights) // 2])
+
+        center_x = frame_width / 2.0
+        center_tol = SUBTITLE_CENTER_TOL_RATIO * frame_width
+        max_height = reference_line_height * SUBTITLE_MAX_LINE_HEIGHT_MULT
+        centers = []
+        for item in items:
+            left_x, top_y, right_x, bottom_y = self._bbox_ltrb(item["bbox"])
+            height = bottom_y - top_y + 1
+            center = (left_x + right_x) / 2.0
+            if height <= max_height and abs(center - center_x) <= center_tol:
+                centers.append((top_y + bottom_y) / 2.0)
+        if not centers:
+            return reference_line_height, frame_height * 0.87
+        centers.sort()
+        return reference_line_height, float(centers[len(centers) // 2])
+
+    def _select_dialogue_line(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        frame_width: int,
+        frame_height: int,
+        reference_line_height: float,
+        reference_center_y: float,
+    ) -> dict[str, Any] | None:
+        """Pick the single detection that best matches the centered caption line.
+
+        Rejects merged/multi-line boxes (too tall), off-center scene text, and lines
+        far from the run's dominant baseline. Returns ``None`` when the frame carries
+        no reliable caption line (so the caller bridges instead of emitting noise).
+        """
+        if not items:
+            return None
+
+        center_x = frame_width / 2.0
+        center_tol = SUBTITLE_CENTER_TOL_RATIO * frame_width
+        max_height = reference_line_height * SUBTITLE_MAX_LINE_HEIGHT_MULT
+        band = SUBTITLE_BASELINE_BAND_RATIO * frame_height
+
+        best: dict[str, Any] | None = None
+        best_key: tuple[float, float, float] | None = None
+        for item in items:
+            left_x, top_y, right_x, bottom_y = self._bbox_ltrb(item["bbox"])
+            height = bottom_y - top_y + 1
+            if height > max_height:
+                continue
+            center = (left_x + right_x) / 2.0
+            if abs(center - center_x) > center_tol:
+                continue
+            center_y = (top_y + bottom_y) / 2.0
+            if abs(center_y - reference_center_y) > band:
+                continue
+            key = (abs(center_y - reference_center_y), -float(bottom_y), abs(center - center_x))
+            if best_key is None or key < best_key:
+                best_key = key
+                best = item
+        return best
 
     def aggregate_temporal_cues(
         self,
         frame_detections: list[dict[str, Any]],
         frame_interval_s: float = 0.5,
+        *,
+        frame_width: int = 1280,
+        frame_height: int = 720,
     ) -> list[TrackedCue]:
-        """Aggregate frame-level detections into discrete, stable temporal subtitle cues."""
+        """Aggregate frame-level detections into discrete, stable temporal subtitle cues.
+
+        Per frame the true caption line is recovered via :meth:`_select_dialogue_line`.
+        Frames that carry no reliable caption line but still contain detected text are
+        "bridged": an open cue is extended through them (bounded by
+        ``SUBTITLE_MAX_BRIDGE_MS``) so a continuous caption is not fragmented. Frames
+        with no detections at all are treated as true silence and close the cue.
+        """
         cues: list[TrackedCue] = []
+        all_items = [item for fd in frame_detections for item in fd.get("dialogue_items", [])]
+        reference_line_height, reference_center_y = self._dialogue_line_reference(
+            all_items, frame_width=frame_width, frame_height=frame_height
+        )
+
         current_cue_frames: list[dict[str, Any]] = []
+        current_end_s: float | None = None
+        last_reliable_s: float | None = None
+
+        def _flush() -> None:
+            nonlocal current_cue_frames, current_end_s, last_reliable_s
+            if current_cue_frames:
+                cue = self._build_cue_from_frames(
+                    current_cue_frames, frame_interval_s, cue_idx=len(cues) + 1, end_s=current_end_s
+                )
+                if cue:
+                    cues.append(cue)
+            current_cue_frames = []
+            current_end_s = None
+            last_reliable_s = None
 
         for frame_data in frame_detections:
             items = frame_data.get("dialogue_items", [])
             t_s = frame_data["timestamp_s"]
 
             if not items:
-                # Silence or gap
-                if current_cue_frames:
-                    cue = self._build_cue_from_frames(current_cue_frames, frame_interval_s, cue_idx=len(cues) + 1)
-                    if cue:
-                        cues.append(cue)
-                    current_cue_frames = []
+                # True silence / no text at all: close any open cue.
+                _flush()
                 continue
 
-            # Main dialogue item in frame
-            primary = items[0]
-            text = primary["text"]
+            selected = self._select_dialogue_line(
+                items,
+                frame_width=frame_width,
+                frame_height=frame_height,
+                reference_line_height=reference_line_height,
+                reference_center_y=reference_center_y,
+            )
 
+            if selected is None:
+                # Detected text, but no reliable caption line: bridge the gap.
+                if current_cue_frames and last_reliable_s is not None:
+                    if (t_s - last_reliable_s) * 1000.0 <= SUBTITLE_MAX_BRIDGE_MS:
+                        current_end_s = t_s + frame_interval_s
+                    else:
+                        _flush()
+                continue
+
+            text = selected["text"]
             if not current_cue_frames:
-                current_cue_frames.append({"timestamp_s": t_s, "item": primary})
+                current_cue_frames.append({"timestamp_s": t_s, "item": selected})
+            elif self._texts_match(current_cue_frames[-1]["item"]["text"], text):
+                current_cue_frames.append({"timestamp_s": t_s, "item": selected})
             else:
-                prev_text = current_cue_frames[-1]["item"]["text"]
-                if self._texts_match(prev_text, text):
-                    current_cue_frames.append({"timestamp_s": t_s, "item": primary})
-                else:
-                    # Transition to a new cue
-                    cue = self._build_cue_from_frames(current_cue_frames, frame_interval_s, cue_idx=len(cues) + 1)
-                    if cue:
-                        cues.append(cue)
-                    current_cue_frames = [{"timestamp_s": t_s, "item": primary}]
+                _flush()
+                current_cue_frames.append({"timestamp_s": t_s, "item": selected})
+            last_reliable_s = t_s
+            current_end_s = t_s + frame_interval_s
 
-        if current_cue_frames:
-            cue = self._build_cue_from_frames(current_cue_frames, frame_interval_s, cue_idx=len(cues) + 1)
-            if cue:
-                cues.append(cue)
-
+        _flush()
         return cues
 
     @staticmethod
@@ -420,12 +558,14 @@ print(json.dumps(results, ensure_ascii=False))
         frame_items: list[dict[str, Any]],
         frame_interval_s: float,
         cue_idx: int,
+        end_s: float | None = None,
     ) -> TrackedCue | None:
         if not frame_items:
             return None
 
         start_s = frame_items[0]["timestamp_s"]
-        end_s = frame_items[-1]["timestamp_s"] + frame_interval_s
+        if end_s is None:
+            end_s = frame_items[-1]["timestamp_s"] + frame_interval_s
 
         boxes = [f["item"]["bbox"] for f in frame_items]
         left_x = min(b["left_x"] for b in boxes)

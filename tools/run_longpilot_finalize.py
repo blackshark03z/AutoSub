@@ -51,11 +51,19 @@ def main() -> int:
 
     out_dir = Path(args.out)
     source = Path(args.source)
+    # Bind to the immutable master identity actually produced by the OCR stage rather
+    # than re-hardcoding version ids, so a version bump can never silently drift.
+    master_meta = json.loads((out_dir / "master_cues.json").read_text(encoding="utf-8"))
     master = MasterVersion(
-        source_video_sha256=sha256_file(source), video_width=args.width, video_height=args.height,
-        fps=args.fps, duration_ms=args.duration_ms, ocr_engine_version="RapidOCR_PP-OCRv5_ONNX_v1.4.4",
-        sampling_policy_id="sample_fps=2.0_step_ms=500", roi_filter_version="roi_dialogue_band_v1.2",
-        decode_version="ffmpeg9.0.1")
+        source_video_sha256=master_meta.get("source_video_sha256") or sha256_file(source),
+        video_width=int(master_meta.get("video_width") or args.width),
+        video_height=int(master_meta.get("video_height") or args.height),
+        fps=float(master_meta.get("fps") or args.fps),
+        duration_ms=int(master_meta.get("duration_ms") or args.duration_ms),
+        ocr_engine_version=str(master_meta["ocr_engine_version"]),
+        sampling_policy_id=str(master_meta["sampling_policy_id"]),
+        roi_filter_version=str(master_meta["roi_filter_version"]),
+        decode_version=str(master_meta.get("decode_version") or "ffmpeg9.0.1"))
 
     store = ChunkCheckpointStore(out_dir / "checkpoint.json", master=master)
     try:

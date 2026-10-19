@@ -47,7 +47,7 @@ from app.services.multimarket_contracts import (  # noqa: E402
 
 OCR_ENGINE_VERSION = "RapidOCR_PP-OCRv5_ONNX_v1.4.4"
 SAMPLING_POLICY_ID = "sample_fps=2.0_step_ms=500"
-ROI_FILTER_VERSION = "roi_dialogue_band_v1.2"
+ROI_FILTER_VERSION = "roi_dialogue_band_v1.3"
 DECODE_VERSION = "ffmpeg9.0.1"
 
 
@@ -97,12 +97,17 @@ def sample_frames(cap: cv2.VideoCapture, fps: float, start_s: float, end_s: floa
     return frames
 
 
-def ocr_chunk(tracker, cap, fps, window, sample_fps):
+def ocr_chunk(tracker, cap, fps, window, sample_fps, *, frame_width, frame_height):
     start_s = window.decode_start_ms / 1000.0
     end_s = window.decode_end_ms / 1000.0
     frames = sample_frames(cap, fps, start_s, end_s, sample_fps)
     outputs = tracker.run_ocr_on_frames(frames) if frames else []
-    cues = tracker.aggregate_temporal_cues(outputs, frame_interval_s=1.0 / sample_fps)
+    cues = tracker.aggregate_temporal_cues(
+        outputs,
+        frame_interval_s=1.0 / sample_fps,
+        frame_width=frame_width,
+        frame_height=frame_height,
+    )
     return [tracked_to_dict(c) for c in cues]
 
 
@@ -165,7 +170,8 @@ def main() -> int:
                 print(f"  chunk {window.index:02d} SKIP (cached, {rec.cue_count} cues)")
                 continue
             t0 = time.time()
-            cues = ocr_chunk(tracker, cap, probe["fps"], window, args.sample_fps)
+            cues = ocr_chunk(tracker, cap, probe["fps"], window, args.sample_fps,
+                             frame_width=probe["width"], frame_height=probe["height"])
             chunk_file.write_text(json.dumps({"window": window.to_dict(), "cues": cues},
                                              ensure_ascii=False, indent=2), encoding="utf-8")
             store.mark(window.index, status="OCR_DONE", cue_count=len(cues),

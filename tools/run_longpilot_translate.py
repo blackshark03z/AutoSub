@@ -68,7 +68,7 @@ MODEL_ID = "tencent/Hy-MT2-1.8B-Q4_K_M"
 RUNTIME_BACKEND = "tencent_hymt2_q4_llama_cpp"
 OCR_ENGINE_VERSION = "RapidOCR_PP-OCRv5_ONNX_v1.4.4"
 SAMPLING_POLICY_ID = "sample_fps=2.0_step_ms=500"
-ROI_FILTER_VERSION = "roi_dialogue_band_v1.2"
+ROI_FILTER_VERSION = "roi_dialogue_band_v1.3"
 
 # Terms observed in this source that the base glossary omits. Keeping them
 # locale-scoped means only the affected locale's L3 key changes.
@@ -110,6 +110,10 @@ _CONTEXT_LEAK_RE = re.compile(r"\s*(?:next|previous)\s*line\s*:.*$", re.IGNORECA
 def strip_context_leak(text: str) -> str:
     """Remove prompt-context text (``Next line:`` / ``Previous line:``) the model echoes."""
     return _CONTEXT_LEAK_RE.sub("", str(text or "")).strip()
+
+
+def _norm_translation(text: str) -> str:
+    return " ".join(str(text or "").split()).strip().lower()
 
 
 def typography(text: str, duration_s: float, max_width: int) -> dict:
@@ -171,6 +175,7 @@ def main() -> int:
     texts = [c.raw_ocr_text for c in master.cues]
     l3_keys: dict[str, str] = {}
     inference_counts: dict[str, int] = {}
+    echo_retries: dict[str, int] = {}
 
     def _l3(locale: str, gloss_sha: str, prompt_sha: str) -> str:
         return compute_l3_key(
@@ -193,6 +198,9 @@ def main() -> int:
                 print(f"{locale}: L3 cache HIT, skip inference (l3={l3})")
                 continue
             results, in_concat, out_concat = [], [], []
+            context_echo_retries = 0
+            prev_source: str | None = None
+            prev_translation: str | None = None
             for idx, cue in enumerate(master.cues):
                 src = texts[idx]
                 prompt = build_contextual_translation_prompt(
@@ -201,6 +209,22 @@ def main() -> int:
                 raw = " ".join(localizer.infer(prompt).strip().split())
                 postedited, applied = apply_rule_postedit(src, locale, raw)
                 postedited = strip_context_leak(postedited)
+                # Context-echo guard: consecutive lines that share a prefix can make the
+                # model copy the previous line's translation verbatim. When the echoed
+                # text matches the previous translation but the sources genuinely differ,
+                # retry this line without story context (a known, localized failure mode).
+                if (
+                    prev_translation
+                    and src != prev_source
+                    and _norm_translation(postedited) == _norm_translation(prev_translation)
+                ):
+                    context_echo_retries += 1
+                    prompt = build_contextual_translation_prompt(src, locale, glossary=glossary)
+                    raw = " ".join(localizer.infer(prompt).strip().split())
+                    postedited, applied = apply_rule_postedit(src, locale, raw)
+                    postedited = strip_context_leak(postedited)
+                prev_source = src
+                prev_translation = postedited
                 defective = (not postedited) or any("\u4e00" <= ch <= "\u9fff" for ch in postedited)
                 results.append({
                     "cue_id": cue.cue_id, "start_ms": cue.start_ms, "end_ms": cue.end_ms,
@@ -212,6 +236,7 @@ def main() -> int:
                 in_concat.append(src)
                 out_concat.append(postedited)
             inference_counts[locale] = len(results)
+            echo_retries[locale] = context_echo_retries
 
             audit = InferenceAuditRecord(
                 invocation_id=f"hymt2-{locale}-{int(time.time())}-{os.getpid()}", runtime_backend=RUNTIME_BACKEND,
@@ -263,6 +288,7 @@ def main() -> int:
             (out_dir / f"inference_audit_{locale}.json").write_text(
                 json.dumps(audit.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"{locale}: cues={len(results)} translated={sum(1 for r in results if r['status']=='TRANSLATED')} "
+                  f"context_echo_retries={context_echo_retries} "
                   f"l3={l3} live_cache_ok={cached is not None}")
 
         # Locale isolation proof: change ONLY en-US glossary -> en-US L3 misses, vi-VN unaffected.
@@ -285,6 +311,7 @@ def main() -> int:
 
         meta = {"model_sha256": model_sha, "l1_cache_key": l1_key, "l2_cache_key": l2_key,
                 "l3_keys": l3_keys, "inference_counts": inference_counts,
+                "context_echo_retries": echo_retries,
                 "cue_count": len(master.cues)}
         (out_dir / "translate_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     finally:
