@@ -1,6 +1,6 @@
 # WP-M2-001 — Longer local URL-to-MP4 and reliable recovery
 
-Status: APPROVED_FOR_RELAY, NOT_STARTED. Product milestone M2, not M3 or Cloud. Work must reuse the accepted M1 vertical slice, not create another framework.
+Status: M2 IN_PROGRESS, PARTIAL_DELIVERY from 30-minute real run; acceptance closure required. Product milestone M2, not M3 or Cloud. Work must reuse the accepted M1 vertical slice, not create another framework.
 
 ## Immutable context and policy
 
@@ -39,3 +39,9 @@ M2_PRODUCT_PASS only if all seven oracles are grounded on a clean committed cand
 - No new downloaded models, paid inference, video upload, cookies/DRM bypass, entire-part retrieval, work outside assigned tree, release/push/merge/deploy, M3 or Cloud feature expansion. Avoid polluting git with job artifacts. Preserve existing M1 implementation and historical artifacts. If there are two successive cycles without product progress, stop for rediagnosis.
 - Write a concise result at docs/research/WP-M2-001-result.md including worktree/HEAD, exact command/URL/interval, source/output SHA256, cue counts, chunk/boundary audit, sample quality, source-output audio packet MD5, interruption/resume checks, manifest, MP4/evidence paths, tests, resources, product delta and top blocker; locally commit only scoped verified changes. Report honest M2_PRODUCT / TECHNICAL / EDITORIAL / SECURITY / PUBLICATION verdicts and wait for Tech Lead verification via MAR.
 - When M2 is proven, M3 may be scoped separately. AFTER M3 STOP for publishing-effectiveness evidence and Owner GO/NO-GO. Do not start M4/M5 without explicit later authorization.
+
+## Tech Lead's verified 30-minute partial acceptance and closure (2026-10-19)
+
+**Actual status:** M2=PARTIAL_DELIVERY / NOT_PRODUCT_PASS, despite a genuine, decoded 1800s en-US MP4. The code fixes render scaling, cue merges and en-US translation-repair, but five en-US cues are still NEEDS_REVIEW and several contain translation context bleed from adjacent cues. The worker's final manifest was produced with implementation_dirty=true at old HEAD 3f8ec7c, not its later committed 05ad4ae candidate.
+
+**Exact scope for continuation:** Follow docs/research/WP-M2-001-techlead-review.md. Fix only evidenced original-Chinese/en-US consistency and safe-layout defects in cue_131, cue_500, cue_506, cue_602, cue_660 plus immediately implicated neighbors (notably cue_132/501/603); prove actual interruption-then-resume, final 30-min artifact and manifest on clean committed HEAD, preserve M1 compatibility. Do not silently shrink, falsely PASS, build new infrastructure or start M3. vi-VN remains reported partial but is not part of the en-US M2 Product PASS bar.
