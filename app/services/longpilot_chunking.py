@@ -178,9 +178,15 @@ def _time_overlap_ratio(a: Dict[str, Any], b: Dict[str, Any]) -> float:
 def _same_cue(a: Dict[str, Any], b: Dict[str, Any], *, tolerance_ms: int, iou_threshold: float) -> bool:
     if _norm_text(a.get("text", a.get("zh_text", ""))) != _norm_text(b.get("text", b.get("zh_text", ""))):
         return False
-    if _time_overlap_ratio(a, b) < 0.5 and abs(int(a["start_ms"]) - int(b["start_ms"])) > tolerance_ms:
+    if _iou(_bbox_dict(a.get("bbox")), _bbox_dict(b.get("bbox"))) < iou_threshold:
         return False
-    return _iou(_bbox_dict(a.get("bbox")), _bbox_dict(b.get("bbox"))) >= iou_threshold
+    # Any temporal overlap of the same normalized text at the same geometry is one
+    # source display re-detected across a short tracker gap: a single subtitle is never
+    # shown twice at once, so an overlap cannot be two distinct dialogue cues.  Only a
+    # non-overlapping (separate display) pair needs the start-proximity tolerance.
+    if _time_overlap_ratio(a, b) > 0:
+        return True
+    return abs(int(a["start_ms"]) - int(b["start_ms"])) <= tolerance_ms
 
 
 def merge_chunk_cues(
@@ -192,10 +198,12 @@ def merge_chunk_cues(
     """Deduplicate cues collected from overlapping chunks and assign stable global ids.
 
     Two cues are treated as the same source cue when their normalized text matches,
-    their time ranges overlap OR start within ``tolerance_ms``, and their bbox IoU is
-    at least ``iou_threshold``. The retained cue keeps the longer duration (tie-break:
-    higher confidence, then lower start_ms, then left_x) and records the chunk indices
-    that contributed it as merge provenance.
+    their bbox IoU is at least ``iou_threshold``, and their time ranges overlap (an
+    identical caption shown at overlapping times is one display) OR their starts are
+    within ``tolerance_ms``. The retained cue keeps the longer duration (tie-break:
+    higher confidence, then lower start_ms, then left_x), its detected extent is unioned
+    across contributors so the full display window stays covered, and it records the
+    chunk indices that contributed it as merge provenance.
     """
     flat: List[Tuple[int, Dict[str, Any], int]] = []
     for chunk_index, cues in enumerate(chunk_cues):
@@ -229,6 +237,11 @@ def merge_chunk_cues(
         duplicates_removed += 1
         match.setdefault("_chunk_indices", []).append(chunk_index)
         boundary_merges += 0 if len(match["_chunk_indices"]) < 2 else 1
+        # A proven same-display pair is covered for its full detected extent; keeping only
+        # the longer representative's span would leave the tail beyond it unmasked and
+        # leak the source caption.
+        merged_start = min(int(match["start_ms"]), int(cue["start_ms"]))
+        merged_end = max(int(match["end_ms"]), int(cue["end_ms"]))
         # keep the longer/more confident representative
         cur_dur = int(match["end_ms"]) - int(match["start_ms"])
         new_dur = int(cue["end_ms"]) - int(cue["start_ms"])
@@ -236,6 +249,9 @@ def merge_chunk_cues(
             merged_chunks = match["_chunk_indices"]
             cue["_chunk_indices"] = merged_chunks
             kept[kept.index(match)] = cue
+            match = cue
+        match["start_ms"] = merged_start
+        match["end_ms"] = merged_end
 
     ordered = sorted(kept, key=lambda c: (int(c["start_ms"]), (_bbox_dict(c.get("bbox")) or {}).get("left_x", 0)))
 

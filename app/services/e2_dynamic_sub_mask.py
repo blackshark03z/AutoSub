@@ -31,6 +31,7 @@ from PIL import ImageFont
 from app.core.media import media_summary
 from app.services.clean_subtitle_render import (
     build_local_sub_mask_overlay_filter,
+    build_subtitles_filter,
     clean_text,
     multiline_text_box,
     wrap_subtitle_text,
@@ -533,6 +534,7 @@ def build_dynamic_mask_plan(
     target_ratio: float = SOURCE_FONT_TARGET_RATIO,
     safe_width_ratio: float = SAFE_TEXT_WIDTH_RATIO,
     max_nudge_px: int = 6,
+    review_only_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     media = media_summary(source_path)
     output_width = int(media["video"].get("width") or 0) or REFERENCE_WIDTH
@@ -582,7 +584,8 @@ def build_dynamic_mask_plan(
             # Chinese glyph box UNION the measured rendered English glyph box at the
             # source-equivalent size. A cue that cannot be placed safely becomes
             # NEEDS_REVIEW with measured evidence rather than a false PASS.
-            placement = layout_union_overlay(
+            forced_review = review_only_ids is not None and cue_id in review_only_ids
+            placement = None if forced_review else layout_union_overlay(
                 text,
                 src_bbox=bbox,
                 base_font=base_font,
@@ -615,7 +618,11 @@ def build_dynamic_mask_plan(
                 )
                 layout.update(evidence)
                 layout["status"] = STATUS_NEEDS_REVIEW
-                layout["review_reason"] = "translation_exceeds_safe_frame_at_equivalent_size"
+                layout["review_reason"] = (
+                    "translation_unresolved_or_rejected"
+                    if forced_review
+                    else "translation_exceeds_safe_frame_at_equivalent_size"
+                )
 
         layouts.append(layout)
 
@@ -698,11 +705,9 @@ def render_dynamic_mask_window(
     offset = float(start_s or 0.0)
     if start_s is None or end_s is None:
         render_cues = list(cues)
-        filter_layouts_plan = plan
         duration_args: list[str] = []
     else:
         render_cues = window_cues(cues, start_s=start_s, end_s=end_s)
-        filter_layouts_plan = plan
         duration_args = ["-t", f"{max(0.0, end_s - start_s):.3f}"]
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -715,8 +720,13 @@ def render_dynamic_mask_window(
         output_width=plan["output_width"],
         output_height=plan["output_height"],
         render_review=True,
+        emit_local_sub_masks=True,
     )
-    filter_value = build_mask_filter(filter_layouts_plan, ass_path, offset_seconds=offset)
+    # The black plates are burned in as ASS vector events inside ``ass_path``, so the
+    # filtergraph is a constant-size ``subtitles`` filter.  A per-cue drawbox graph would
+    # exceed the Windows CreateProcess argv cap (~32k) for long media, and this ffmpeg
+    # build exposes no -filter_script / -filter_complex_script file option.
+    filter_value = build_subtitles_filter(ass_path)
     temp_output = output_path.with_suffix(".tmp.mp4")
     subprocess.run(
         [
@@ -772,6 +782,35 @@ def load_render_cues(translations_json_path: Path) -> list[dict[str, Any]]:
             }
         )
     return cues
+
+
+def load_render_cues_with_review(
+    translations_json_path: Path,
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Load every verified source cue, flagging those without a usable translation.
+
+    Unlike :func:`load_render_cues`, unresolved cues (empty or quality-rejected
+    translations) are NOT dropped.  They are returned with empty text and their ids in
+    the review set, so the render still draws a source-covering plate and reports the
+    cue ``NEEDS_REVIEW`` instead of leaking the Chinese caption or faking a PASS.
+    """
+    data = json.loads(Path(translations_json_path).read_text(encoding="utf-8"))
+    cues: list[dict[str, Any]] = []
+    review_only: set[str] = set()
+    for r in data.get("results", []):
+        cue_id = str(r["cue_id"])
+        translated = r.get("status") == "TRANSLATED" and bool(r.get("translation"))
+        cues.append(
+            {
+                "cue_id": cue_id,
+                "start_ms": int(r["start_ms"]),
+                "end_ms": int(r["end_ms"]),
+                "text": r["translation"] if translated else "",
+            }
+        )
+        if not translated:
+            review_only.add(cue_id)
+    return cues, review_only
 
 
 def mask_color_components(filter_value: str) -> list[float]:

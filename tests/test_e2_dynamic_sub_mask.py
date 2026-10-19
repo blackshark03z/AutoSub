@@ -8,12 +8,14 @@ These tests pin the behaviours that fix the legacy giant-union mask:
 """
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
 import pytest
 from PIL import ImageFont
 
+from app.services.clean_subtitle_render import local_sub_mask_ass_event, write_clean_subtitles_ass
 from app.services.e2_dynamic_sub_mask import (
     MASK_COLOR,
     STATUS_NEEDS_REVIEW,
@@ -25,6 +27,7 @@ from app.services.e2_dynamic_sub_mask import (
     fit_overlay_text,
     load_cue_boxes,
     load_render_cues,
+    load_render_cues_with_review,
     mask_color_components,
     mask_padding_px,
     protected_roi_hits,
@@ -202,6 +205,89 @@ def test_render_fails_closed_on_unconfirmed_cue(tmp_path: Path):
     assert plan["layouts"][0]["status"] != STATUS_PASS
     with pytest.raises(ValueError):
         render_dynamic_mask_window(SOURCE, plan, cues, output_path=tmp_path / "out.mp4")
+
+
+def _pass_layout(cue_id="cue_a", mask=(600, 600, 100, 30), start=1.0, end=2.0, text="Hello"):
+    x, y, w, h = mask
+    return {
+        "segment_id": cue_id, "overlay_mode": "LOCAL_SUB_MASK_OVERLAY", "status": "PASS",
+        "start_time": start, "end_time": end, "center_x": 640, "anchor_y": 620,
+        "font_size": 32, "render_text": text, "raw_text": text,
+        "mask": {"x": x, "y": y, "width": w, "height": h, "right_x": x + w - 1,
+                 "bottom_y": y + h - 1, "padding_px": 3},
+    }
+
+
+def test_render_burns_plates_via_subtitles_filter(tmp_path: Path, monkeypatch):
+    from app.services import e2_dynamic_sub_mask as e2
+
+    # Long media must not emit a per-cue filtergraph (it exceeds the OS argv cap); the
+    # plates live inside the .ass and the graph is a single constant-size subtitles op.
+    plan = {"layouts": [_pass_layout()], "font_size": 32, "output_width": 1280,
+            "output_height": 720, "protected_rois": {}}
+    cues = [{"cue_id": "cue_a", "start_ms": 1000, "end_ms": 2000, "text": "Hello"}]
+    calls: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(list(command))
+        Path(command[-1]).write_bytes(b"candidate")
+
+    monkeypatch.setattr(e2.subprocess, "run", fake_run)
+    output = tmp_path / "out.mp4"
+    render_dynamic_mask_window(Path("source.mp4"), plan, cues, output_path=output)
+
+    command = calls[0]
+    assert "-vf" in command
+    assert "-filter_script:v" not in command
+    filter_value = command[command.index("-vf") + 1]
+    assert filter_value.startswith("subtitles=")
+    assert "drawbox" not in filter_value
+    ass_text = (tmp_path / "out.ass").read_text(encoding="utf-8")
+    assert "Dialogue: 1,0:00:01.00,0:00:02.00,Default,,0,0,0,,{\\an7\\pos(600,600)" in ass_text
+    assert "m 0 0 l 100 0 100 30 0 30" in ass_text
+    assert "\\1c&H000000&\\1a&H00&" in ass_text
+    assert "Dialogue: 2," in ass_text
+    assert output.read_bytes() == b"candidate"
+
+
+def test_local_sub_mask_ass_event_draws_opaque_black_plate():
+    event = local_sub_mask_ass_event(_pass_layout(mask=(10, 20, 40, 8)), 500, 1250)
+    assert event is not None
+    assert event.startswith("Dialogue: 1,0:00:00.50,0:00:01.25,Default,,0,0,0,,")
+    assert "{\\an7\\pos(10,20)\\p1\\bord0\\shad0\\1c&H000000&\\1a&H00&}" in event
+    assert event.endswith("m 0 0 l 40 0 40 8 0 8{\\p0}")
+    assert local_sub_mask_ass_event({"mask": None}, 0, 1) is None
+    assert local_sub_mask_ass_event({"mask": {"x": 0, "y": 0, "width": 0, "height": 5}}, 0, 1) is None
+
+
+def test_load_render_cues_with_review_flags_unresolved(tmp_path: Path):
+    path = tmp_path / "translations_en-US.json"
+    path.write_text(json.dumps({"results": [
+        {"cue_id": "c1", "start_ms": 0, "end_ms": 1000, "translation": "Hi", "status": "TRANSLATED"},
+        {"cue_id": "c2", "start_ms": 1000, "end_ms": 2000, "translation": "", "status": "QUALITY_REJECTED"},
+    ]}), encoding="utf-8")
+    cues, review_only = load_render_cues_with_review(path)
+    assert [c["cue_id"] for c in cues] == ["c1", "c2"]
+    assert cues[0]["text"] == "Hi"
+    assert cues[1]["text"] == ""  # unresolved cue is kept, never dropped
+    assert review_only == {"c2"}
+
+
+def test_unresolved_cue_still_emits_source_plate(tmp_path: Path):
+    # A cue with no usable translation must still get a source-covering plate (no
+    # leaked caption) but must NOT get fabricated English at layer 2.
+    layout = _pass_layout(cue_id="cue_u", mask=(600, 600, 100, 30), text="")
+    layout["status"] = STATUS_NEEDS_REVIEW
+    path = tmp_path / "u.ass"
+    write_clean_subtitles_ass(
+        [{"cue_id": "cue_u", "start_ms": 500, "end_ms": 1250, "text": ""}],
+        [layout], path, font_size=32, output_width=1280, output_height=720,
+        render_review=True, emit_local_sub_masks=True,
+    )
+    text = path.read_text(encoding="utf-8")
+    assert "Dialogue: 1,0:00:00.50,0:00:01.25,Default,,0,0,0,," in text
+    assert "m 0 0 l 100 0 100 30 0 30" in text
+    assert "Dialogue: 2," not in text
 
 
 def test_window_cues_shifts_and_clips_to_window():

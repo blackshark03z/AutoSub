@@ -187,6 +187,23 @@ def build_contextual_translation_prompt(
     )
 
 
+def build_repair_translation_prompt(source_text: str, locale: str) -> str:
+    """Bounded repair prompt that forbids untranslated Han characters.
+
+    Used only when a first inference leaves residual Chinese.  It stays grounded in the
+    same source line (no invented meaning): a proper name with no direct translation is
+    to be written in Latin letters.
+    """
+    target_lang = resolve_target_language(locale)
+    return (
+        f"Translate the following Chinese subtitle line into {target_lang}. "
+        "Output only the translation, with no explanation. Do not leave any Chinese "
+        "characters in the output; if a proper name has no direct translation, write it "
+        "in Latin letters.\n\n"
+        f"Line to translate:\n{source_text}"
+    )
+
+
 def apply_rule_postedit(source_text: str, locale: str, translated_text: str) -> tuple[str, list[str]]:
     """Deterministically enforce required terminology after model inference.
 

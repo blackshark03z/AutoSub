@@ -13,6 +13,7 @@ from app.services.hy_mt2_offline_adapter import (
     UnsupportedLocaleError,
     apply_rule_postedit,
     build_contextual_translation_prompt,
+    build_repair_translation_prompt,
     build_translation_prompt,
     detect_translation_defects,
     glossary_adherence,
@@ -209,9 +210,16 @@ def test_contextual_prompt_injects_only_relevant_terms_and_context():
 
 
 def test_contextual_prompt_without_context_has_no_story_block():
-    prompt = build_contextual_translation_prompt("老头", "vi-VN")
+    prompt = build_contextual_translation_prompt("??", "vi-VN")
     assert "into Vietnamese." in prompt
     assert "Story context" not in prompt
+
+
+def test_repair_prompt_forbids_han_and_grounds_on_source_line():
+    prompt = build_repair_translation_prompt("看人只用重瞳术", "en-US")
+    assert "into English." in prompt
+    assert "Chinese characters" in prompt
+    assert "看人只用重瞳术" in prompt  # grounded: same source line, no invented meaning
 
 
 def test_rule_postedit_normalizes_en_terms_only_when_marker_present():

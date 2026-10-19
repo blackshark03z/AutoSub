@@ -298,6 +298,31 @@ def default_source_bbox(output_width: int, output_height: int) -> dict[str, int]
     return {"left_x": left, "top_y": top, "right_x": right, "bottom_y": bottom}
 
 
+def local_sub_mask_ass_event(layout: dict[str, Any], start_ms: int, end_ms: int) -> str | None:
+    """Serialize one black plate as an ASS vector drawing on a layer below the text.
+
+    The plate reuses the same adaptive-union mask geometry M1 accepted (the source
+    Chinese glyph box UNION the measured English glyph box) and is drawn solid
+    ``black@1.0`` with no border or shadow.  Carrying the plates inside the .ass keeps
+    the ffmpeg filtergraph a constant-size ``subtitles`` filter, so long media never
+    exceeds the OS argv cap and no per-cue filter ops are needed.
+    """
+    mask = layout.get("mask") or layout.get("plate")
+    if not mask:
+        return None
+    x, y = int(mask["x"]), int(mask["y"])
+    width, height = int(mask["width"]), int(mask["height"])
+    if width <= 0 or height <= 0:
+        return None
+    override = f"{{\\an7\\pos({x},{y})\\p1\\bord0\\shad0\\1c&H000000&\\1a&H00&}}"
+    drawing = f"m 0 0 l {width} 0 {width} {height} 0 {height}"
+    return (
+        "Dialogue: 1,"
+        f"{format_ass_timestamp(start_ms)},{format_ass_timestamp(end_ms)},"
+        f"Default,,0,0,0,,{override}{drawing}{{\\p0}}"
+    )
+
+
 def write_clean_subtitles_ass(
     cues: list[dict[str, Any]],
     layouts: list[dict[str, Any]],
@@ -307,14 +332,12 @@ def write_clean_subtitles_ass(
     output_width: int,
     output_height: int,
     render_review: bool = False,
+    emit_local_sub_masks: bool = False,
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     layout_by_segment = {layout["segment_id"]: layout for layout in layouts}
     events = []
     for cue in cues:
-        text = cue_text(cue)
-        if not is_meaningful_subtitle_text(text):
-            continue
         layout = layout_by_segment.get(str(cue.get("cue_id") or cue.get("id") or ""))
         if layout is None:
             continue
@@ -331,9 +354,19 @@ def write_clean_subtitles_ass(
                 continue
             if status == "NEEDS_REVIEW" and not render_review:
                 continue
+            # The plate is emitted even when the cue has no English (an unresolved cue
+            # must never leak the source caption); the text event below is skipped when
+            # there is no meaningful text, leaving a flagged NEEDS_REVIEW plate.
+            if emit_local_sub_masks:
+                mask_event = local_sub_mask_ass_event(layout, start_ms, end_ms)
+                if mask_event:
+                    events.append(mask_event)
             override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad0\\pos({layout['center_x']},{layout['anchor_y']})}}"
         else:
             override = f"{{\\an5\\fs{layout.get('font_size', font_size)}\\bord2\\shad1\\pos({layout['center_x']},{layout['anchor_y']})}}"
+        text = cue_text(cue)
+        if not is_meaningful_subtitle_text(text):
+            continue
         events.append(
             "Dialogue: 2,"
             f"{format_ass_timestamp(start_ms)},{format_ass_timestamp(end_ms)},"
@@ -465,6 +498,16 @@ def build_local_sub_mask_overlay_filter(
         )
     filters.append(f"subtitles='{ass}'")
     return ",".join(filters)
+
+
+def build_subtitles_filter(ass_path: Path) -> str:
+    """A single ``subtitles`` filter reference.
+
+    Black plates are drawn by ASS vector events inside ``ass_path`` (see
+    ``local_sub_mask_ass_event``), so the graph stays constant-size regardless of how
+    many cues a long clip has.
+    """
+    return f"subtitles='{_ffmpeg_filter_path(ass_path)}'"
 
 
 def _ffmpeg_filter_path(path: Path) -> str:

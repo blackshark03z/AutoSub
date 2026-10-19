@@ -128,6 +128,25 @@ def test_merge_distinguishes_same_text_different_time_and_different_text_same_ti
     assert result["cue_count"] == 3
 
 
+def test_merge_joins_overlapping_identical_split_cue():
+    # One caption re-detected across a short tracker gap: identical text, matching
+    # geometry, time overlap below 50% of the shorter cue. It is one display, so it
+    # must merge into a single cue (the 233ms overlap is the diagnostic, not a merge of
+    # distinct dialogue).
+    first = _cue(176_133, 178_233, "跑呀怎么不跑了", left=484, right=789, top=603, bottom=648)
+    second = _cue(178_000, 178_500, "跑呀怎么不跑了", left=483, right=792, top=601, bottom=647)
+    result = merge_chunk_cues([[first, second]])
+    assert result["cue_count"] == 1
+    assert result["cues"][0]["end_ms"] == 178_500
+
+
+def test_merge_keeps_non_overlapping_same_text_separate():
+    a = _cue(1_000, 2_000, "好")
+    b = _cue(2_500, 3_000, "好")  # same text/geometry but separate displays, no overlap
+    result = merge_chunk_cues([[a, b]])
+    assert result["cue_count"] == 2
+
+
 def test_stable_ids_deterministic_across_input_order():
     cue_a = _cue(1_000, 2_000, "A", left=100)
     cue_b = _cue(1_000, 2_000, "B", left=500)

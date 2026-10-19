@@ -42,6 +42,7 @@ from app.services.hy_mt2_offline_adapter import (  # noqa: E402
     HyMt2OfflineLocalizer,
     apply_rule_postedit,
     build_contextual_translation_prompt,
+    build_repair_translation_prompt,
     sha256_text,
 )
 from app.services.longpilot_chunking import CheckpointError, ChunkCheckpointStore, MasterVersion  # noqa: E402
@@ -106,10 +107,31 @@ def start_server(port: int) -> subprocess.Popen:
 
 _CONTEXT_LEAK_RE = re.compile(r"\s*(?:next|previous)\s*line\s*:.*$", re.IGNORECASE | re.DOTALL)
 
+# Prompt scaffolding the model sometimes echoes verbatim instead of translating. Such
+# output can be Han-free yet is not a translation, so it must be treated as defective.
+_PROMPT_ECHO_MARKERS = (
+    "line to translate",
+    "use only the specified terminology",
+    "story context",
+    "next line:",
+    "previous line:",
+)
+
 
 def strip_context_leak(text: str) -> str:
     """Remove prompt-context text (``Next line:`` / ``Previous line:``) the model echoes."""
     return _CONTEXT_LEAK_RE.sub("", str(text or "")).strip()
+
+
+def is_prompt_echo(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return any(marker in lowered for marker in _PROMPT_ECHO_MARKERS)
+
+
+def is_defective_translation(text: str) -> bool:
+    """A translation is unusable when it is empty, retains Han, or echoes the prompt."""
+    text = str(text or "").strip()
+    return (not text) or any("\u4e00" <= ch <= "\u9fff" for ch in text) or is_prompt_echo(text)
 
 
 def _norm_translation(text: str) -> str:
@@ -176,6 +198,7 @@ def main() -> int:
     l3_keys: dict[str, str] = {}
     inference_counts: dict[str, int] = {}
     echo_retries: dict[str, int] = {}
+    repair_counts: dict[str, int] = {}
 
     def _l3(locale: str, gloss_sha: str, prompt_sha: str) -> str:
         return compute_l3_key(
@@ -184,7 +207,7 @@ def main() -> int:
             prompt_template_sha256=prompt_sha, glossary_sha256=gloss_sha, context_window_size=1)
 
     try:
-        prompt_template_sha = sha256_text(PROMPT_VERSION + "|contextual-v2")
+        prompt_template_sha = sha256_text(PROMPT_VERSION + "|contextual-v3")
         for locale in ("en-US", "vi-VN"):
             target_lang = SUPPORTED_LOCALES[locale]
             glossary = {**CONTEXT_GLOSSARIES[locale], **EXTRA_GLOSSARY.get(locale, {})}
@@ -199,6 +222,7 @@ def main() -> int:
                 continue
             results, in_concat, out_concat = [], [], []
             context_echo_retries = 0
+            repair_attempts = 0
             prev_source: str | None = None
             prev_translation: str | None = None
             for idx, cue in enumerate(master.cues):
@@ -223,9 +247,19 @@ def main() -> int:
                     raw = " ".join(localizer.infer(prompt).strip().split())
                     postedited, applied = apply_rule_postedit(src, locale, raw)
                     postedited = strip_context_leak(postedited)
+                # Bounded grounded repair: if the first inference left residual Han
+                # characters, came back empty, or echoed the prompt scaffolding, retry
+                # once with a stricter Han-free instruction on the same source line (no
+                # invented meaning).
+                if is_defective_translation(postedited):
+                    repair_attempts += 1
+                    repair_prompt = build_repair_translation_prompt(src, locale)
+                    raw = " ".join(localizer.infer(repair_prompt).strip().split())
+                    postedited, applied = apply_rule_postedit(src, locale, raw)
+                    postedited = strip_context_leak(postedited)
                 prev_source = src
                 prev_translation = postedited
-                defective = (not postedited) or any("\u4e00" <= ch <= "\u9fff" for ch in postedited)
+                defective = is_defective_translation(postedited)
                 results.append({
                     "cue_id": cue.cue_id, "start_ms": cue.start_ms, "end_ms": cue.end_ms,
                     "source_text": src, "target_locale": locale, "translation": postedited,
@@ -237,6 +271,7 @@ def main() -> int:
                 out_concat.append(postedited)
             inference_counts[locale] = len(results)
             echo_retries[locale] = context_echo_retries
+            repair_counts[locale] = repair_attempts
 
             audit = InferenceAuditRecord(
                 invocation_id=f"hymt2-{locale}-{int(time.time())}-{os.getpid()}", runtime_backend=RUNTIME_BACKEND,
@@ -288,7 +323,7 @@ def main() -> int:
             (out_dir / f"inference_audit_{locale}.json").write_text(
                 json.dumps(audit.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"{locale}: cues={len(results)} translated={sum(1 for r in results if r['status']=='TRANSLATED')} "
-                  f"context_echo_retries={context_echo_retries} "
+                  f"context_echo_retries={context_echo_retries} repair_attempts={repair_attempts} "
                   f"l3={l3} live_cache_ok={cached is not None}")
 
         # Locale isolation proof: change ONLY en-US glossary -> en-US L3 misses, vi-VN unaffected.
@@ -312,6 +347,7 @@ def main() -> int:
         meta = {"model_sha256": model_sha, "l1_cache_key": l1_key, "l2_cache_key": l2_key,
                 "l3_keys": l3_keys, "inference_counts": inference_counts,
                 "context_echo_retries": echo_retries,
+                "repair_attempts": repair_counts,
                 "cue_count": len(master.cues)}
         (out_dir / "translate_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     finally:

@@ -4,8 +4,10 @@ Builds the dynamic mask plan from the real OCR boxes and the offline translation
 Each plate is the tight union of the source Chinese glyph box and the measured
 rendered English glyph box at source-equivalent size; plates are placed to clear the
 protected ROIs (uploader logo / AI badge) so the badge stays intact. Renders the
-whole clip preserving the original audio (stream copy). Refuses to render if any cue
-is unresolved.
+whole clip preserving the original audio (stream copy). A cue with no usable
+translation is still given a source-covering plate and reported NEEDS_REVIEW (never a
+leaked caption and never a false PASS); a cue with no detected source box still fails
+closed.
 
 Usage:
     python tools/run_longpilot_render.py --out scratch/longpilot/run --language en-US
@@ -24,7 +26,7 @@ if str(REPO) not in sys.path:
 from app.services.e2_dynamic_sub_mask import (  # noqa: E402
     build_dynamic_mask_plan,
     load_cue_boxes,
-    load_render_cues,
+    load_render_cues_with_review,
     render_dynamic_mask_window,
 )
 
@@ -42,11 +44,12 @@ def main() -> int:
     out_dir = Path(args.out)
     ocr_path = out_dir / "ocr_audit_results.json"
     source = Path(json.loads(ocr_path.read_text(encoding="utf-8"))["video_path"])
-    cues = load_render_cues(out_dir / f"translations_{args.language}.json")
+    cues, review_only = load_render_cues_with_review(out_dir / f"translations_{args.language}.json")
     boxes = load_cue_boxes(ocr_path)
-    plan = build_dynamic_mask_plan(source, cues, boxes, font_path=Path(args.font))
+    plan = build_dynamic_mask_plan(source, cues, boxes, font_path=Path(args.font),
+                                   review_only_ids=review_only)
     statuses = dict(plan["statuses"])
-    print(f"language={args.language} cues={len(cues)} statuses={statuses}")
+    print(f"language={args.language} cues={len(cues)} review_only={len(review_only)} statuses={statuses}")
     review = [l["segment_id"] for l in plan["layouts"] if l["status"] != "PASS"]
     print(f"non_pass={review}")
 
