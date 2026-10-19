@@ -1,10 +1,10 @@
-# Current bounded ship milestone — M1 / local URL-to-MP4
+# Current bounded ship milestone — M2 / long-media reliability
 
 **Active Product SoT:** docs/DECISIONS/2026-10-18-kit-v1.2.2-and-cloud-ship.md. Resolve it and POLICY_REF from the active Decision Index; this file is a bounded task summary, not an independent competing product authority.
 
-**Milestone:** one source-video URL enters a job and produces a verified, retrievable completed localized MP4 using already accepted ingest/OCR/translation/mask/render components.
+**Milestone M2:** Extend the already-accepted local M1 URL-to-MP4 journey to representative longer real media with proven chunk boundary correctness, meaningful recovery/resume, original audio/visual protection, measured resource usage and honest editorial verdict. Evidence/scope: Owner SoT above and bounded M2 WP. Do not mark M2 PASS from the 6-minute M1 run.
 
-**Owner-approved sequence:** M1 local URL-to-MP4 -> M2 long-form reliability -> M3 additional sources -> M4 Cloud E2E -> M5 release candidate and ship. The single authoritative definition and gate for each is in the linked Owner Decision, section "Owner-approved ship milestones". **Active milestone M1: LOCAL_FUNCTIONAL_PASS (2026-10-19), editorial PARTIAL; M2–M5: NOT_YET_PROVEN.** Do not advance a gate without real evidence. Next orchestration action: assess accepted ingest and longpilot artifacts and scope the smallest one-job Bilibili six-minute integration.
+**Owner-approved sequence:** M1 local URL-to-MP4 -> M2 long-form reliability -> M3 additional sources -> M4 Cloud E2E -> M5 release candidate and ship. The single authoritative definition and gate for each is in the linked Owner Decision, section "Owner-approved ship milestones". **M1: LOCAL_FUNCTIONAL_PASS (2026-10-19), editorial PARTIAL. Active M2: NOT_YET_PROVEN. M3: NOT_YET_PROVEN; M4/M5: DEFERRED by Owner-directed STOP after M3.** Do not advance based on tests/reports alone. Current action: reuse clean M1 code f16ddc2 to prove representative longer source reliability/resume, while bounding runtime and retaining protected subtitle/ROI behavior. At M3 completion STOP and await Owner GO/NO-GO based on real publishing-effectiveness evidence, with KPIs to be agreed then.
 
 **Verified historical technical evidence:** six-minute contiguous longpilot at review/us-longpilot-20261017 / f5f8e25 reports INTEGRATED_LONGPILOT_TECHNICAL_PASS, editorial PARTIAL, security SUPERVISED_PASS, publication BLOCKED. The underlying longpilot implementation is NOT integrated into current main. Main also retains separate historical Stable V2 machine-acceptance evidence.
 
@@ -15,3 +15,5 @@
 **Acceptance direction:** URL-sourced provenance, source/checkpoint integrity, cue/translation correctness, narrow subtitle mask and protected regions, preserved source audio, complete playable MP4, resumability, operator-visible artifact and operational evidence. Distinguish real Product PASS from technical, editorial, security or publication PASS.
 
 **Historical local V2 task:** docs/research/TASK_localization_V2_historical_2026-10-18.md (not active).
+
+**Owner publication-effectiveness hold (2026-10-19):** After M2 and M3, stop before M4/M5. The Owner wants real publishing effectiveness established before Cloud E2E scaling. No upload, public release, Cloud deployment or publishing operation is authorized by this decision alone. At M3 checkpoint, present verified publishing process, metrics/evidence and request an explicit Owner GO/NO-GO. Source: the active Owner SoT section 'Owner-directed M3 stop gate'.
