@@ -1,6 +1,6 @@
 # WP-M3-001 — Multi-source intake, platform selection and truthful local proof
 
-**Status:** Owner authorized M3 preparation 2026-10-20, **PLATFORM_SELECTION_PENDING / M3_NOT_YET_PROVEN**. M3 is the last milestone permitted before the Owner-directed **STOP after M3**. No M4/M5 Cloud, upload, publisher account action or deploy.
+**Status:** M3 Phase A discovery VERIFIED 2026-10-20; **PLATFORM_SELECTION_PENDING / M3_NOT_YET_PROVEN**. M3 is the last milestone permitted before the Owner-directed **STOP after M3**. No M4/M5 Cloud, upload, publisher account action or deploy.
 
 ## 1. Immutable worker context
 
