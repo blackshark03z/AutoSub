@@ -45,3 +45,11 @@ Approve **YouTube** as ONE additional M3 platform; primary URL `https://www.yout
 No metrics, distribution outcome or publish-rights evidence is currently on record. A release/publishing pilot is a **separate future Owner authorization** even under A; its objective is real upload/distribution feasibility and observed reach/engagement/retention with an agreed measurement window, quality/control checks and cost budget, not fake tests or Cloud expansion.
 
 **Technical decision:** No new code/worker task launched. Keep current source, media artifacts, worker branch and SoT unchanged pending Owner selection. Do not start M4/M5 or publication.
+
+## Final revised M3 local MVP scope verdict — Owner A (2026-10-20)
+
+Owner has explicitly chosen the previous Tech Lead option **A**. The active SoT now replaces the old requirement to make Hongguo URL->MP4 a mandatory gate for the **local MVP** with minimum proven **Bilibili URL input plus Hongguo local file input**. Both actual production-like pipelines have independently verified audio, hashes, caption/layout evidence and human Owner video review (see M1/M2 reviews and Hongguo local review in this file). These do **not** prove interchangeable one-entrypoint support, Hongguo download from URL, an integrated installer/release branch, full editorial QA, publishing access or Cloud E2E.
+
+**Decision:** `M3_LOCAL_MVP_SOURCE_TYPES_FUNCTIONAL_PASS`; `M3_REVISED_LOCAL_MVP_PRODUCT_SCOPE=PASS`; `HONGGUO_URL_INGEST=UNPROVEN/NOT_SUPPORTED`; `EDITORIAL=PARTIAL`; `PUBLICATION=BLOCKED`; `CLOUD=NOT_PROVEN`. The existing M3/SoT URL-only milestone acceptance, Phase B requirements and older M3 NOT_PASS assessments were accurate for their previous acceptance definition and are now superseded **only for the revised local MVP scope**. This does not assert full AutoSub Cloud ship or an authorized release.
+
+**Owner's STOP after M3 is now reached.** No coding worker, M4/M5 work, merge, push, deploy, upload or public publication automatically follows. Next deliver a concise publishing-effectiveness decision packet: sample video suitable after editorial review, legal/publication-rights and distribution-channel/account confirmation, measurable target/observation window, tightly bounded cost, explicit Owner publication GO/NO-GO; only a real authorized pilot can establish effectiveness.
