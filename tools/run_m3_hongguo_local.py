@@ -316,6 +316,7 @@ def main() -> int:
                                                       encoding="utf-8")
             return rc
     ocr_meta = json.loads((job_dir / "ocr_meta.json").read_text(encoding="utf-8"))
+    master_meta = json.loads((job_dir / "master_cues.json").read_text(encoding="utf-8"))
     manifest["ocr"] = ocr_meta
     if int(ocr_meta.get("cue_count") or 0) <= 0:
         manifest["status"] = "FAILED"
@@ -346,10 +347,12 @@ def main() -> int:
         "hygiene_markdown_cues": markdown_cues,
         "hygiene_cleanup_applied_at_render": True,
     }
+    ffprobe_ms = int(round(float(probe["duration_seconds"]) * 1000))
+    ocr_ms = int(master_meta.get("duration_ms") or 0)
     manifest["duration_sources"] = {
-        "ffprobe_ms": int(round(float(probe["duration_seconds"]) * 1000)),
-        "ocr_meta_ms": ocr_meta.get("duration_ms"),
-        "delta_ms": int(round(float(probe["duration_seconds"]) * 1000)) - int(ocr_meta.get("duration_ms") or 0),
+        "ffprobe_ms": ffprobe_ms,
+        "ocr_master_ms": ocr_ms,
+        "delta_ms": ffprobe_ms - ocr_ms,
     }
 
     roi_path = job_dir / "protected_rois.json"
