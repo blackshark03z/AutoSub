@@ -494,7 +494,8 @@ print(json.dumps(results, ensure_ascii=False))
             nonlocal current_cue_frames, current_end_s, last_reliable_s
             if current_cue_frames:
                 cue = self._build_cue_from_frames(
-                    current_cue_frames, frame_interval_s, cue_idx=len(cues) + 1, end_s=current_end_s
+                    current_cue_frames, frame_interval_s, cue_idx=len(cues) + 1, end_s=current_end_s,
+                    frame_width=frame_width, frame_height=frame_height,
                 )
                 if cue:
                     cues.append(cue)
@@ -559,6 +560,9 @@ print(json.dumps(results, ensure_ascii=False))
         frame_interval_s: float,
         cue_idx: int,
         end_s: float | None = None,
+        *,
+        frame_width: int = 1280,
+        frame_height: int = 720,
     ) -> TrackedCue | None:
         if not frame_items:
             return None
@@ -581,7 +585,10 @@ print(json.dumps(results, ensure_ascii=False))
             "width": right_x - left_x + 1,
             "height": bottom_y - top_y + 1,
         }
-        plate_box = compute_narrow_plate(bbox, padding_x=4, padding_y=3)
+        plate_box = compute_narrow_plate(
+            bbox, padding_x=4, padding_y=3,
+            frame_width=frame_width, frame_height=frame_height,
+        )
 
         # Most representative text (longest string or latest stable)
         texts = [f["item"]["text"] for f in frame_items]

@@ -801,6 +801,7 @@ def multiline_text_box(text: str, font: ImageFont.FreeTypeFont) -> dict[str, int
 
 def clean_text(value: str) -> str:
     normalized = " ".join(str(value or "").split())
+    normalized = normalized.replace("**", "").replace("`", "")
     return normalized.replace("\u00ad", "")
 
 

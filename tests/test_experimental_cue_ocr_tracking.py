@@ -130,6 +130,24 @@ def test_cue_transition_at_18_5s_preserves_distinct_widths():
     assert cue1.plate_box["width"] < cue2.plate_box["width"]
 
 
+def test_aggregate_keeps_1080p_plate_inside_frame():
+    tracker = ExperimentalCueOCRTracker()
+    frames = [
+        {"timestamp_s": 1.0, "dialogue_items": [{"text": "竟然对我使用情毒", "confidence": 0.99,
+                                                 "bbox": {"left_x": 480, "top_y": 960, "right_x": 1440, "bottom_y": 1030}}]},
+        {"timestamp_s": 1.5, "dialogue_items": [{"text": "竟然对我使用情毒", "confidence": 0.99,
+                                                 "bbox": {"left_x": 480, "top_y": 960, "right_x": 1440, "bottom_y": 1030}}]},
+    ]
+
+    cues = tracker.aggregate_temporal_cues(frames, frame_interval_s=0.5,
+                                           frame_width=1920, frame_height=1080)
+
+    assert len(cues) == 1
+    assert cues[0].plate_box["top_y"] == 957
+    assert cues[0].plate_box["bottom_y"] == 1033
+    assert cues[0].plate_box["right_x"] == 1444
+
+
 def test_build_ffmpeg_drawbox_filter():
     cue = TrackedCue(
         cue_id="cue_001",

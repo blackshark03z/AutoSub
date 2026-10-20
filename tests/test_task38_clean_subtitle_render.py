@@ -7,9 +7,15 @@ from app.core.config import get_settings
 from app.services import asr_models
 from app.services.clean_subtitle_render import (
     build_source_replacement_filter,
+    clean_text,
     interval_stats,
     nearest_source_interval,
 )
+
+
+def test_clean_text_strips_markdown_emphasis_from_model_output():
+    assert clean_text("Oh no, I forgot to take **measures**") == "Oh no, I forgot to take measures"
+    assert clean_text("`code` and **bold**") == "code and bold"
 
 
 def test_task38_model_selection_uses_run_config_and_resolves_local_model(monkeypatch, tmp_path):

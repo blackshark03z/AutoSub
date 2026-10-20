@@ -185,7 +185,8 @@ def create_or_reuse_ingestion_job(
 ) -> dict[str, Any]:
     """Ensure idempotency: retry with same media hash or canonical identity reuses existing job."""
     registry = jobs_registry if jobs_registry is not None else {}
-    if handoff.ingestion_status not in {"LOCAL_FIXTURE_VALIDATED", "LIVE_MEDIA_VALIDATED", "INGESTION_PASS"} or not handoff.media_sha256:
+    if handoff.ingestion_status not in {"LOCAL_FIXTURE_VALIDATED", "LOCAL_SOURCE_VALIDATED",
+                                        "LIVE_MEDIA_VALIDATED", "INGESTION_PASS"} or not handoff.media_sha256:
         raise ValueError(f"Cannot dispatch ingestion job: status is '{handoff.ingestion_status}'.")
 
     dedup_key = f"{handoff.canonical_id}:{handoff.selected_item_index}:{handoff.media_sha256}"

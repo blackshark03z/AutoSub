@@ -535,11 +535,13 @@ def build_dynamic_mask_plan(
     safe_width_ratio: float = SAFE_TEXT_WIDTH_RATIO,
     max_nudge_px: int = 6,
     review_only_ids: set[str] | None = None,
+    protected_rois: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, Any]:
     media = media_summary(source_path)
     output_width = int(media["video"].get("width") or 0) or REFERENCE_WIDTH
     output_height = int(media["video"].get("height") or 0) or REFERENCE_HEIGHT
-    rois = scale_protected_rois(output_width, output_height)
+    rois = (dict(protected_rois) if protected_rois is not None
+            else scale_protected_rois(output_width, output_height))
     pad_px = mask_padding_px(output_height)
     safe_text_width = round(output_width * safe_width_ratio)
     base_font = ImageFont.truetype(str(font_path), max(18, round(output_height * 0.037)))

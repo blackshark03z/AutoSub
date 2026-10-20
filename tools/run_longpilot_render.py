@@ -39,6 +39,8 @@ def main() -> int:
     parser.add_argument("--language", required=True)
     parser.add_argument("--font", default=str(FONT))
     parser.add_argument("--max-seconds", type=float, default=None, help="bounded render window (smoke test)")
+    parser.add_argument("--protected-rois-json", default=None,
+                        help="source-specific protected ROI map; defaults to the accepted reference ROIs")
     args = parser.parse_args()
 
     out_dir = Path(args.out)
@@ -46,8 +48,12 @@ def main() -> int:
     source = Path(json.loads(ocr_path.read_text(encoding="utf-8"))["video_path"])
     cues, review_only = load_render_cues_with_review(out_dir / f"translations_{args.language}.json")
     boxes = load_cue_boxes(ocr_path)
+    protected_rois = None
+    if args.protected_rois_json is not None:
+        protected_rois = json.loads(Path(args.protected_rois_json).read_text(encoding="utf-8"))
     plan = build_dynamic_mask_plan(source, cues, boxes, font_path=Path(args.font),
-                                   review_only_ids=review_only)
+                                   review_only_ids=review_only,
+                                   protected_rois=protected_rois)
     statuses = dict(plan["statuses"])
     print(f"language={args.language} cues={len(cues)} review_only={len(review_only)} statuses={statuses}")
     review = [l["segment_id"] for l in plan["layouts"] if l["status"] != "PASS"]
@@ -70,6 +76,8 @@ def main() -> int:
             "source_char_height": char_h,
             "equivalent_size_ratio": round(font_size / char_h, 3) if char_h else None,
             "text_width": l["text_width"], "text_height": l.get("text_height"),
+            "center_x": l.get("center_x"), "anchor_y": l.get("anchor_y"),
+            "source_bbox": l.get("source_bbox"),
             "plate_width": mask.get("width"), "plate_height": mask.get("height"),
             "placement_nudge_px": l.get("placement_nudge_px"),
             "covered_source_and_text": bool(
