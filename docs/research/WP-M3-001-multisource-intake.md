@@ -45,7 +45,7 @@ This WP authorizes M3 Phase A discovery only at this point; not platform-specifi
 
 ## Owner-approved Hongguo local Phase B-1 (2026-10-20; supersedes proposed YouTube trial)
 
-**Authorization and scope:** Owner selected Hồng Quả/Hongguo for M3 and approved **one local file-only smoke-to-product-evidence run on Tap_001**. The existing Phase A YouTube proposal and its 6-minute/720p limits are historical, **NOT** the active Phase B test target. No online Hongguo episode download, crawler/decrypt code execution or editing, cookie/account/app/DRM workaround, remote publishing/upload, or multi-episode run is approved. Work only inside the M3 worktree. Original Hongguo directory on D: is strictly read-only.
+**Authorization and scope:** Local Phase B-1 was independently verified as **M3_HONGGUO_LOCAL_FUNCTIONAL_PASS (2026-10-20)** on clean code HEAD ed72ec7. Owner selected Hồng Quả/Hongguo for M3 and approved **one local file-only smoke-to-product-evidence run on Tap_001**. The existing Phase A YouTube proposal and its 6-minute/720p limits are historical, **NOT** the active Phase B test target. No online Hongguo episode download, crawler/decrypt code execution or editing, cookie/account/app/DRM workaround, remote publishing/upload, or multi-episode run is approved. Work only inside the M3 worktree. Original Hongguo directory on D: is strictly read-only.
 
 **Immutable baseline from Owner-selected local files:**
 - Source provider: `HONGGUO_LOCAL_FILE`; series ID `7690432295777340441`; selected episode `001`; title `隐世魔尊，女帝带娃找上门来`.
