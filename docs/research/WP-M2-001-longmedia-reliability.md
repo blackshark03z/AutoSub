@@ -1,6 +1,6 @@
 # WP-M2-001 — Longer local URL-to-MP4 and reliable recovery
 
-Status: M2 IN_PROGRESS, PARTIAL_DELIVERY from 30-minute real run; acceptance closure required. Product milestone M2, not M3 or Cloud. Work must reuse the accepted M1 vertical slice, not create another framework.
+Status: LOCAL_M2_FUNCTIONAL_PASS (independent MAR verification, 2026-10-20), EDITORIAL_PARTIAL, PUBLICATION_BLOCKED; Owner video viewing gate pending before M3. Product milestone M2, not M3 or Cloud. Work must reuse the accepted M1 vertical slice, not create another framework.
 
 ## Immutable context and policy
 
