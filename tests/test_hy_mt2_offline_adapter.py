@@ -6,6 +6,7 @@ import pytest
 
 from app.services.hy_mt2_offline_adapter import (
     CONTEXT_GLOSSARY_VERSIONS,
+    CONTEXT_PROMPT_VERSION,
     GLOSSARY_VERSIONS,
     PROMPT_VERSION,
     SUPPORTED_LOCALES,
@@ -13,6 +14,7 @@ from app.services.hy_mt2_offline_adapter import (
     UnsupportedLocaleError,
     apply_rule_postedit,
     build_contextual_translation_prompt,
+    build_grounded_translation_prompt,
     build_repair_translation_prompt,
     build_translation_prompt,
     detect_translation_defects,
@@ -20,6 +22,8 @@ from app.services.hy_mt2_offline_adapter import (
     resolve_target_language,
     sanitize_translation,
     sha256_file,
+    shares_neighbor_translation,
+    significant_translation_divergence,
 )
 
 CUE = {"cue_id": "cue_002", "start_ms": 9600, "end_ms": 11167, "zh_text": "我大限已至"}
@@ -192,8 +196,9 @@ def test_glossary_versions_exist_per_locale():
 
 
 def test_context_glossary_versions_exist_per_locale():
-    assert CONTEXT_GLOSSARY_VERSIONS["en-US"] == "glossary-en-US-v2-context"
+    assert CONTEXT_GLOSSARY_VERSIONS["en-US"] == "glossary-en-US-v4-context"
     assert CONTEXT_GLOSSARY_VERSIONS["vi-VN"] == "glossary-vi-VN-v2-context"
+    assert "grounded" in CONTEXT_PROMPT_VERSION
 
 
 def test_contextual_prompt_injects_only_relevant_terms_and_context():
@@ -251,3 +256,60 @@ def test_rule_postedit_strips_trailing_explanation_for_ga():
     )
     assert text == "You really died"
     assert applied
+
+
+def test_grounded_prompt_has_no_story_context_and_is_source_gated():
+    prompt = build_grounded_translation_prompt("我是暗影楼副楼主", "en-US")
+    assert "into English." in prompt
+    assert "暗影楼 = Shadow Tower" in prompt
+    assert "副楼主 = deputy tower master" in prompt
+    assert "Previous line" not in prompt and "Next line" not in prompt
+    assert "Line to translate:\n我是暗影楼副楼主" in prompt
+
+
+def test_proper_noun_rules_only_fire_for_matching_source():
+    text, applied = apply_rule_postedit(
+        "是一点面子都不给我擎天圣地吗", "en-US",
+        "Is this Tiantian Sacred Land not giving me a single speck of face?",
+    )
+    assert text == "Is this Qingtian Sacred Land not giving me a single speck of face?"
+    assert any(rule.startswith("擎天圣地:") for rule in applied)
+
+    untouched, no_rules = apply_rule_postedit("你好", "en-US", "Tiantian Sacred Land")
+    assert untouched == "Tiantian Sacred Land"
+    assert no_rules == []
+
+
+def test_proper_noun_rules_normalize_shadow_tower_and_titles():
+    text, applied = apply_rule_postedit(
+        "我是暗影楼副楼主", "en-US",
+        "I am the deputy leader of Shadow Building. The original poster sent me.",
+    )
+    assert "deputy tower master of the Shadow Tower" in text
+    assert "tower master sent me" in text
+    assert applied
+
+
+def test_neighbor_bleed_is_detected_only_when_sources_differ():
+    assert shares_neighbor_translation(
+        "The system uses five spiritual veins. Plant these 50 peach tree seeds.",
+        "The system uses five spiritual veins.",
+        "系统", "系统使用五条灵脉",
+    )
+    assert not shares_neighbor_translation(
+        "I will make the Wanfa Sect the strongest sect in the entire continent.",
+        "Become the strongest sect in the entire continent.",
+        "我会让万法宗成为整个大陆最强的宗门",
+        "成为整个大陆最强的宗门",
+    )
+
+
+def test_ungrounded_extension_detects_imported_next_line():
+    assert significant_translation_divergence(
+        "Use 4 white character summon cards to plant these 50 peach seeds in the back mountain.",
+        "Plant these 50 peach tree seeds in the back mountain.",
+    )
+    assert not significant_translation_divergence(
+        "How many people are there in the Shadow Tower currently?",
+        "How many people are currently in the Shadow Tower?",
+    )

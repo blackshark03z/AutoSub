@@ -79,6 +79,21 @@ CONTEXT_GLOSSARY_EN_US: Mapping[str, str] = {
     "运动大全": "Manual of Exercises",
     "大限已至": "my time has come",
     "嘎": "to die",
+    # Source-observed proper nouns. A termbase (not a per-cue table) keeps names
+    # stable across cues; each rule only fires when the term is in that cue.
+    "暗影楼": "Shadow Tower",
+    "楼主": "tower master",
+    "副楼主": "deputy tower master",
+    "至尊骨": "Supreme Bone",
+    "擎天圣地": "Qingtian Sacred Land",
+    "擎天圣帝": "Qingtian Holy Emperor",
+    "道一圣地": "Daoyi Sacred Land",
+    # Face/reputation idioms: the base model drifts to "pride", which reverses
+    # the social meaning; constrain the term only when it occurs.
+    "面子": "face (reputation/social standing; never pride)",
+    "给面子": "give face / show respect",
+    "不给我面子": "not give me face",
+    "一点面子都不给我": "not give me any face at all",
 }
 
 CONTEXT_GLOSSARY_VI_VN: Mapping[str, str] = {
@@ -98,9 +113,13 @@ CONTEXT_GLOSSARIES: Mapping[str, Mapping[str, str]] = {
 }
 
 CONTEXT_GLOSSARY_VERSIONS: Mapping[str, str] = {
-    "en-US": "glossary-en-US-v2-context",
+    "en-US": "glossary-en-US-v4-context",
     "vi-VN": "glossary-vi-VN-v2-context",
 }
+
+# Version of the context/grounded prompt contract. It is part of the L3 identity, so
+# changing the guard invalidates only the affected locale's cached translations.
+CONTEXT_PROMPT_VERSION = "hy-mt2-contextual-v4-grounded-2026-10-19"
 
 # Deterministic rule post-edit: (source marker, [(pattern, replacement)]).  Applied
 # only when the marker is present in the source cue.  Case-insensitive regex.
@@ -112,6 +131,42 @@ RULE_POSTEDIT_EN_US: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ("镇宗功法", ((r"town chief'?s skillful technique", "signature sect-guarding technique"),
                  (r"\btown chief\b", "sect"))),
     ("嘎", ((r"\s*\([^)]*\)\s*$", ""),)),
+    # Proper names observed in the source: normalize model variants to one stable
+    # target term. These are termbase rules, not per-cue overrides.
+    ("暗影楼", ((r"\bdark\s+shadow\s+tower\b", "Shadow Tower"),
+               (r"\bshadow\s+building\b", "Shadow Tower"),
+               (r"\bof\s+shadow\s+tower\b", "of the Shadow Tower"))),
+    ("副楼主", ((r"\bthe\s+(?:deputy|vice)\s+(?:tower\s+)?(?:master|leader|owner|poster|building\s+owner)\b",
+                 "the deputy tower master"),
+                (r"\b(?:deputy|vice)\s+(?:tower\s+)?(?:master|leader|owner|poster|building\s+owner)\b",
+                 "deputy tower master"),
+                (r"\bof\s+shadow\s+tower\b", "of the Shadow Tower"))),
+    ("楼主", ((r"\bThe\s+original\s+poster\b", "The tower master"),
+              (r"\bThe\s+poster\b", "The tower master"),
+              (r"\bThe\s+author\b", "The tower master"),
+              (r"\bThe\s+(?:building\s+)?owner\b", "The tower master"),
+              (r"\boriginal\s+poster\b", "tower master"),
+              (r"\bthe\s+poster\b", "the tower master"),
+              (r"\bposter\b", "tower master"),
+              (r"\bthe\s+author\b", "the tower master"),
+              (r"\bauthor\b", "tower master"),
+              (r"\bthe\s+(?:building\s+)?owner\b", "the tower master"),
+              (r"\b(?:building\s+)?owner\b", "tower master"))),
+    ("至尊骨", ((r"\bjuedong\s+bone\b", "Supreme Bone"),
+                (r"\bmost\s+sacred\s+bone\b", "Supreme Bone"),
+                (r"\bsacred\s+bone\b", "Supreme Bone"))),
+    ("擎天圣地", ((r"\btiantian\s+(?:sacred\s+land|holy\s+land)\b", "Qingtian Sacred Land"),
+                  (r"\bpinnacle\s+holy\s+land\b", "Qingtian Sacred Land"),
+                  (r"\bqingtian\s+holy\s+land\b", "Qingtian Sacred Land"),
+                  (r"\b(?:the\s+)?(?:sacred\s+land|holy\s+land)\s+of\s+qingtian\b",
+                   "Qingtian Sacred Land"),
+                  (r"\b(?:the\s+)?sacred\s+place\s+of\s+reverence\b", "Qingtian Sacred Land"))),
+    ("擎天圣帝", ((r"\btiantian\s+(?:holy\s+)?emperor\b", "Qingtian Holy Emperor"),
+                  (r"\bemperor\s+qingtian\b", "Qingtian Holy Emperor"),
+                  (r"\bqingtian\s+emperor\b", "Qingtian Holy Emperor"))),
+    ("道一圣地", ((r"\bdaoyi\s+(?:holy\s+land|sacred\s+place)\b", "Daoyi Sacred Land"),
+                  (r"\b(?:the\s+)?sacred\s+place\s+of\s+daoyi\b", "Daoyi Sacred Land"),
+                  (r"\bthe\s+daoyi\s+sacred\s+land\b", "Daoyi Sacred Land"))),
 )
 RULE_POSTEDIT_VI_VN: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ("万法宗", ((r"tông vạn pháp", "Vạn Pháp Tông"), (r"vạn pháp tông", "Vạn Pháp Tông"))),
@@ -181,9 +236,37 @@ def build_contextual_translation_prompt(
     context_block = ("Story context (do not translate)\n" + "\n".join(context_lines) + "\n\n") if context_lines else ""
     return (
         f"Translate the following Chinese subtitle line into {target_lang}. "
-        "Only output the translated result without any additional explanation, "
-        "preserving the story meaning and tone.\n\n"
+        "Only output the translated result without any additional explanation. "
+        "Translate ONLY the Line to translate: the story context is for disambiguation "
+        "and must not be translated, repeated, merged or continued. Do not add any "
+        "information that is not present in the line. Preserve every clause, negation, "
+        "name and number; use natural, concise wording suitable for at most two subtitle lines.\n\n"
         f"{glossary_block}{context_block}Line to translate:\n{source_text}"
+    )
+
+
+def build_grounded_translation_prompt(
+    source_text: str,
+    locale: str,
+    *,
+    glossary: Mapping[str, str] | None = None,
+) -> str:
+    """Build a strictly source-grounded prompt with no neighbouring story text.
+
+    This is the consistency reference for a cue: it can only contain content from the
+    current source line, so it cannot borrow dialogue from the previous/next caption.
+    """
+    target_lang = resolve_target_language(locale)
+    terms = dict(glossary if glossary is not None else CONTEXT_GLOSSARIES.get(locale, {}))
+    relevant = [f"- {term} = {preferred}" for term, preferred in terms.items() if term in source_text]
+    glossary_block = ("Terminology to use exactly:\n" + "\n".join(relevant) + "\n\n") if relevant else ""
+    return (
+        f"Translate the following Chinese subtitle line into {target_lang}. "
+        "Output only the translation, with no explanation. Translate ONLY this line: "
+        "do not add information that is not present in it. Preserve every clause, "
+        "negation, name and number; use natural, concise wording suitable for at most "
+        "two subtitle lines.\n\n"
+        f"{glossary_block}Line to translate:\n{source_text}"
     )
 
 
@@ -285,6 +368,98 @@ def detect_translation_defects(
         return True, f"LENGTH_EXPLOSION: {len(text)} chars over budget {budget}"
 
     return False, None
+
+
+_TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?")
+_CONTENT_STOPWORDS = frozenset({
+    "a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "at", "for",
+    "from", "with", "by", "as", "is", "are", "was", "were", "be", "been", "being",
+    "it", "its", "this", "that", "these", "those", "i", "me", "my", "we", "our",
+    "you", "your", "he", "she", "they", "them", "his", "her", "their", "so", "if",
+    "then", "than", "there", "here", "will", "would", "can", "could", "should",
+    "may", "might", "do", "does", "did", "have", "has", "had", "just", "very",
+    "all", "any", "some", "up", "down", "out", "off", "over", "again",
+})
+
+
+def _word_tokens(text: str) -> list[str]:
+    return [token.lower() for token in _TOKEN_RE.findall(str(text or ""))]
+
+
+def content_tokens(text: str) -> list[str]:
+    """Lower-cased content words used to compare meaning-bearing material."""
+    return [token for token in _word_tokens(text) if token not in _CONTENT_STOPWORDS]
+
+
+def _normalized_source_chars(text: str) -> str:
+    return "".join(ch for ch in str(text or "") if "\u4e00" <= ch <= "\u9fff" or ch.isalnum())
+
+
+def _longest_common_run(a: list[str], b: list[str]) -> tuple[int, tuple[str, ...]]:
+    if not a or not b:
+        return 0, ()
+    previous = [0] * (len(b) + 1)
+    best = 0
+    best_end = 0
+    for i in range(1, len(a) + 1):
+        current = [0] * (len(b) + 1)
+        for j in range(1, len(b) + 1):
+            if a[i - 1] == b[j - 1]:
+                current[j] = previous[j - 1] + 1
+                if current[j] > best:
+                    best = current[j]
+                    best_end = i
+        previous = current
+    return best, tuple(a[best_end - best:best_end])
+
+
+def shares_neighbor_translation(
+    candidate: str,
+    neighbor: str,
+    source: str,
+    neighbor_source: str,
+    *,
+    min_tokens: int = 5,
+    min_ratio: float = 0.5,
+    min_source_run: int = 4,
+) -> bool:
+    """True when a cue borrows a long clause from an adjacent cue's translation.
+
+    The neighbours' own source text is checked too: when both Chinese lines genuinely
+    share a phrase, the shared English clause is grounded and allowed.
+    """
+    candidate_tokens = _word_tokens(candidate)
+    neighbor_tokens = _word_tokens(neighbor)
+    if len(candidate_tokens) < min_tokens or len(neighbor_tokens) < min_tokens:
+        return False
+    run, _ = _longest_common_run(candidate_tokens, neighbor_tokens)
+    if run < min_tokens or run < min_ratio * min(len(candidate_tokens), len(neighbor_tokens)):
+        return False
+    source_run, _ = _longest_common_run(
+        list(_normalized_source_chars(source)), list(_normalized_source_chars(neighbor_source))
+    )
+    return source_run < min_source_run
+
+
+def significant_translation_divergence(
+    candidate: str,
+    grounded: str,
+    *,
+    min_extra: int = 4,
+    min_length_delta: int = 12,
+) -> bool:
+    """True when context added or dropped meaning-bearing material vs the grounded line."""
+    candidate_tokens = content_tokens(candidate)
+    grounded_tokens = content_tokens(grounded)
+    if not candidate_tokens or not grounded_tokens:
+        return False
+    if abs(len(str(candidate)) - len(str(grounded))) < min_length_delta:
+        return False
+    grounded_set = set(grounded_tokens)
+    candidate_set = set(candidate_tokens)
+    added = [token for token in candidate_tokens if token not in grounded_set]
+    missing = [token for token in grounded_tokens if token not in candidate_set]
+    return len(added) >= min_extra or len(missing) >= min_extra
 
 
 def glossary_adherence(locale: str, source_text: str, translated_text: str) -> dict[str, str]:

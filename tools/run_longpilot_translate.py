@@ -34,16 +34,26 @@ from app.services.clean_subtitle_render import (  # noqa: E402
     multiline_text_box,
     wrap_subtitle_text,
 )
+from app.services.e2_dynamic_sub_mask import (  # noqa: E402
+    REFERENCE_HEIGHT,
+    REFERENCE_WIDTH,
+    layout_union_overlay,
+    mask_padding_px,
+    scale_protected_rois,
+)
 from app.services.hy_mt2_offline_adapter import (  # noqa: E402
     CONTEXT_GLOSSARIES,
     CONTEXT_GLOSSARY_VERSIONS,
-    PROMPT_VERSION,
+    CONTEXT_PROMPT_VERSION,
     SUPPORTED_LOCALES,
     HyMt2OfflineLocalizer,
     apply_rule_postedit,
     build_contextual_translation_prompt,
+    build_grounded_translation_prompt,
     build_repair_translation_prompt,
     sha256_text,
+    shares_neighbor_translation,
+    significant_translation_divergence,
 )
 from app.services.longpilot_chunking import CheckpointError, ChunkCheckpointStore, MasterVersion  # noqa: E402
 from app.services.multimarket_cache import (  # noqa: E402
@@ -134,10 +144,6 @@ def is_defective_translation(text: str) -> bool:
     return (not text) or any("\u4e00" <= ch <= "\u9fff" for ch in text) or is_prompt_echo(text)
 
 
-def _norm_translation(text: str) -> str:
-    return " ".join(str(text or "").split()).strip().lower()
-
-
 def typography(text: str, duration_s: float, max_width: int) -> dict:
     font = ImageFont.truetype(str(FONT_PATH), 32)
     wrapped = wrap_subtitle_text(text, font, max_width)
@@ -149,6 +155,53 @@ def typography(text: str, duration_s: float, max_width: int) -> dict:
         "chars_per_second": round(len(text) / duration_s, 2) if duration_s > 0 else 0.0,
         "words_per_minute": round(len(text.split()) / duration_s * 60.0, 2) if duration_s > 0 else 0.0,
     }
+
+
+def target_font_size(cue: object) -> int:
+    """Source-equivalent font height used by the renderer for this cue."""
+    return max(18, round(int(cue.raw_bbox.height) * 0.96))
+
+
+def translation_fits(
+    text: str,
+    font_size: int,
+    max_width: int = 1152,
+    max_lines: int = 2,
+    *,
+    cue: object | None = None,
+) -> bool:
+    """True when the English text can be placed at the equivalent source size.
+
+    With ``cue`` this executes the renderer's own adaptive union layout, including
+    padding, frame bounds and protected-ROI clipping, so the translation loop cannot
+    accept text that would later become NEEDS_REVIEW. Without ``cue`` it is the
+    cheaper two-line budget used by unit tests. It never authorizes a smaller font.
+    """
+    if not text:
+        return False
+    if cue is not None:
+        bbox = cue.raw_bbox
+        base_font = ImageFont.truetype(str(FONT_PATH), max(18, round(REFERENCE_HEIGHT * 0.037)))
+        layout = layout_union_overlay(
+            text,
+            src_bbox={"left_x": bbox.left_x, "top_y": bbox.top_y,
+                      "right_x": bbox.right_x, "bottom_y": bbox.bottom_y},
+            base_font=base_font,
+            target_size=font_size,
+            rois=scale_protected_rois(REFERENCE_WIDTH, REFERENCE_HEIGHT),
+            output_width=REFERENCE_WIDTH,
+            output_height=REFERENCE_HEIGHT,
+            pad_px=mask_padding_px(REFERENCE_HEIGHT),
+            safe_text_width=max_width,
+            max_lines=max_lines,
+        )
+        return layout is not None
+    font = ImageFont.truetype(str(FONT_PATH), font_size)
+    wrapped = wrap_subtitle_text(text, font, max_width)
+    lines = wrapped.split("\n")
+    if len(lines) > max_lines:
+        return False
+    return all(font.getlength(line) <= max_width for line in lines)
 
 
 def main() -> int:
@@ -207,7 +260,7 @@ def main() -> int:
             prompt_template_sha256=prompt_sha, glossary_sha256=gloss_sha, context_window_size=1)
 
     try:
-        prompt_template_sha = sha256_text(PROMPT_VERSION + "|contextual-v3")
+        prompt_template_sha = sha256_text(CONTEXT_PROMPT_VERSION)
         for locale in ("en-US", "vi-VN"):
             target_lang = SUPPORTED_LOCALES[locale]
             glossary = {**CONTEXT_GLOSSARIES[locale], **EXTRA_GLOSSARY.get(locale, {})}
@@ -222,56 +275,109 @@ def main() -> int:
                 continue
             results, in_concat, out_concat = [], [], []
             context_echo_retries = 0
+            context_divergence_fallbacks = 0
+            fit_fallbacks = 0
+            grounded_inferences = 0
             repair_attempts = 0
             prev_source: str | None = None
             prev_translation: str | None = None
+
+            def _prepare(raw: str, source_text: str) -> tuple[str, list[str]]:
+                text = " ".join(str(raw or "").strip().split())
+                text, applied = apply_rule_postedit(source_text, locale, text)
+                return strip_context_leak(text), applied
+
             for idx, cue in enumerate(master.cues):
                 src = texts[idx]
-                prompt = build_contextual_translation_prompt(
+                ctx_prompt = build_contextual_translation_prompt(
                     src, locale, context_before=texts[idx - 1] if idx > 0 else None,
                     context_after=texts[idx + 1] if idx + 1 < len(texts) else None, glossary=glossary)
-                raw = " ".join(localizer.infer(prompt).strip().split())
-                postedited, applied = apply_rule_postedit(src, locale, raw)
-                postedited = strip_context_leak(postedited)
-                # Context-echo guard: consecutive lines that share a prefix can make the
-                # model copy the previous line's translation verbatim. When the echoed
-                # text matches the previous translation but the sources genuinely differ,
-                # retry this line without story context (a known, localized failure mode).
-                if (
-                    prev_translation
-                    and src != prev_source
-                    and _norm_translation(postedited) == _norm_translation(prev_translation)
-                ):
-                    context_echo_retries += 1
-                    prompt = build_contextual_translation_prompt(src, locale, glossary=glossary)
-                    raw = " ".join(localizer.infer(prompt).strip().split())
-                    postedited, applied = apply_rule_postedit(src, locale, raw)
-                    postedited = strip_context_leak(postedited)
-                # Bounded grounded repair: if the first inference left residual Han
-                # characters, came back empty, or echoed the prompt scaffolding, retry
-                # once with a stricter Han-free instruction on the same source line (no
-                # invented meaning).
-                if is_defective_translation(postedited):
+                ctx_raw = " ".join(localizer.infer(ctx_prompt).strip().split())
+                ctx_text, ctx_applied = _prepare(ctx_raw, src)
+                # Independent, same-source reference. It cannot borrow an adjacent line,
+                # so it is the safe fallback when the context-rich output bleeds.
+                grounded_prompt = build_grounded_translation_prompt(src, locale, glossary=glossary)
+                grounded_raw = " ".join(localizer.infer(grounded_prompt).strip().split())
+                grounded_text, grounded_applied = _prepare(grounded_raw, src)
+                grounded_inferences += 1
+
+                ctx_defective = is_defective_translation(ctx_text)
+                grounded_defective = is_defective_translation(grounded_text)
+                ctx_allowed = False
+                if not ctx_defective:
+                    bleed = bool(
+                        prev_translation
+                        and src != prev_source
+                        and shares_neighbor_translation(
+                            ctx_text, prev_translation, src, prev_source or "")
+                    )
+                    divergent = (not grounded_defective) and significant_translation_divergence(
+                        ctx_text, grounded_text)
+                    if bleed:
+                        context_echo_retries += 1
+                    elif divergent:
+                        context_divergence_fallbacks += 1
+                    else:
+                        ctx_allowed = True
+
+                chosen_text = ""
+                chosen_raw = ""
+                chosen_applied: list[str] = []
+                chosen_prompt = ""
+                mode = "grounded"
+                if ctx_allowed:
+                    chosen_text, chosen_raw, chosen_applied = ctx_text, ctx_raw, ctx_applied
+                    chosen_prompt, mode = ctx_prompt, "contextual"
+                elif not grounded_defective:
+                    chosen_text, chosen_raw, chosen_applied = grounded_text, grounded_raw, grounded_applied
+                    chosen_prompt, mode = grounded_prompt, "grounded"
+
+                if not chosen_text:
+                    # Bounded fail-closed repair on the same source line, never context.
                     repair_attempts += 1
                     repair_prompt = build_repair_translation_prompt(src, locale)
-                    raw = " ".join(localizer.infer(repair_prompt).strip().split())
-                    postedited, applied = apply_rule_postedit(src, locale, raw)
-                    postedited = strip_context_leak(postedited)
+                    repair_raw = " ".join(localizer.infer(repair_prompt).strip().split())
+                    chosen_text, chosen_applied = _prepare(repair_raw, src)
+                    chosen_raw, chosen_prompt, mode = repair_raw, repair_prompt, "repair"
+
+                # Geometry guard: never shrink the font to hide a verbose translation.
+                # If the chosen line cannot fit at the source-equivalent size, prefer a
+                # different grounded/contextual candidate that does fit.
+                font_size = target_font_size(cue)
+                if chosen_text and not translation_fits(chosen_text, font_size, cue=cue):
+                    candidates = []
+                    if ctx_allowed and translation_fits(ctx_text, font_size, cue=cue):
+                        candidates.append((ctx_text, ctx_raw, ctx_applied, ctx_prompt, "contextual"))
+                    if not grounded_defective and translation_fits(grounded_text, font_size, cue=cue):
+                        candidates.append((grounded_text, grounded_raw, grounded_applied,
+                                           grounded_prompt, "grounded"))
+                    for alt in candidates:
+                        if alt[0] != chosen_text:
+                            chosen_text, chosen_raw, chosen_applied, chosen_prompt, mode = alt
+                            fit_fallbacks += 1
+                            break
+
                 prev_source = src
-                prev_translation = postedited
-                defective = is_defective_translation(postedited)
+                prev_translation = chosen_text
+                defective = is_defective_translation(chosen_text)
                 results.append({
                     "cue_id": cue.cue_id, "start_ms": cue.start_ms, "end_ms": cue.end_ms,
-                    "source_text": src, "target_locale": locale, "translation": postedited,
-                    "raw_model_translation": raw, "rule_postedit_applied": applied,
+                    "source_text": src, "target_locale": locale, "translation": chosen_text,
+                    "raw_model_translation": chosen_raw, "rule_postedit_applied": chosen_applied,
                     "status": "TRANSLATED" if not defective else "QUALITY_REJECTED",
                     "provenance": "MODEL_WITH_GLOSSARY+RULE_POSTEDITED",
-                    "prompt_sha256": sha256_text(prompt), "glossary_version": CONTEXT_GLOSSARY_VERSIONS[locale]})
+                    "translation_mode": mode,
+                    "prompt_sha256": sha256_text(chosen_prompt),
+                    "glossary_version": CONTEXT_GLOSSARY_VERSIONS[locale]})
                 in_concat.append(src)
-                out_concat.append(postedited)
+                out_concat.append(chosen_text)
             inference_counts[locale] = len(results)
             echo_retries[locale] = context_echo_retries
             repair_counts[locale] = repair_attempts
+            print(f"{locale}: grounded_inferences={grounded_inferences} "
+                  f"neighbor_bleed_fallbacks={context_echo_retries} "
+                  f"divergence_fallbacks={context_divergence_fallbacks} "
+                  f"fit_fallbacks={fit_fallbacks} repairs={repair_attempts}")
 
             audit = InferenceAuditRecord(
                 invocation_id=f"hymt2-{locale}-{int(time.time())}-{os.getpid()}", runtime_backend=RUNTIME_BACKEND,
@@ -297,7 +403,7 @@ def main() -> int:
                     line_breaks=typo["line_breaks"], font_family="Arial", effective_font_size_px=32,
                     rendered_width_px=typo["rendered_width_px"], rendered_height_px=typo["rendered_height_px"],
                     chars_per_second=typo["chars_per_second"], words_per_minute=typo["words_per_minute"],
-                    model_id=MODEL_ID, prompt_version=PROMPT_VERSION + "|contextual-v2",
+                    model_id=MODEL_ID, prompt_version=CONTEXT_PROMPT_VERSION,
                     glossary_version=CONTEXT_GLOSSARY_VERSIONS[locale], qa_flags=tuple(flags),
                     provenance="LIVE_INFERENCE"))
 
@@ -311,7 +417,7 @@ def main() -> int:
             cached = store.get_l3_translation(l3, require_live_inference=True)
 
             (out_dir / f"translations_{locale}.json").write_text(json.dumps({
-                "locale": locale, "target_lang_name": target_lang, "prompt_version": PROMPT_VERSION + "|contextual-v2",
+                "locale": locale, "target_lang_name": target_lang, "prompt_version": CONTEXT_PROMPT_VERSION,
                 "glossary_version": CONTEXT_GLOSSARY_VERSIONS[locale],
                 "provenance": "llama.cpp_hymt2_q4_server_offline", "model_sha256": model_sha, "model_id": MODEL_ID,
                 "runtime_backend": RUNTIME_BACKEND, "runtime_version": localizer.provenance().runtime_version,
@@ -330,7 +436,7 @@ def main() -> int:
         us_eff = {**CONTEXT_GLOSSARIES['en-US'], **EXTRA_GLOSSARY.get('en-US', {})}
         us_alt = canonical_sha256(dict(sorted({**us_eff, '_probe': 'isolation'}.items())))
         us_before = l3_keys["en-US"]
-        us_after = _l3("en-US", us_alt, sha256_text(PROMPT_VERSION + "|contextual-v2"))
+        us_after = _l3("en-US", us_alt, sha256_text(CONTEXT_PROMPT_VERSION))
         vi_key = l3_keys["vi-VN"]
         iso = {
             "en_us_key_before": us_before, "en_us_key_after_glossary_change": us_after,

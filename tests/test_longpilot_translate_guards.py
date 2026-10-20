@@ -37,3 +37,19 @@ def test_prompt_echo_without_han_is_defective():
 
 def test_clean_translation_is_accepted():
     assert not t.is_defective_translation("Use only the heavy pupil technique to judge people")
+
+
+def test_source_equivalent_fit_accepts_grounded_closures():
+    expected = [
+        ("System.", 54),
+        ("Plant these 50 peach tree seeds in the back mountain.", 41),
+        ("I am the deputy tower master of the Shadow Tower.", 42),
+        ("How many people are currently in the Shadow Tower?", 40),
+        ("Is this Qingtian Sacred Land not giving me any face at all?", 39),
+    ]
+    for text, size in expected:
+        assert t.translation_fits(text, size), (text, size)
+
+
+def test_verbose_translation_is_rejected_at_source_size():
+    assert not t.translation_fits("word " * 80, 54)
