@@ -196,7 +196,7 @@ def test_glossary_versions_exist_per_locale():
 
 
 def test_context_glossary_versions_exist_per_locale():
-    assert CONTEXT_GLOSSARY_VERSIONS["en-US"] == "glossary-en-US-v4-context"
+    assert CONTEXT_GLOSSARY_VERSIONS["en-US"] == "glossary-en-US-v6-context"
     assert CONTEXT_GLOSSARY_VERSIONS["vi-VN"] == "glossary-vi-VN-v2-context"
     assert "grounded" in CONTEXT_PROMPT_VERSION
 
@@ -288,6 +288,20 @@ def test_proper_noun_rules_normalize_shadow_tower_and_titles():
     assert "deputy tower master of the Shadow Tower" in text
     assert "tower master sent me" in text
     assert applied
+
+
+def test_face_idiom_rules_repair_possessive_and_pride_drift():
+    text, applied = apply_rule_postedit(
+        "我为什么要给你们面子", "en-US", "Why should I give you your face?"
+    )
+    assert text == "Why should I give you face?"
+    assert any(rule.startswith("面子:") for rule in applied)
+
+    text2, _ = apply_rule_postedit(
+        "你擎天圣地的面子很厉害吗", "en-US",
+        "Do you really have such a strong face in the Qingtian Sacred Land?",
+    )
+    assert "such a strong reputation" in text2
 
 
 def test_neighbor_bleed_is_detected_only_when_sources_differ():

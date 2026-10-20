@@ -94,6 +94,11 @@ CONTEXT_GLOSSARY_EN_US: Mapping[str, str] = {
     "给面子": "give face / show respect",
     "不给我面子": "not give me face",
     "一点面子都不给我": "not give me any face at all",
+    # The classifier 颗 + 树种 means individual seeds, not whole trees.
+    "蟠桃树种": "peach tree seeds",
+    "蟠桃树": "peach tree",
+    "蟠桃": "peach",
+    "种在": "plant in",
 }
 
 CONTEXT_GLOSSARY_VI_VN: Mapping[str, str] = {
@@ -113,7 +118,7 @@ CONTEXT_GLOSSARIES: Mapping[str, Mapping[str, str]] = {
 }
 
 CONTEXT_GLOSSARY_VERSIONS: Mapping[str, str] = {
-    "en-US": "glossary-en-US-v4-context",
+    "en-US": "glossary-en-US-v6-context",
     "vi-VN": "glossary-vi-VN-v2-context",
 }
 
@@ -167,6 +172,10 @@ RULE_POSTEDIT_EN_US: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ("道一圣地", ((r"\bdaoyi\s+(?:holy\s+land|sacred\s+place)\b", "Daoyi Sacred Land"),
                   (r"\b(?:the\s+)?sacred\s+place\s+of\s+daoyi\b", "Daoyi Sacred Land"),
                   (r"\bthe\s+daoyi\s+sacred\s+land\b", "Daoyi Sacred Land"))),
+    ("面子", ((r"\bgive\s+(you|him|her|them|me)\s+(?:your|his|her|their|my)\s+face\b",
+               r"give \1 face"),
+              (r"\bsuch\s+a\s+strong\s+face\b", "such a strong reputation"),
+              (r"\bstrong\s+face\b", "strong reputation"))),
 )
 RULE_POSTEDIT_VI_VN: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ("万法宗", ((r"tông vạn pháp", "Vạn Pháp Tông"), (r"vạn pháp tông", "Vạn Pháp Tông"))),
