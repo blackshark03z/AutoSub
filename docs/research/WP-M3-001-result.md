@@ -167,7 +167,7 @@ Existing coverage still proves four distinct ingestion states, missing/corrupt m
 
 # Phase B-1 — Hongguo local episode acceptance (Owner-approved 2026-10-20)
 
-**Worktree:** `D:\AutoSub-M3-multisource`; **branch:** `feat/m3-multisource-intake`; **baseline HEAD:** `249bd5491708a2299b9ca44a7e6d12633498f60e`; POLICY_REF `caea6f255aa16ce36827a875bcdbca0f8b57cb1e` (worktree `AGENTS.md` blob `f5910fd8…`, `docs/kit/WORKER.md` blob `792b81af…`). This Phase B-1 proof was produced on a dirty tree; the scoped changes are committed after the run.
+**Worktree:** `D:\AutoSub-M3-multisource`; **branch:** `feat/m3-multisource-intake`; **baseline HEAD:** `249bd5491708a2299b9ca44a7e6d12633498f60e`; **code commit:** `86a5a95`; POLICY_REF `caea6f255aa16ce36827a875bcdbca0f8b57cb1e` (worktree `AGENTS.md` blob `f5910fd8…`, `docs/kit/WORKER.md` blob `792b81af…`). This Phase B-1 proof was produced on a dirty tree; the scoped changes are committed as `86a5a95` after the run.
 
 ## 1. Scope and identity
 
