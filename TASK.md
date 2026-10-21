@@ -35,3 +35,7 @@
 ## Temporary local MVP development cycle closeout — 2026-10-20
 
 Owner has authorized final **non-force push/backup** of \`main\` and three milestone feature branches, no merge or deploy. M1–M3 local MVP **accepted for the revised source-type scope**, with no Hongguo URL ingest and no publication/Cloud Product PASS. Follow \`docs/research/2026-10-20-local-mvp-cycle-closeout.md\`; after Git remote verification the technical development cycle is **PAUSED**, awaiting a separately authorized real publishing-effectiveness pilot (rights/editorial/channel/metrics/cost and explicit GO/NO-GO).
+
+## Workspace relocation 2026-10-21
+
+Owner consolidated the 13 linked AutoSub worktrees under \`D:\AutoSub\_worktrees\` while keeping the primary dirty pilot at \`D:\AutoSub\`; all 14 Git statuses/HEADs and three accepted video hashes remained unchanged. **For current authoritative SoT use \`D:\AutoSub\_worktrees\AutoSub-policy-main\`**. See \`docs/research/2026-10-21-local-worktree-relocation.md\`. Product STOP after M3 remains effective; do not treat moving file paths as a new work authorization.
